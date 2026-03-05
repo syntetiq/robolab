@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Config {
+  id                     Int      @id @default(1)
+  appName                String   @default("RoboLab MVP Console")
+  isaacHost              String   @default("192.168.0.21")
+  isaacSessionMode       String   @default("launch_new") // launch_new | attach_to_running
+  runnerMode             String   @default("SSH_RUNNER") // LOCAL_RUNNER | SSH_RUNNER | AGENT_RUNNER
+  isaacSshPort           Int      @default(22)
+  isaacUser              String   @default("user")
+  isaacAuthMode          String   @default("password") // password | ssh_key
+  sshKeyPath             String   @default("~/.ssh/id_rsa")
+  sshPassword            String   @default("")
+  isaacInstallPath       String   @default("C:\\Users\\max\\Documents\\IsaacSim")
+  rosDomainId            Int      @default(77)
+  rosNamespace           String   @default("/tiago")
+  rmwImplementation      String   @default("rmw_cyclonedds_cpp")
+  cycloneDdsConfigPath   String   @default("")
+  defaultOutputDir       String   @default("C:\\RoboLab_Data")
+  streamingMode          String   @default("external_webrtc_client") // none | external_webrtc_client | browser_embedded_optional
+  streamingHint          String   @default("")
+  defaultRecordTopics    String   @default("[]") // Json stored as string or SQLite Json fallback mappings (using String since SQLite doesn't natively support Prisma Json without issues, wait Prisma supports Json in SQLite as a string in newer versions, but wait: Prisma DOES NOT actually support the Json type for SQLite. I must use String to store JSON arrays.) Wait, Prisma allows String for fake Json, I will just use String and parse/stringify in application code.
+  futurePlaceholders     String   @default("{}") // Storing as String
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model Scene {
+  id               String    @id @default(uuid())
+  name             String
+  type             String    // office, home, custom
+  stageUsdPath     String
+  mapPath          String?
+  robotSpawnPose   String    @default("{}") // Json string
+  capabilities     String    @default("[]") // Json string (e.g. ["hasFridge", "hasDishwasher"])
+  notes            String    @default("")
+  tags             String    @default("[]") // Json string
+  enabled          Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  Episodes         Episode[]
+}
+
+model ObjectSet {
+  id               String    @id @default(uuid())
+  name             String
+  categories       String    @default("[]") // Json string
+  assetPaths       String    @default("[]") // Json string
+  notes            String    @default("")
+  enabled          Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  Episodes         Episode[]
+}
+
+model LaunchProfile {
+  id                     String    @id @default(uuid())
+  name                   String
+  runnerMode             String    @default("SSH_RUNNER")
+  isaacLaunchTemplate    String    @default("")
+  rosbagLaunchTemplate   String    @default("")
+  teleopLaunchTemplate   String    @default("")
+  stopTemplate           String    @default("")
+  environmentOverrides   String    @default("{}") // Json string
+  enabled                Boolean   @default(true)
+  Episodes               Episode[]
+}
+
+model Episode {
+  id                   String    @id @default(uuid())
+  sceneId              String
+  scene                Scene     @relation(fields: [sceneId], references: [id])
+  objectSetId          String?
+  objectSet            ObjectSet? @relation(fields: [objectSetId], references: [id])
+  launchProfileId      String?
+  launchProfile        LaunchProfile? @relation(fields: [launchProfileId], references: [id])
+  tasks                String    @default("[]") // Json string
+  sensors              String    @default("[]") // Json string
+  randomizationConfig  String    @default("{}") // Json string
+  seed                 Int       @default(42)
+  durationSec          Int       @default(60)
+  status               String    @default("created") // created|queued|running|stopping|stopped|completed|failed
+  startedAt            DateTime?
+  stoppedAt            DateTime?
+  outputDir            String    @default("")
+  bagPath              String    @default("")
+  metadataPath         String    @default("")
+  frozenConfigSnapshot String    @default("{}") // Json string
+  notes                String    @default("")
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+}
+
+model HostLock {
+  id         String   @id @default(uuid())
+  host       String   @unique
+  episodeId  String
+  lockType   String   @default("interactive_session")
+  acquiredAt DateTime @default(now())
+}
