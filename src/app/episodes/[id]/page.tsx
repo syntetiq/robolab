@@ -99,7 +99,28 @@ export default function EpisodeDetailPage() {
     }, [episode?.status, episode?.startedAt, episode?.createdAt]);
 
     const handleAction = (action: string) => {
+        // Direct execution for teleop commands to avoid the confirmation dialog popup
+        if (["move_forward", "move_backward", "move_left", "move_right", "grasp_mug", "go_home"].includes(action)) {
+            executeImmediateAction(action);
+            return;
+        }
         setConfirmAction(action);
+    };
+
+    const executeImmediateAction = async (action: string) => {
+        try {
+            const res = await fetch(`/api/episodes/${id}/teleop`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ command: action })
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                setAlertMessage(data.error || `Command ${action} failed.`);
+            }
+        } catch (e) {
+            setAlertMessage("Failed to send teleop command.");
+        }
     };
 
     const executeAction = async () => {
@@ -233,18 +254,25 @@ export default function EpisodeDetailPage() {
                     </CardContent>
                 </Card>
 
-                {config?.streamingMode === "external_webrtc_client" && (
-                    <Card className="bg-blue-50/50 border-blue-200 dark:bg-blue-950/20 dark:border-blue-900">
+                {config?.streamingMode === "browser_embedded_optional" && episode?.launchProfile?.enableWebRTC && (
+                    <Card className="bg-purple-50/50 border-purple-200 dark:bg-purple-950/20 dark:border-purple-900">
                         <CardHeader className="pb-2">
-                            <CardTitle className="text-sm flex items-center text-blue-700 dark:text-blue-400">
-                                <Info className="w-4 h-4 mr-2" /> Operator Instructions
+                            <CardTitle className="text-sm flex items-center text-purple-700 dark:text-purple-400">
+                                <Info className="w-4 h-4 mr-2" /> WebRTC Teleoperation Active
                             </CardTitle>
                         </CardHeader>
-                        <CardContent className="text-xs text-blue-800 dark:text-blue-300 space-y-2">
-                            <p>1. Start the episode via the console.</p>
-                            <p>2. Connect your WebRTC streaming client to <strong>{config.isaacHost}</strong>.</p>
-                            <p>3. Put on Vive VR headset to begin teleoperation.</p>
-                            {config.streamingHint && <p className="italic mt-2">{config.streamingHint}</p>}
+                        <CardContent className="text-xs text-purple-800 dark:text-purple-300 space-y-2">
+                            <p>You are controlling the Tiago robot via the Web Interface. The live stream will appear on the right once Isaac Sim initializes.</p>
+
+                            <div className="grid grid-cols-3 gap-2 mt-4">
+                                <Button onClick={() => handleAction("move_left")} variant="outline" size="sm" className="w-full text-xs h-7">Left</Button>
+                                <Button onClick={() => handleAction("move_forward")} variant="default" size="sm" className="w-full text-xs h-7 bg-purple-600">Forward</Button>
+                                <Button onClick={() => handleAction("move_right")} variant="outline" size="sm" className="w-full text-xs h-7">Right</Button>
+
+                                <Button onClick={() => handleAction("grasp_mug")} variant="secondary" size="sm" className="w-full text-xs h-7 mt-2 col-span-1">Grasp Mug</Button>
+                                <Button onClick={() => handleAction("move_backward")} variant="outline" size="sm" className="w-full text-xs h-7 mt-2">Backward</Button>
+                                <Button onClick={() => handleAction("go_home")} variant="secondary" size="sm" className="w-full text-xs h-7 mt-2 col-span-1">Home Pose</Button>
+                            </div>
                         </CardContent>
                     </Card>
                 )}

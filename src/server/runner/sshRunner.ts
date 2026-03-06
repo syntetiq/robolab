@@ -83,10 +83,10 @@ export class SshRunner implements Runner {
             ssh = await this.connect(config);
 
             // 1. Path to Isaac Sim on remote
-            // The SSH User might be varied ("m", "max"), but the installation path is now configurable
             const remoteIsaacDir = config.isaacInstallPath || `C:\\Users\\max\\Documents\\IsaacSim`;
-            const remoteScriptPath = `${remoteIsaacDir}\\run_episode.py`;
-            const localScriptPath = require('path').resolve(process.cwd(), 'scripts/run_episode.py');
+            const scriptName = episode.launchProfile?.scriptName || 'data_collector_tiago.py';
+            const remoteScriptPath = `${remoteIsaacDir}\\${scriptName}`;
+            const localScriptPath = require('path').resolve(process.cwd(), `scripts/${scriptName}`);
 
             // 2. Upload the script
             try {
@@ -104,10 +104,12 @@ export class SshRunner implements Runner {
             // Create command to run python.bat
             const pyBat = `${remoteIsaacDir}\\python.bat`;
 
-            // Allow override via LaunchProfile, otherwise fallback. If it's an empty string, fallback.
+            // Allow override via LaunchProfile, otherwise fallback.
             let launchCmd = episode.launchProfile?.isaacLaunchTemplate;
             if (!launchCmd || launchCmd.trim() === "") {
-                launchCmd = `"${pyBat}" "${remoteScriptPath}" --output_dir "${episodeOutDir}" --duration ${episode.durationSec || 60}`;
+                const envUsd = episode.launchProfile?.environmentUsd || 'C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd';
+                const webrtcFlag = episode.launchProfile?.enableWebRTC ? '--webrtc --ext-folder "C:\\Users\\max\\Documents\\IsaacSim\\extscache" --enable-extension "omni.kit.livestream.webrtc"' : '--headless';
+                launchCmd = `"${pyBat}" "${remoteScriptPath}" --env "${envUsd}" --output_dir "${episodeOutDir}" --duration ${episode.durationSec || 60} ${webrtcFlag}`;
             }
 
             // Trigger a powershell Invoke-WmiMethod to run detached, forcing python to render unbuffered output

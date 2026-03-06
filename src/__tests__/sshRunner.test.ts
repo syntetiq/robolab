@@ -86,6 +86,27 @@ describe('SshRunner', () => {
         expect(result.success).toBe(true);
     });
 
+    it('startEpisode applies WebRTC extensions when enableWebRTC is true', async () => {
+        vi.mocked(hostLock.acquireLock).mockResolvedValueOnce(true);
+        mockConnect.mockResolvedValueOnce(undefined);
+        mockPutFile.mockResolvedValueOnce(undefined);
+        mockExecCommand.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+
+        const episode = { id: 'ep-webrtc', launchProfile: { enableWebRTC: true } };
+        const config = { isaacHost: 'test@192.168.1.5' };
+
+        const result = await runner.startEpisode(episode, config);
+
+        expect(result.success).toBe(true);
+
+        const calls = mockExecCommand.mock.calls.map((call: any[]) => call[0]);
+        const setContentCall = calls.find((cmd: string) => cmd.includes('Set-Content'));
+
+        expect(setContentCall).toContain('--webrtc');
+        expect(setContentCall).toContain('omni.kit.livestream.webrtc');
+        expect(setContentCall).not.toContain('--headless');
+    });
+
     it('startEpisode fails if host is already locked', async () => {
         vi.mocked(hostLock.acquireLock).mockResolvedValueOnce(false);
 

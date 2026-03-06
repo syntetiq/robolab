@@ -64,6 +64,9 @@ model LaunchProfile {
   id                     String    @id @default(uuid())
   name                   String
   runnerMode             String    @default("SSH_RUNNER")
+  scriptName             String    @default("run_episode.py")
+  environmentUsd         String    @default("")
+  enableWebRTC           Boolean   @default(false)
   isaacLaunchTemplate    String    @default("")
   rosbagLaunchTemplate   String    @default("")
   teleopLaunchTemplate   String    @default("")
