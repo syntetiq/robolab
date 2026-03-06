@@ -9,19 +9,21 @@ async function main() {
     update: {},
     create: {
       appName: "RoboLab MVP Console",
-      isaacHost: "192.168.0.21",
+      isaacHost: "localhost",
       isaacSessionMode: "launch_new",
-      runnerMode: "SSH_RUNNER",
+      runnerMode: "LOCAL_RUNNER",
       isaacSshPort: 22,
-      isaacUser: "user",
+      isaacUser: "max",
       isaacAuthMode: "password",
-      sshKeyPath: "~/.ssh/id_rsa",
+      sshKeyPath: "",
+      isaacInstallPath: "C:\\Users\\max\\Documents\\IsaacSim",
       rosDomainId: 77,
       rosNamespace: "/tiago",
       rmwImplementation: "rmw_cyclonedds_cpp",
       cycloneDdsConfigPath: "",
-      defaultOutputDir: "./data",
-      streamingMode: "external_webrtc_client",
+      ros2SetupCommand: "",
+      defaultOutputDir: "C:\\RoboLab_Data",
+      streamingMode: "none",
       streamingHint: "",
       defaultRecordTopics: JSON.stringify([
         "/joint_states",
@@ -45,9 +47,9 @@ async function main() {
     data: {
       name: "Office",
       type: "office",
-      stageUsdPath: "/Isaac/Environments/Office/office.usd",
-      capabilities: JSON.stringify([]),
-      tags: JSON.stringify(["office", "desk"]),
+      stageUsdPath: "C:\\RoboLab_Data\\scenes\\Office_Interactive.usd",
+      capabilities: JSON.stringify(["pick_place_sink", "open_close_dishwasher"]),
+      tags: JSON.stringify(["office", "desk", "interactive"]),
       robotSpawnPose: JSON.stringify({ x: 0, y: 0, z: 0, yaw: 0 }),
     }
   })
@@ -56,9 +58,9 @@ async function main() {
     data: {
       name: "Home Kitchen",
       type: "home",
-      stageUsdPath: "/Isaac/Environments/Home/kitchen.usd",
-      capabilities: JSON.stringify(["hasFridge", "hasDishwasher", "hasSink"]),
-      tags: JSON.stringify(["home", "kitchen"]),
+      stageUsdPath: "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd",
+      capabilities: JSON.stringify(["pick_place_sink", "pick_place_fridge", "pick_place_dishwasher", "open_close_fridge", "open_close_dishwasher"]),
+      tags: JSON.stringify(["home", "kitchen", "interactive"]),
       robotSpawnPose: JSON.stringify({ x: 1.0, y: -1.0, z: 0, yaw: 1.57 }),
     }
   })

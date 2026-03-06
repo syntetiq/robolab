@@ -25,6 +25,8 @@ export async function PUT(request: Request) {
             data: validatedData,
         });
 
+        return NextResponse.json(updatedConfig);
+
     } catch (error) {
         console.error("PUT /api/config error:", error);
         return NextResponse.json({ error: "Invalid data or Server Error", details: (error as any).message || error }, { status: 400 });

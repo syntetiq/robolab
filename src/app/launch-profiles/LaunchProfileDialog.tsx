@@ -22,6 +22,13 @@ export default function LaunchProfileDialog({
     const [formData, setFormData] = useState({
         name: "",
         runnerMode: "SSH_RUNNER",
+        scriptName: "data_collector_tiago.py",
+        environmentUsd: "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd",
+        enableWebRTC: false,
+        enableVrTeleop: false,
+        enableMoveIt: false,
+        robotPovCameraPrim: "/World/Tiago",
+        ros2SetupCommand: "",
         isaacLaunchTemplate: "",
         rosbagLaunchTemplate: "",
         teleopLaunchTemplate: "",
@@ -36,6 +43,13 @@ export default function LaunchProfileDialog({
                 setFormData({
                     name: profile.name,
                     runnerMode: profile.runnerMode,
+                    scriptName: profile.scriptName || "data_collector_tiago.py",
+                    environmentUsd: profile.environmentUsd || "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd",
+                    enableWebRTC: !!profile.enableWebRTC,
+                    enableVrTeleop: !!profile.enableVrTeleop,
+                    enableMoveIt: !!profile.enableMoveIt,
+                    robotPovCameraPrim: profile.robotPovCameraPrim || "/World/Tiago",
+                    ros2SetupCommand: profile.ros2SetupCommand || "",
                     isaacLaunchTemplate: profile.isaacLaunchTemplate,
                     rosbagLaunchTemplate: profile.rosbagLaunchTemplate,
                     teleopLaunchTemplate: profile.teleopLaunchTemplate,
@@ -46,6 +60,13 @@ export default function LaunchProfileDialog({
                 setFormData({
                     name: "",
                     runnerMode: "SSH_RUNNER",
+                    scriptName: "data_collector_tiago.py",
+                    environmentUsd: "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd",
+                    enableWebRTC: false,
+                    enableVrTeleop: false,
+                    enableMoveIt: false,
+                    robotPovCameraPrim: "/World/Tiago",
+                    ros2SetupCommand: "",
                     isaacLaunchTemplate: "",
                     rosbagLaunchTemplate: "",
                     teleopLaunchTemplate: "",
@@ -109,12 +130,75 @@ export default function LaunchProfileDialog({
                             </Select>
                         </div>
                         <div className="space-y-2">
+                            <Label>Runner Script Name</Label>
+                            <Input
+                                value={formData.scriptName}
+                                onChange={(e) => setFormData({ ...formData, scriptName: e.target.value })}
+                                className="font-mono text-xs"
+                                placeholder="data_collector_tiago.py"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Environment USD Path</Label>
+                            <Input
+                                value={formData.environmentUsd}
+                                onChange={(e) => setFormData({ ...formData, environmentUsd: e.target.value })}
+                                className="font-mono text-xs"
+                                placeholder="C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd"
+                            />
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <input
+                                id="enableWebRTC"
+                                type="checkbox"
+                                checked={formData.enableWebRTC}
+                                onChange={(e) => setFormData({ ...formData, enableWebRTC: e.target.checked })}
+                            />
+                            <Label htmlFor="enableWebRTC">Enable WebRTC livestream</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <input
+                                id="enableVrTeleop"
+                                type="checkbox"
+                                checked={formData.enableVrTeleop}
+                                onChange={(e) => setFormData({ ...formData, enableVrTeleop: e.target.checked })}
+                            />
+                            <Label htmlFor="enableVrTeleop">Enable VR teleoperation mode (Vive/OpenXR)</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <input
+                                id="enableMoveIt"
+                                type="checkbox"
+                                checked={formData.enableMoveIt}
+                                onChange={(e) => setFormData({ ...formData, enableMoveIt: e.target.checked })}
+                            />
+                            <Label htmlFor="enableMoveIt">Enable MoveIt integration mode</Label>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Robot POV Camera Prim</Label>
+                            <Input
+                                value={formData.robotPovCameraPrim}
+                                onChange={(e) => setFormData({ ...formData, robotPovCameraPrim: e.target.value })}
+                                className="font-mono text-xs"
+                                placeholder="/World/Tiago/head_2_link/POVCamera"
+                            />
+                        </div>
+                        <div className="space-y-2">
+                            <Label>ROS2 Setup Command Override</Label>
+                            <Input
+                                value={formData.ros2SetupCommand}
+                                onChange={(e) => setFormData({ ...formData, ros2SetupCommand: e.target.value })}
+                                className="font-mono text-xs"
+                                placeholder='call C:\ros2\local_setup.bat'
+                            />
+                        </div>
+                        <div className="space-y-2">
                             <Label>Isaac Launch Template</Label>
                             <Input
                                 value={formData.isaacLaunchTemplate}
                                 onChange={(e) => setFormData({ ...formData, isaacLaunchTemplate: e.target.value })}
                                 className="font-mono text-xs"
-                                placeholder='./isaac-sim.sh --allow-root'
+                                placeholder='"C:\\Users\\max\\Documents\\IsaacSim\\python.bat" "<project>\\scripts\\run_episode.py" --output_dir "C:\\RoboLab_Data\\episodes\\{EPISODE_ID}"'
                             />
                         </div>
                         <div className="space-y-2">
@@ -141,7 +225,7 @@ export default function LaunchProfileDialog({
                                 value={formData.stopTemplate}
                                 onChange={(e) => setFormData({ ...formData, stopTemplate: e.target.value })}
                                 className="font-mono text-xs"
-                                placeholder='pkill -f isaac-sim'
+                                placeholder='taskkill /F /IM python.exe /T'
                             />
                         </div>
                         <div className="space-y-2">

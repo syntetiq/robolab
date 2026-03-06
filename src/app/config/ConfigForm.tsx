@@ -173,9 +173,9 @@ export default function ConfigForm({ initialData }: { initialData: any }) {
                                         )} />
                                         <FormField control={form.control} name="isaacInstallPath" render={({ field }) => (
                                             <FormItem className="col-span-2">
-                                                <FormLabel>Isaac Sim Install Path (Remote)</FormLabel>
+                                                <FormLabel>Isaac Sim Install Path</FormLabel>
                                                 <FormControl><Input {...field} /></FormControl>
-                                                <FormDescription>Absolute path to the Isaac Sim folder on the remote host (e.g., C:\Users\max\Documents\IsaacSim).</FormDescription>
+                                                <FormDescription>Absolute path to the Isaac Sim folder on the target host (e.g., C:\Users\max\Documents\IsaacSim).</FormDescription>
                                                 <FormMessage />
                                             </FormItem>
                                         )} />
@@ -261,6 +261,14 @@ export default function ConfigForm({ initialData }: { initialData: any }) {
                                                 <FormLabel>CycloneDDS Profile XML Path</FormLabel>
                                                 <FormControl><Input {...field} /></FormControl>
                                                 <FormDescription>Leave blank if using defaults.</FormDescription>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )} />
+                                        <FormField control={form.control} name="ros2SetupCommand" render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel className="flex items-center">ROS2 Setup Command <HelpTooltip content="Optional command executed before teleop ROS2 commands (e.g., call C:\\ros2\\local_setup.bat)." /></FormLabel>
+                                                <FormControl><Input {...field} placeholder='call C:\ros2\local_setup.bat' /></FormControl>
+                                                <FormDescription>Used by teleop bridge to source ROS2 environment automatically.</FormDescription>
                                                 <FormMessage />
                                             </FormItem>
                                         )} />

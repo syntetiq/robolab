@@ -15,6 +15,7 @@ export const configSchema = z.object({
     rosNamespace: z.string(),
     rmwImplementation: z.string(),
     cycloneDdsConfigPath: z.string().optional().default(""),
+    ros2SetupCommand: z.string().optional().default(""),
     defaultOutputDir: z.string().min(1, "Default Output Dir is required"),
     streamingMode: z.enum(["none", "external_webrtc_client", "browser_embedded_optional"]),
     streamingHint: z.string().optional().default(""),

@@ -1,16 +1,21 @@
-import omni
-import sys
-import os
+from create_interactive_scenes import generate_scene
+from pathlib import Path
+import argparse
 
-from pxr import Usd, UsdGeom, UsdPhysics, Sdf, Gf
 
-def create_articulated_fridge(stage, parent_path):
-    prim_path = parent_path + "/Fridge"
-    fridge_prim = UsdGeom.Xform.Define(stage, prim_path)
-    # Define rigid body base
-    pass # Implementation detail for adding Physics and Joints
-
-# Script entry point
 if __name__ == "__main__":
-    print("Generating Interactive USD Scenes...")
-    # Add logic to spawn Small House, Fridge, Dishwasher and diverse objects
+    parser = argparse.ArgumentParser(description="Compatibility wrapper for scene generation.")
+    parser.add_argument("--output-dir", type=str, default="C:\\RoboLab_Data\\scenes")
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+
+    from isaacsim import SimulationApp
+
+    app = SimulationApp({"headless": True})
+    try:
+        output_dir = Path(args.output_dir)
+        generate_scene("small_house", output_dir / "Small_House_Interactive.usd", args.seed)
+        generate_scene("office", output_dir / "Office_Interactive.usd", args.seed)
+        print("[RoboLab] Generated Small House and Office scenes.")
+    finally:
+        app.close()

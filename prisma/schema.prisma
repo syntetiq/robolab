@@ -10,21 +10,22 @@ datasource db {
 model Config {
   id                     Int      @id @default(1)
   appName                String   @default("RoboLab MVP Console")
-  isaacHost              String   @default("192.168.0.21")
+  isaacHost              String   @default("localhost")
   isaacSessionMode       String   @default("launch_new") // launch_new | attach_to_running
-  runnerMode             String   @default("SSH_RUNNER") // LOCAL_RUNNER | SSH_RUNNER | AGENT_RUNNER
+  runnerMode             String   @default("LOCAL_RUNNER") // LOCAL_RUNNER | SSH_RUNNER | AGENT_RUNNER
   isaacSshPort           Int      @default(22)
-  isaacUser              String   @default("user")
+  isaacUser              String   @default("max")
   isaacAuthMode          String   @default("password") // password | ssh_key
-  sshKeyPath             String   @default("~/.ssh/id_rsa")
+  sshKeyPath             String   @default("")
   sshPassword            String   @default("")
   isaacInstallPath       String   @default("C:\\Users\\max\\Documents\\IsaacSim")
   rosDomainId            Int      @default(77)
   rosNamespace           String   @default("/tiago")
   rmwImplementation      String   @default("rmw_cyclonedds_cpp")
   cycloneDdsConfigPath   String   @default("")
+  ros2SetupCommand       String   @default("")
   defaultOutputDir       String   @default("C:\\RoboLab_Data")
-  streamingMode          String   @default("external_webrtc_client") // none | external_webrtc_client | browser_embedded_optional
+  streamingMode          String   @default("none") // none | external_webrtc_client | browser_embedded_optional
   streamingHint          String   @default("")
   defaultRecordTopics    String   @default("[]") // Json stored as string or SQLite Json fallback mappings (using String since SQLite doesn't natively support Prisma Json without issues, wait Prisma supports Json in SQLite as a string in newer versions, but wait: Prisma DOES NOT actually support the Json type for SQLite. I must use String to store JSON arrays.) Wait, Prisma allows String for fake Json, I will just use String and parse/stringify in application code.
   futurePlaceholders     String   @default("{}") // Storing as String
@@ -64,9 +65,13 @@ model LaunchProfile {
   id                     String    @id @default(uuid())
   name                   String
   runnerMode             String    @default("SSH_RUNNER")
-  scriptName             String    @default("run_episode.py")
-  environmentUsd         String    @default("")
+  scriptName             String    @default("data_collector_tiago.py")
+  environmentUsd         String    @default("C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd")
   enableWebRTC           Boolean   @default(false)
+  enableVrTeleop         Boolean   @default(false)
+  enableMoveIt           Boolean   @default(false)
+  robotPovCameraPrim     String    @default("/World/Tiago")
+  ros2SetupCommand       String    @default("")
   isaacLaunchTemplate    String    @default("")
   rosbagLaunchTemplate   String    @default("")
   teleopLaunchTemplate   String    @default("")

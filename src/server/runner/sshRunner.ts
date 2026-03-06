@@ -3,6 +3,18 @@ import { acquireLock, releaseLock } from "../hostLock";
 import { NodeSSH } from "node-ssh";
 
 export class SshRunner implements Runner {
+    private resolveEnvironmentUsd(episode: any): string {
+        const configured = (episode.launchProfile?.environmentUsd || episode.scene?.stageUsdPath || "").trim();
+        if (configured && !configured.startsWith("/Isaac/")) {
+            return configured;
+        }
+        const sceneName = (episode.scene?.name || "").toLowerCase();
+        const sceneType = (episode.scene?.type || "").toLowerCase();
+        if (sceneName.includes("office") || sceneType === "office") {
+            return "C:\\RoboLab_Data\\scenes\\Office_Interactive.usd";
+        }
+        return "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd";
+    }
 
     private async connect(config: any): Promise<NodeSSH> {
         const ssh = new NodeSSH();
@@ -107,9 +119,13 @@ export class SshRunner implements Runner {
             // Allow override via LaunchProfile, otherwise fallback.
             let launchCmd = episode.launchProfile?.isaacLaunchTemplate;
             if (!launchCmd || launchCmd.trim() === "") {
-                const envUsd = episode.launchProfile?.environmentUsd || 'C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd';
+                const envUsd = this.resolveEnvironmentUsd(episode);
                 const webrtcFlag = episode.launchProfile?.enableWebRTC ? '--webrtc --ext-folder "C:\\Users\\max\\Documents\\IsaacSim\\extscache" --enable-extension "omni.kit.livestream.webrtc"' : '--headless';
-                launchCmd = `"${pyBat}" "${remoteScriptPath}" --env "${envUsd}" --output_dir "${episodeOutDir}" --duration ${episode.durationSec || 60} ${webrtcFlag}`;
+                const vrFlag = episode.launchProfile?.enableVrTeleop ? " --vr" : "";
+                const moveitFlag = episode.launchProfile?.enableMoveIt ? " --moveit" : "";
+                const povPrim = episode.launchProfile?.robotPovCameraPrim || "/World/Tiago";
+                const povFlag = ` --robot_pov_camera_prim "${povPrim}"`;
+                launchCmd = `"${pyBat}" "${remoteScriptPath}" --env "${envUsd}" --output_dir "${episodeOutDir}" --duration ${episode.durationSec || 60} ${webrtcFlag}${vrFlag}${moveitFlag}${povFlag}`;
             }
 
             // Trigger a powershell Invoke-WmiMethod to run detached, forcing python to render unbuffered output
@@ -266,6 +282,9 @@ export class SshRunner implements Runner {
             // Using powershell to list files, since node-ssh doesn't have a reliable sftp list for windows sometimes.
             // Alternatively, simply attempt to download known files.
             const filesToSync = [
+                "metadata.json",
+                "dataset.json",
+                "dataset_manifest.json",
                 "telemetry.json",
                 "camera_0.mp4"
             ];

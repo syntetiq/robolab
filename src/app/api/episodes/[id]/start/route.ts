@@ -10,7 +10,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
         const episode = await prisma.episode.findUnique({
             where: { id },
-            include: { launchProfile: true }
+            include: { launchProfile: true, scene: true }
         });
         if (!episode) return NextResponse.json({ error: "Episode not found" }, { status: 404 });
 

@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getRunner } from "@/server/runner";
 import { releaseLock } from "@/server/hostLock";
+import { formatValidationSummary, validateEpisodeDataset } from "@/server/datasetValidation";
 
 export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
@@ -41,18 +42,27 @@ export async function GET(req: NextRequest) {
 
                     // If DB is running but remote process stopped, transition state
                     if (ep.status === "running" && liveStatus.status !== "running") {
+                        const outputDir = ep.outputDir || `${config.defaultOutputDir}\\episodes\\${episodeId}`;
+                        const validation = validateEpisodeDataset(outputDir);
+                        const validationSummary = formatValidationSummary(validation);
+                        const nextStatus = validation.valid ? liveStatus.status : "failed";
+                        const nextNotes = validationSummary
+                            ? `${ep.notes || ""}${ep.notes ? "\n" : ""}[dataset-validation] ${validationSummary}`
+                            : ep.notes;
+
                         await prisma.episode.update({
                             where: { id: episodeId },
                             data: {
-                                status: liveStatus.status,
+                                status: nextStatus,
                                 stoppedAt: new Date(),
+                                notes: nextNotes,
                             }
                         });
 
                         // Release lock so the host can be used by the next episode
                         await releaseLock(config.isaacHost, episodeId);
 
-                        await sendEvent("episode.status", { status: liveStatus.status });
+                        await sendEvent("episode.status", { status: nextStatus });
                     } else {
                         await sendEvent("episode.status", { status: ep.status });
                     }

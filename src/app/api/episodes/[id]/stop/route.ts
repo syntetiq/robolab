@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getRunner } from "@/server/runner";
+import { formatValidationSummary, validateEpisodeDataset } from "@/server/datasetValidation";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
     try {
@@ -22,15 +23,24 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             console.warn(`Stop episode returned error: ${result.error}`);
         }
 
+        const outputDir = episode.outputDir || `${config.defaultOutputDir}\\episodes\\${id}`;
+        const validation = validateEpisodeDataset(outputDir);
+        const summary = formatValidationSummary(validation);
+        const status = validation.valid ? "stopped" : "failed";
+        const notes = summary
+            ? `${episode.notes || ""}${episode.notes ? "\n" : ""}[dataset-validation] ${summary}`
+            : episode.notes;
+
         const updated = await prisma.episode.update({
             where: { id },
             data: {
-                status: "stopped",
-                stoppedAt: new Date()
+                status,
+                stoppedAt: new Date(),
+                notes
             }
         });
 
-        return NextResponse.json(updated);
+        return NextResponse.json({ ...updated, datasetValidation: validation });
     } catch (error) {
         console.error(error);
         return NextResponse.json({ error: "Server Error" }, { status: 500 });

@@ -2,16 +2,74 @@ import { Runner, DiagnosticReport, StartResult, StopResult, StatusSnapshot } fro
 import { acquireLock, releaseLock } from "../hostLock";
 import fs from "fs";
 import path from "path";
+import { execFile, spawn } from "child_process";
 
 export class LocalRunner implements Runner {
-    async testConnection(config: any): Promise<DiagnosticReport> {
+    private resolveEnvironmentUsd(episode: any): string {
+        const configured = (episode.launchProfile?.environmentUsd || episode.scene?.stageUsdPath || "").trim();
+        if (configured && !configured.startsWith("/Isaac/")) {
+            return configured;
+        }
+
+        const defaultHome = "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd";
+        const defaultOffice = "C:\\RoboLab_Data\\scenes\\Office_Interactive.usd";
+        const sceneName = (episode.scene?.name || "").toLowerCase();
+        const sceneType = (episode.scene?.type || "").toLowerCase();
+        const prefersOffice = sceneName.includes("office") || sceneType === "office";
+        const candidate = prefersOffice ? defaultOffice : defaultHome;
+
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+        return configured || candidate;
+    }
+
+    private buildEpisodePaths(config: any, episodeId: string) {
+        const baseOutputDir = config.defaultOutputDir || "C:\\RoboLab_Data";
+        const episodeOutDir = path.join(baseOutputDir, "episodes", episodeId);
         return {
-            isaacHostReachable: true, // Always reachable locally
+            baseOutputDir,
+            episodeOutDir,
+            pidFile: `${episodeOutDir}_pid.txt`,
+            stdoutLog: `${episodeOutDir}_stdout.log`,
+            stderrLog: `${episodeOutDir}_stderr.log`,
+        };
+    }
+
+    private execFileAsync(file: string, args: string[]): Promise<void> {
+        return new Promise((resolve, reject) => {
+            execFile(file, args, { windowsHide: true }, (error) => {
+                if (error) {
+                    reject(error);
+                    return;
+                }
+                resolve();
+            });
+        });
+    }
+
+    private isPidRunning(pid: number): boolean {
+        if (!Number.isInteger(pid) || pid <= 0) return false;
+        try {
+            process.kill(pid, 0);
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    async testConnection(config: any): Promise<DiagnosticReport> {
+        const isaacDir = config.isaacInstallPath || "C:\\Users\\max\\Documents\\IsaacSim";
+        const pyBat = path.join(isaacDir, "python.bat");
+        return {
+            isaacHostReachable: fs.existsSync(isaacDir),
             sshReachable: null,
             resolvedIp: "localhost",
             latencyMs: 1,
-            errors: [],
-            recommendations: ["Local mode active. No network connection needed."]
+            errors: fs.existsSync(pyBat) ? [] : [`Isaac Sim executable not found: ${pyBat}`],
+            recommendations: fs.existsSync(pyBat)
+                ? ["Local mode active. Isaac Sim launch script detected."]
+                : ["Set Isaac Sim Install Path to a valid local folder containing python.bat."],
         };
     }
 
@@ -21,24 +79,70 @@ export class LocalRunner implements Runner {
             return { success: false, error: `Host ${config.isaacHost} is currently locked by another episode.` };
         }
 
-        // MVP Stub: Create output dir and write metadata.json locally
-        const outDir = config.defaultOutputDir ? `${config.defaultOutputDir}/episodes/${episode.id}` : `./data/episodes/${episode.id}`;
+        const { episodeOutDir, pidFile, stdoutLog, stderrLog } = this.buildEpisodePaths(config, episode.id);
 
         try {
-            if (!fs.existsSync(outDir)) {
-                fs.mkdirSync(outDir, { recursive: true });
-            }
+            fs.mkdirSync(episodeOutDir, { recursive: true });
 
             const meta = {
                 ...episode,
                 startedAt: new Date(),
                 frozenConfigSnapshot: config
             };
+            fs.writeFileSync(path.join(episodeOutDir, "metadata.json"), JSON.stringify(meta, null, 2));
 
-            fs.writeFileSync(path.join(outDir, "metadata.json"), JSON.stringify(meta, null, 2));
+            const launchFromProfile = episode.launchProfile?.isaacLaunchTemplate?.trim();
+            let detachedCommand = "";
 
-            // Simulate launching...
-            console.log(`[LocalRunner] Executing: ${episode.launchProfile?.isaacLaunchTemplate || "default isaac run"}`);
+            if (launchFromProfile) {
+                detachedCommand = launchFromProfile;
+                console.log(`[LocalRunner] Executing template: ${launchFromProfile}`);
+            } else {
+                const isaacDir = config.isaacInstallPath || "C:\\Users\\max\\Documents\\IsaacSim";
+                const pyBat = path.join(isaacDir, "python.bat");
+                const scriptName = episode.launchProfile?.scriptName || "data_collector_tiago.py";
+                const scriptPath = path.resolve(process.cwd(), "scripts", scriptName);
+                const duration = episode.durationSec || 60;
+                const escapedOutputDir = episodeOutDir.replace(/'/g, "''");
+                const escapedScriptPath = scriptPath.replace(/'/g, "''");
+                const escapedPyBat = pyBat.replace(/'/g, "''");
+                const envUsd = this.resolveEnvironmentUsd(episode);
+                const escapedEnvUsd = envUsd.replace(/'/g, "''");
+                let psCmd = `& '${escapedPyBat}' '${escapedScriptPath}' --env '${escapedEnvUsd}' --output_dir '${escapedOutputDir}' --duration ${duration} --headless`;
+
+                if (!fs.existsSync(pyBat)) {
+                    throw new Error(`Isaac Sim executable not found: ${pyBat}`);
+                }
+                if (!fs.existsSync(scriptPath)) {
+                    throw new Error(`Episode script not found: ${scriptPath}`);
+                }
+                if (episode.launchProfile?.enableWebRTC) {
+                    psCmd += " --webrtc";
+                }
+                if (episode.launchProfile?.enableVrTeleop) {
+                    psCmd += " --vr";
+                }
+                if (episode.launchProfile?.enableMoveIt) {
+                    psCmd += " --moveit";
+                }
+                if (episode.launchProfile?.robotPovCameraPrim) {
+                    const escapedPov = String(episode.launchProfile.robotPovCameraPrim).replace(/'/g, "''");
+                    psCmd += ` --robot_pov_camera_prim '${escapedPov}'`;
+                }
+
+                detachedCommand = `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${psCmd}"`;
+                console.log(`[LocalRunner] Executing: ${psCmd}`);
+            }
+
+            const cmdWithLogs = `${detachedCommand} 1> "${stdoutLog}" 2> "${stderrLog}"`;
+            const child = spawn(cmdWithLogs, {
+                detached: true,
+                windowsHide: true,
+                shell: true,
+                stdio: "ignore",
+            });
+            child.unref();
+            fs.writeFileSync(pidFile, String(child.pid), "utf8");
             return { success: true };
         } catch (e: any) {
             await releaseLock(config.isaacHost, episode.id);
@@ -47,27 +151,24 @@ export class LocalRunner implements Runner {
     }
 
     async stopEpisode(episode: any, config: any): Promise<StopResult> {
+        const { episodeOutDir, pidFile } = this.buildEpisodePaths(config, episode.id);
         await releaseLock(config.isaacHost, episode.id);
-        console.log(`[LocalRunner] Executing: ${episode.launchProfile?.stopTemplate || "pkill -f isaac-sim"}`);
+        console.log(`[LocalRunner] Stopping local process for episode ${episode.id}`);
 
-        // Finalize metadata...
-        const outDir = config.defaultOutputDir ? `${config.defaultOutputDir}/episodes/${episode.id}` : `./data/episodes/${episode.id}`;
         try {
-            if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+            if (fs.existsSync(pidFile)) {
+                const rawPid = fs.readFileSync(pidFile, "utf8").trim();
+                const pid = Number(rawPid);
+                if (this.isPidRunning(pid)) {
+                    await this.execFileAsync("taskkill", ["/F", "/T", "/PID", String(pid)]);
+                }
+            }
 
-            const metaPath = path.join(outDir, "metadata.json");
+            const metaPath = path.join(episodeOutDir, "metadata.json");
             if (fs.existsSync(metaPath)) {
                 const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
                 meta.stoppedAt = new Date();
                 fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
-            }
-
-            // Feature: Simulate recording video generation for UI testing
-            const dummyVideoPath = path.join(outDir, "camera_0.mp4");
-            if (!fs.existsSync(dummyVideoPath)) {
-                // Just writing a small empty text file named mp4 to test the list payload.
-                // A real mp4 would be written by Isaac Sim properly. We write dummy bytes so the file exists.
-                fs.writeFileSync(dummyVideoPath, "MOCK_VIDEO_DATA");
             }
 
         } catch (e) { }
@@ -76,24 +177,65 @@ export class LocalRunner implements Runner {
     }
 
     async getLiveStatus(episode: any, config: any): Promise<StatusSnapshot> {
+        const { pidFile } = this.buildEpisodePaths(config, episode.id);
         const uptimeSec = Math.floor((Date.now() - new Date(episode.startedAt || Date.now()).getTime()) / 1000);
-        const durationLimit = episode.durationSec || 60;
+        let isRunning = false;
+
+        if (fs.existsSync(pidFile)) {
+            const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
+            isRunning = this.isPidRunning(pid);
+        }
 
         return {
-            status: uptimeSec >= durationLimit ? "completed" : "running",
+            status: isRunning ? "running" : "completed",
             uptimeSec,
-            cpuUsage: Math.floor(Math.random() * 20 + 10),
-            memoryUsage: Math.floor(Math.random() * 40 + 40)
+            cpuUsage: 0,
+            memoryUsage: 0
         };
     }
 
     async getLiveLogs(episode: any, config: any, lines: number = 20): Promise<string[]> {
-        // ... (existing mock lines logic) ...
-        return ["Local simulation doesn't stream real logs."];
+        const { stdoutLog } = this.buildEpisodePaths(config, episode.id);
+        if (!fs.existsSync(stdoutLog)) {
+            return ["Waiting for log file generation..."];
+        }
+
+        const content = fs.readFileSync(stdoutLog, "utf8");
+        return content
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0)
+            .slice(-lines);
     }
 
     async syncData(episode: any, config: any): Promise<{ success: boolean; error?: string }> {
-        // For local runner, data is already local.
-        return { success: true };
+        const { episodeOutDir } = this.buildEpisodePaths(config, episode.id);
+        const localOutDir = path.resolve(process.cwd(), `public/episodes/${episode.id}`);
+        try {
+            fs.mkdirSync(localOutDir, { recursive: true });
+            const filesToSync = [
+                "metadata.json",
+                "dataset.json",
+                "dataset_manifest.json",
+                "telemetry.json",
+                "camera_0.mp4",
+            ];
+
+            let copied = 0;
+            for (const fileName of filesToSync) {
+                const source = path.join(episodeOutDir, fileName);
+                const target = path.join(localOutDir, fileName);
+                if (fs.existsSync(source)) {
+                    fs.copyFileSync(source, target);
+                    copied++;
+                }
+            }
+            if (copied === 0) {
+                return { success: false, error: "No files found to sync." };
+            }
+            return { success: true };
+        } catch (e: any) {
+            return { success: false, error: e.message };
+        }
     }
 }

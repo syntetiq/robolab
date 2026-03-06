@@ -31,6 +31,7 @@ export default function EpisodeDetailPage() {
     const [logs, setLogs] = useState<string[]>([]);
     const [loading, setLoading] = useState(true);
     const [videos, setVideos] = useState<any[]>([]);
+    const [teleopStatus, setTeleopStatus] = useState<any>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
     const [elapsedSec, setElapsedSec] = useState(0);
 
@@ -81,6 +82,22 @@ export default function EpisodeDetailPage() {
 
     useEffect(() => {
         let interval: NodeJS.Timeout;
+        const pullTeleopStatus = async () => {
+            try {
+                const res = await fetch(`/api/episodes/${id}/teleop`);
+                if (!res.ok) return;
+                setTeleopStatus(await res.json());
+            } catch {
+                // ignore transient polling errors
+            }
+        };
+        pullTeleopStatus();
+        interval = setInterval(pullTeleopStatus, 3000);
+        return () => clearInterval(interval);
+    }, [id]);
+
+    useEffect(() => {
+        let interval: NodeJS.Timeout;
         const isCurrentlyRunning = episode?.status === "running" || episode?.status === "stopping";
         const startTime = episode?.startedAt || episode?.createdAt;
 
@@ -100,7 +117,23 @@ export default function EpisodeDetailPage() {
 
     const handleAction = (action: string) => {
         // Direct execution for teleop commands to avoid the confirmation dialog popup
-        if (["move_forward", "move_backward", "move_left", "move_right", "grasp_mug", "go_home"].includes(action)) {
+        if ([
+            "move_forward",
+            "move_backward",
+            "move_left",
+            "move_right",
+            "grasp_mug",
+            "go_home",
+            "start_vr_session",
+            "stop_vr_session",
+            "start_moveit_session",
+            "stop_moveit_session",
+            "moveit_plan_pick",
+            "moveit_plan_place",
+            "moveit_plan_pick_sink",
+            "moveit_plan_pick_fridge",
+            "moveit_go_home",
+        ].includes(action)) {
             executeImmediateAction(action);
             return;
         }
@@ -254,17 +287,40 @@ export default function EpisodeDetailPage() {
                     </CardContent>
                 </Card>
 
-                {config?.streamingMode === "browser_embedded_optional" && episode?.launchProfile?.enableWebRTC && (
+                {(episode?.launchProfile?.enableVrTeleop || episode?.launchProfile?.enableMoveIt || episode?.launchProfile?.enableWebRTC) && (
                     <Card className="bg-purple-50/50 border-purple-200 dark:bg-purple-950/20 dark:border-purple-900">
                         <CardHeader className="pb-2">
                             <CardTitle className="text-sm flex items-center text-purple-700 dark:text-purple-400">
-                                <Info className="w-4 h-4 mr-2" /> WebRTC Teleoperation Active
+                                <Info className="w-4 h-4 mr-2" /> Teleoperation Control Panel
                             </CardTitle>
                         </CardHeader>
                         <CardContent className="text-xs text-purple-800 dark:text-purple-300 space-y-2">
-                            <p>You are controlling the Tiago robot via the Web Interface. The live stream will appear on the right once Isaac Sim initializes.</p>
+                            <p>Use these commands to drive teleop, VR session lifecycle, and MoveIt-assisted actions.</p>
 
-                            <div className="grid grid-cols-3 gap-2 mt-4">
+                            {episode?.launchProfile?.enableVrTeleop && (
+                                <div className="grid grid-cols-2 gap-2 mt-2">
+                                    <Button
+                                        onClick={() => handleAction("start_vr_session")}
+                                        variant="secondary"
+                                        size="sm"
+                                        className="w-full text-xs h-7"
+                                        disabled={!!teleopStatus?.vrSessionActive}
+                                    >
+                                        Start VR Session
+                                    </Button>
+                                    <Button
+                                        onClick={() => handleAction("stop_vr_session")}
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full text-xs h-7"
+                                        disabled={!teleopStatus?.vrSessionActive}
+                                    >
+                                        Stop VR Session
+                                    </Button>
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-3 gap-2 mt-3">
                                 <Button onClick={() => handleAction("move_left")} variant="outline" size="sm" className="w-full text-xs h-7">Left</Button>
                                 <Button onClick={() => handleAction("move_forward")} variant="default" size="sm" className="w-full text-xs h-7 bg-purple-600">Forward</Button>
                                 <Button onClick={() => handleAction("move_right")} variant="outline" size="sm" className="w-full text-xs h-7">Right</Button>
@@ -273,6 +329,61 @@ export default function EpisodeDetailPage() {
                                 <Button onClick={() => handleAction("move_backward")} variant="outline" size="sm" className="w-full text-xs h-7 mt-2">Backward</Button>
                                 <Button onClick={() => handleAction("go_home")} variant="secondary" size="sm" className="w-full text-xs h-7 mt-2 col-span-1">Home Pose</Button>
                             </div>
+
+                            {episode?.launchProfile?.enableMoveIt && (
+                                <div className="grid grid-cols-2 gap-2 mt-2">
+                                    <Button
+                                        onClick={() => handleAction("start_moveit_session")}
+                                        variant="secondary"
+                                        size="sm"
+                                        className="w-full text-xs h-7"
+                                        disabled={!!teleopStatus?.moveitSessionActive}
+                                    >
+                                        Start MoveIt Session
+                                    </Button>
+                                    <Button
+                                        onClick={() => handleAction("stop_moveit_session")}
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full text-xs h-7"
+                                        disabled={!teleopStatus?.moveitSessionActive}
+                                    >
+                                        Stop MoveIt Session
+                                    </Button>
+                                    <Button onClick={() => handleAction("moveit_plan_pick")} variant="secondary" size="sm" className="w-full text-xs h-7">
+                                        Plan Pick
+                                    </Button>
+                                    <Button onClick={() => handleAction("moveit_plan_place")} variant="secondary" size="sm" className="w-full text-xs h-7">
+                                        Plan Place
+                                    </Button>
+                                    <Button onClick={() => handleAction("moveit_plan_pick_sink")} variant="secondary" size="sm" className="w-full text-xs h-7">
+                                        Pick Sink
+                                    </Button>
+                                    <Button onClick={() => handleAction("moveit_plan_pick_fridge")} variant="secondary" size="sm" className="w-full text-xs h-7">
+                                        Pick Fridge
+                                    </Button>
+                                    <Button onClick={() => handleAction("moveit_go_home")} variant="outline" size="sm" className="w-full text-xs h-7">
+                                        MoveIt Home
+                                    </Button>
+                                </div>
+                            )}
+                            {(teleopStatus?.vrEnabled || teleopStatus?.moveitEnabled) && (
+                                <div className="rounded border border-purple-200 p-2 mt-2 text-[11px]">
+                                    <div>VR session: {teleopStatus?.vrSessionActive ? "active" : "inactive"}</div>
+                                    <div>MoveIt session: {teleopStatus?.moveitSessionActive ? "active" : "inactive"}</div>
+                                    <div>ROS2 bridge: {teleopStatus?.ros2Available === null ? "unknown" : teleopStatus?.ros2Available ? "available" : "unavailable"}</div>
+                                    <div>MoveIt bridge: {teleopStatus?.moveitAvailable === null ? "unknown" : teleopStatus?.moveitAvailable ? "available" : "unavailable"}</div>
+                                    {teleopStatus?.bridgeMode && <div>Bridge mode: {teleopStatus.bridgeMode}</div>}
+                                    <div>ROS2 setup source: {teleopStatus?.ros2SetupSource || "none"}</div>
+                                    {teleopStatus?.activeRos2SetupCommand ? (
+                                        <div className="break-all">ROS2 setup command: {teleopStatus.activeRos2SetupCommand}</div>
+                                    ) : (
+                                        <div>ROS2 setup command: not set</div>
+                                    )}
+                                    {teleopStatus?.lastCommand && <div>Last command: {teleopStatus.lastCommand}</div>}
+                                    {teleopStatus?.lastError && <div className="text-red-500">Last error: {teleopStatus.lastError}</div>}
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 )}
