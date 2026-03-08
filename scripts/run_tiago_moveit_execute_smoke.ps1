@@ -6,6 +6,8 @@ param(
     [string]$EnvUsd = "C:\RoboLab_Data\scenes\Small_House_Interactive.usd",
     [switch]$UseFakeControllers,
     [switch]$RequireRealTiago,
+    [switch]$SpawnObjects,
+    [string]$ObjectsDir = "C:\RoboLab_Data\data\object_sets",
     [int]$IntentDelaySec = 0,
     [int]$IntentResultTimeoutSec = 35,
     [int]$MaxRetriesPerIntent = 2,
@@ -263,6 +265,9 @@ try {
     )
     if ($RequireRealTiago) {
         $smokeArgs += "-RequireRealTiago"
+    }
+    if ($SpawnObjects) {
+        $smokeArgs += @("-SpawnObjects", "-ObjectsDir", $ObjectsDir)
     }
     $started.smoke = Start-Process -FilePath "powershell.exe" -ArgumentList $smokeArgs -PassThru -RedirectStandardOutput $smokeOut -RedirectStandardError $smokeErr
     Write-Host "$pfx Started smoke pid=$($started.smoke.Id)"

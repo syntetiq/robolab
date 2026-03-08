@@ -165,6 +165,18 @@ export class LocalRunner implements Runner {
                 if (episode.launchProfile?.enableMoveIt) {
                     psCmd += " --moveit";
                 }
+                if (episode.objectSetId && episode.objectSet) {
+                    psCmd += " --spawn-objects";
+                    try {
+                        const assetPaths: string[] = JSON.parse(episode.objectSet.assetPaths || "[]");
+                        if (assetPaths.length > 0 && fs.existsSync(assetPaths[0])) {
+                            const objectsDir = path.dirname(assetPaths[0]).replace(/'/g, "''");
+                            psCmd += ` --objects-dir '${objectsDir}'`;
+                        }
+                    } catch {
+                        // assetPaths not parseable or empty; fall back to default objects dir
+                    }
+                }
                 if (episode.launchProfile?.robotPovCameraPrim) {
                     const escapedPov = String(episode.launchProfile.robotPovCameraPrim).replace(/'/g, "''");
                     psCmd += ` --robot_pov_camera_prim '${escapedPov}'`;

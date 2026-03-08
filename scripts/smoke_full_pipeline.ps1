@@ -16,6 +16,8 @@ param(
     [string]$Ros2DllDir      = "C:\Users\max\Mambaforge\envs\ros2_humble\Library\bin",
     [string]$Ros2SitePackages = "C:\Users\max\Mambaforge\envs\ros2_humble\Lib\site-packages",
     [switch]$RequireRealTiago,
+    [switch]$SpawnObjects,
+    [string]$ObjectsDir = "C:\RoboLab_Data\data\object_sets",
     [switch]$UseApi,
     [string]$ApiBase = "http://localhost:3000"
 )
@@ -112,6 +114,10 @@ if ($UseApi) {
     )
     if ($RequireRealTiago) {
         $collectorArgs += "--require-real-tiago"
+    }
+    if ($SpawnObjects) {
+        $collectorArgs += @("--spawn-objects", "--objects-dir", $ObjectsDir)
+        Write-Host "[Smoke] Object spawning enabled from: $ObjectsDir"
     }
     & $IsaacPython @collectorArgs
     if ($LASTEXITCODE -ne 0) {
