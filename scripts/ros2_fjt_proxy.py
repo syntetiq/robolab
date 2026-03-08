@@ -129,15 +129,17 @@ def _read_joint_state_file() -> dict:
 
 
 def _write_pending_traj(traj_id: int, joint_names: list, points: list) -> Path:
-    """Write a pending trajectory file for Isaac Sim to pick up."""
+    """Write a pending trajectory file atomically (write tmp → rename)."""
     payload = {
         "traj_id": traj_id,
         "joint_names": joint_names,
-        "points": points,   # list of {t: float, positions: [float]}
+        "points": points,
         "created_at": time.time(),
     }
     path = SHARED / f"pending_{traj_id}.json"
-    path.write_text(json.dumps(payload), encoding="utf-8")
+    tmp = SHARED / f"pending_{traj_id}.tmp"
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    tmp.replace(path)
     return path
 
 

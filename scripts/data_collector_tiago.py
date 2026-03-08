@@ -1301,6 +1301,7 @@ try:
                 active_trajectory_goals.append(goal)
 
             done_goals = []
+            merged_targets = {}
             for goal in active_trajectory_goals:
                 points = goal["points"]
                 next_idx = goal["next_point_idx"]
@@ -1313,17 +1314,21 @@ try:
                     next_idx += 1
 
                 if latest_targets:
-                    ok = _apply_joint_positions(latest_targets)
-                    if not ok:
-                        goal["status"] = "failed"
-                        goal["error"] = "Failed to apply articulation joint targets"
-                        done_goals.append(goal)
-                        continue
+                    merged_targets.update(latest_targets)
 
                 goal["next_point_idx"] = next_idx
                 if next_idx >= len(points):
                     goal["status"] = "succeeded"
                     done_goals.append(goal)
+
+            if merged_targets:
+                ok = _apply_joint_positions(merged_targets)
+                if not ok:
+                    for goal in active_trajectory_goals:
+                        if goal not in done_goals:
+                            goal["status"] = "failed"
+                            goal["error"] = "Failed to apply articulation joint targets"
+                            done_goals.append(goal)
 
             for goal in done_goals:
                 if goal in active_trajectory_goals:
@@ -1567,9 +1572,9 @@ try:
                     _snap = dict(latest_joint_snapshot)
                 if _snap:
                     try:
-                        (FJT_PROXY_DIR / "joint_state.json").write_text(
-                            json.dumps(_snap), encoding="utf-8"
-                        )
+                        _js_tmp = FJT_PROXY_DIR / "joint_state.tmp"
+                        _js_tmp.write_text(json.dumps(_snap), encoding="utf-8")
+                        _js_tmp.replace(FJT_PROXY_DIR / "joint_state.json")
                     except Exception:
                         pass
 
@@ -1582,12 +1587,11 @@ try:
                         continue
                     if _traj_id in _seen_traj_ids:
                         continue
-                    _seen_traj_ids.add(_traj_id)
-                    # Don't remove pending file yet — proxy checks for done_ not pending_.
                     try:
                         _payload = json.loads(_pf.read_text(encoding="utf-8"))
                     except Exception:
                         continue
+                    _seen_traj_ids.add(_traj_id)
                     _joint_names_traj = _payload.get("joint_names", [])
                     _raw_points = _payload.get("points", [])
                     _parsed = []

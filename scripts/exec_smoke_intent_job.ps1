@@ -15,21 +15,22 @@ param(
 Start-Sleep -Seconds $DelaySec
 $baseEnv = 'set HOME=C:\Users\max&& set ROS_DOMAIN_ID=0&& set ROS_LOCALHOST_ONLY=0&& call ' + $RosSetupArg + ' &&'
 
-# Wait for /joint_states publisher from ros2_fjt_proxy (indicates Isaac Sim + proxy are ready).
-# Allow up to 90 s total (Isaac Sim takes ~25-45 s to load, proxy reads joint_state.json).
+# Wait for joint_state.json (written by Isaac Sim, read by FJT proxy).
+# This is faster and more reliable than polling ros2 topic info inside Start-Job.
+$jsFile = "C:\RoboLab_Data\fjt_proxy\joint_state.json"
 $ready = $false
-for ($i = 0; $i -lt 180; $i++) {
-    $topicInfo = cmd /d /s /c "$baseEnv ros2 topic info /joint_states 2>nul"
-    if ($topicInfo -match "Publisher count") {
+for ($i = 0; $i -lt 120; $i++) {
+    if (Test-Path $jsFile) {
         $ready = $true
-        Write-Output "[ExecSmokeJob] Execution prereqs ready: /joint_states publisher active (iter $i)"
+        Write-Output "[ExecSmokeJob] Prereqs ready: joint_state.json exists (iter $i)"
         break
     }
     Start-Sleep -Milliseconds 500
 }
 if (-not $ready) {
-    Write-Output "[ExecSmokeJob] /joint_states not seen after 90s - proceeding anyway"
+    Write-Output "[ExecSmokeJob] joint_state.json not found after 60s - proceeding anyway"
 }
+Start-Sleep -Seconds 3
 
 function Wait-ForBridgeResultFromOffset {
     param(
@@ -92,8 +93,8 @@ function Wait-ForBridgeIntentAckFromOffset {
 }
 
 $sequence = New-Object System.Collections.Generic.List[string]
-foreach ($intentRaw in $IntentListArg) {
-    $intent = "$intentRaw".Trim().ToLower()
+$intentItems = "$IntentListArg".Split(",") | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ }
+foreach ($intent in $intentItems) {
     if (-not $intent) { continue }
     if ($PreGoHomeArg -and $intent -ne "go_home") {
         # Skip go_home pre-stage if the previous intent is already go_home

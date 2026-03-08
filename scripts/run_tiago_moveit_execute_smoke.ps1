@@ -3,6 +3,7 @@ param(
     [string]$Intent = "plan_pick_sink",
     [string]$IntentSequence = "",
     [string]$TiagoUsd = "C:\RoboLab_Data\data\tiago_isaac\tiago_dual_functional.usd",
+    [string]$EnvUsd = "C:\RoboLab_Data\scenes\Small_House_Interactive.usd",
     [switch]$UseFakeControllers,
     [switch]$RequireRealTiago,
     [int]$IntentDelaySec = 0,
@@ -234,11 +235,12 @@ try {
     # 4) send gated intent sequence while smoke is running
     # Run intent job in a separate file to avoid PS5.1 ScriptBlock parsing quirks.
     $IntentJobScript = Join-Path $PSScriptRoot "exec_smoke_intent_job.ps1"
+    $intentListCsv = $intentList -join ","
     $intentJob = Start-Job -FilePath $IntentJobScript -ArgumentList @(
         $RosSetup,
         $PyExe,
         $PubScript,
-        $intentList,
+        $intentListCsv,
         $IntentDelaySec,
         $bridgeErr,
         $IntentResultTimeoutSec,
@@ -256,7 +258,8 @@ try {
         "-Duration", $Duration,
         "-TiagoUsd", $TiagoUsd,
         "-Ros2DllDir", $condaRos2Bin,
-        "-Ros2SitePackages", $condaRos2Site
+        "-Ros2SitePackages", $condaRos2Site,
+        "-EnvUsd", $EnvUsd
     )
     if ($RequireRealTiago) {
         $smokeArgs += "-RequireRealTiago"
