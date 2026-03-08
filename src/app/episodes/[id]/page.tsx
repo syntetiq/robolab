@@ -5,12 +5,13 @@ import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Play, Square, CheckCircle, XCircle, Terminal, Download, Info } from "lucide-react";
+import { Play, Square, CheckCircle, XCircle, Terminal, Download, Info, RefreshCcw } from "lucide-react";
 import { format } from "date-fns";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 import { HelpTooltip } from "@/components/HelpTooltip";
 import { VideoPlayerCard } from "@/components/episodes/VideoPlayerCard";
+import { Input } from "@/components/ui/input";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -32,11 +33,32 @@ export default function EpisodeDetailPage() {
     const [loading, setLoading] = useState(true);
     const [videos, setVideos] = useState<any[]>([]);
     const [teleopStatus, setTeleopStatus] = useState<any>(null);
+    const [orchestrationStatus, setOrchestrationStatus] = useState<any>(null);
+    const [validation, setValidation] = useState<any>(null);
+    const [teleopProfile, setTeleopProfile] = useState<any>({
+        name: "default",
+        repeatMs: 140,
+        deadmanKey: "Shift",
+    });
+    const [streamState, setStreamState] = useState<"offline" | "connecting" | "live" | "reconnecting">("offline");
+    const [streamLayout, setStreamLayout] = useState<"fit" | "fill">("fit");
+    const [streamRefreshToken, setStreamRefreshToken] = useState(0);
+    const [streamTransport, setStreamTransport] = useState<"webrtc" | "frame_fallback">("webrtc");
+    const [frameTick, setFrameTick] = useState(0);
+    const [deadmanPressed, setDeadmanPressed] = useState(false);
+    const [pressedDirections, setPressedDirections] = useState<Record<string, boolean>>({});
     const scrollRef = useRef<HTMLDivElement>(null);
+    const teleopLoopRef = useRef<NodeJS.Timeout | null>(null);
     const [elapsedSec, setElapsedSec] = useState(0);
 
     const [confirmAction, setConfirmAction] = useState<string | null>(null);
     const [alertMessage, setAlertMessage] = useState<string | null>(null);
+    const streamHintUrl =
+        typeof config?.streamingHint === "string" && /^https?:\/\//i.test(config.streamingHint.trim())
+            ? config.streamingHint.trim()
+            : config?.isaacHost
+                ? `http://${config.isaacHost}:8211/streaming/webrtc-demo/`
+                : "";
 
     const fetchEpisodeAndConfig = async () => {
         try {
@@ -81,12 +103,29 @@ export default function EpisodeDetailPage() {
     }, [id]);
 
     useEffect(() => {
+        try {
+            const raw = localStorage.getItem("robolab.teleopProfile");
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                setTeleopProfile((prev: any) => ({ ...prev, ...parsed }));
+            }
+        } catch {
+            // ignore
+        }
+    }, []);
+
+    useEffect(() => {
         let interval: NodeJS.Timeout;
         const pullTeleopStatus = async () => {
             try {
-                const res = await fetch(`/api/episodes/${id}/teleop`);
-                if (!res.ok) return;
-                setTeleopStatus(await res.json());
+                const [teleopRes, orchRes, valRes] = await Promise.all([
+                    fetch(`/api/episodes/${id}/teleop`),
+                    fetch(`/api/episodes/${id}/orchestration`),
+                    fetch(`/api/episodes/${id}/validation`),
+                ]);
+                if (teleopRes.ok) setTeleopStatus(await teleopRes.json());
+                if (orchRes.ok) setOrchestrationStatus(await orchRes.json());
+                if (valRes.ok) setValidation(await valRes.json());
             } catch {
                 // ignore transient polling errors
             }
@@ -95,6 +134,34 @@ export default function EpisodeDetailPage() {
         interval = setInterval(pullTeleopStatus, 3000);
         return () => clearInterval(interval);
     }, [id]);
+
+    useEffect(() => {
+        const running = episode?.status === "running";
+        if (!running) {
+            setStreamState("offline");
+            setStreamTransport("webrtc");
+            return;
+        }
+        setStreamState((prev) => (prev === "live" ? prev : "connecting"));
+        const timeout = setTimeout(() => {
+            // iframe load events are unreliable for WebRTC readiness; hard-fallback
+            // to frame transport if we don't have explicit frame/live confirmation.
+            setStreamState((prev) => (prev === "live" ? prev : "reconnecting"));
+        }, 7000);
+        return () => clearTimeout(timeout);
+    }, [episode?.status, streamRefreshToken]);
+
+    useEffect(() => {
+        if (streamState === "reconnecting") {
+            setStreamTransport("frame_fallback");
+        }
+    }, [streamState]);
+
+    useEffect(() => {
+        if (episode?.status !== "running" || streamTransport !== "frame_fallback") return;
+        const timer = setInterval(() => setFrameTick((v) => v + 1), 700);
+        return () => clearInterval(timer);
+    }, [episode?.status, streamTransport]);
 
     useEffect(() => {
         let interval: NodeJS.Timeout;
@@ -115,6 +182,82 @@ export default function EpisodeDetailPage() {
         };
     }, [episode?.status, episode?.startedAt, episode?.createdAt]);
 
+    useEffect(() => {
+        if (episode?.status !== "running") {
+            setPressedDirections({});
+            setDeadmanPressed(false);
+            return;
+        }
+
+        const keyToCommand: Record<string, string> = {
+            w: "move_forward",
+            a: "move_left",
+            s: "move_backward",
+            d: "move_right",
+        };
+        const deadmanKey = String(teleopProfile.deadmanKey || "Shift").toLowerCase();
+
+        const onKeyDown = (event: KeyboardEvent) => {
+            const key = event.key.toLowerCase();
+            if (key === deadmanKey) {
+                setDeadmanPressed(true);
+                return;
+            }
+            const cmd = keyToCommand[key];
+            if (cmd) {
+                setPressedDirections((prev) => ({ ...prev, [cmd]: true }));
+            }
+        };
+        const onKeyUp = (event: KeyboardEvent) => {
+            const key = event.key.toLowerCase();
+            if (key === deadmanKey) {
+                setDeadmanPressed(false);
+                executeImmediateAction("stop_motion", { source: "keyboard_mouse", deadmanActive: true });
+                return;
+            }
+            const cmd = keyToCommand[key];
+            if (cmd) {
+                setPressedDirections((prev) => ({ ...prev, [cmd]: false }));
+            }
+        };
+        const onBlur = () => {
+            setDeadmanPressed(false);
+            setPressedDirections({});
+            executeImmediateAction("stop_motion", { source: "keyboard_mouse", deadmanActive: true });
+        };
+
+        window.addEventListener("keydown", onKeyDown);
+        window.addEventListener("keyup", onKeyUp);
+        window.addEventListener("blur", onBlur);
+        return () => {
+            window.removeEventListener("keydown", onKeyDown);
+            window.removeEventListener("keyup", onKeyUp);
+            window.removeEventListener("blur", onBlur);
+        };
+    }, [episode?.status, teleopProfile.deadmanKey]);
+
+    useEffect(() => {
+        if (teleopLoopRef.current) {
+            clearInterval(teleopLoopRef.current);
+            teleopLoopRef.current = null;
+        }
+        if (episode?.status !== "running" || !deadmanPressed) return;
+
+        const active = Object.entries(pressedDirections).find(([, isPressed]) => isPressed)?.[0];
+        if (!active) return;
+        const repeatMs = Math.max(60, Number(teleopProfile.repeatMs || 140));
+        teleopLoopRef.current = setInterval(() => {
+            executeImmediateAction(active, { source: "keyboard_mouse", deadmanActive: true });
+        }, repeatMs);
+
+        return () => {
+            if (teleopLoopRef.current) {
+                clearInterval(teleopLoopRef.current);
+                teleopLoopRef.current = null;
+            }
+        };
+    }, [pressedDirections, deadmanPressed, teleopProfile.repeatMs, episode?.status]);
+
     const handleAction = (action: string) => {
         // Direct execution for teleop commands to avoid the confirmation dialog popup
         if ([
@@ -122,6 +265,7 @@ export default function EpisodeDetailPage() {
             "move_backward",
             "move_left",
             "move_right",
+            "stop_motion",
             "grasp_mug",
             "go_home",
             "start_vr_session",
@@ -140,12 +284,17 @@ export default function EpisodeDetailPage() {
         setConfirmAction(action);
     };
 
-    const executeImmediateAction = async (action: string) => {
+    const executeImmediateAction = async (action: string, options?: { source?: string; deadmanActive?: boolean; replayFrame?: any }) => {
         try {
             const res = await fetch(`/api/episodes/${id}/teleop`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ command: action })
+                body: JSON.stringify({
+                    command: action,
+                    source: options?.source || "ui_button",
+                    deadmanActive: options?.deadmanActive ?? false,
+                    replayFrame: options?.replayFrame,
+                })
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
@@ -153,6 +302,28 @@ export default function EpisodeDetailPage() {
             }
         } catch (e) {
             setAlertMessage("Failed to send teleop command.");
+        }
+    };
+
+    const startDeterministicRun = async () => {
+        try {
+            const res = await fetch(`/api/episodes/${id}/orchestration`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    durationSec: Math.max(20, Number(episode.durationSec || 30)),
+                    requireRealTiago: true,
+                    intent: "plan_pick_sink",
+                }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                setAlertMessage(data.error || "Failed to start orchestration.");
+                return;
+            }
+            setOrchestrationStatus(data);
+        } catch {
+            setAlertMessage("Failed to start deterministic orchestration.");
         }
     };
 
@@ -198,6 +369,18 @@ export default function EpisodeDetailPage() {
         downloadAnchorNode.remove();
     };
 
+    const updateTeleopProfile = (patch: any) => {
+        setTeleopProfile((prev: any) => {
+            const next = { ...prev, ...patch };
+            try {
+                localStorage.setItem("robolab.teleopProfile", JSON.stringify(next));
+            } catch {
+                // ignore
+            }
+            return next;
+        });
+    };
+
     if (loading) return <div className="p-8 text-center">Loading...</div>;
     if (!episode) return <div className="p-8 text-center text-red-500">Episode not found</div>;
 
@@ -239,6 +422,25 @@ export default function EpisodeDetailPage() {
                         <Button onClick={downloadMetadata} variant="secondary" className="w-full mt-4">
                             <Download className="w-4 h-4 mr-2" /> Download metadata.json
                         </Button>
+                    </CardContent>
+                </Card>
+
+                <Card className="border-sky-200">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm">Deterministic MoveIt Orchestration</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2 text-sm">
+                        <Button onClick={startDeterministicRun} className="w-full" disabled={orchestrationStatus?.status === "running"}>
+                            Start Deterministic Run
+                        </Button>
+                        <div className="rounded border p-2 text-xs">
+                            <div>Status: {orchestrationStatus?.status || "idle"}</div>
+                            <div>Stage: {orchestrationStatus?.stage || "idle"}</div>
+                            <div>ready: {String(!!orchestrationStatus?.ready)}</div>
+                            <div>intent_sent: {String(!!orchestrationStatus?.intentSent)}</div>
+                            <div>result_received: {String(!!orchestrationStatus?.resultReceived)}</div>
+                            {orchestrationStatus?.failedReason && <div className="text-red-500">failed_reason: {orchestrationStatus.failedReason}</div>}
+                        </div>
                     </CardContent>
                 </Card>
 
@@ -287,6 +489,31 @@ export default function EpisodeDetailPage() {
                     </CardContent>
                 </Card>
 
+                <Card>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm">Keyboard/Mouse Teleop Profile</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                        <div className="text-xs text-muted-foreground">Hold deadman + WASD. Motion stops on window blur and deadman release.</div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <Input
+                                value={teleopProfile.deadmanKey}
+                                onChange={(e) => updateTeleopProfile({ deadmanKey: e.target.value || "Shift" })}
+                                placeholder="Deadman key (Shift)"
+                            />
+                            <Input
+                                type="number"
+                                value={teleopProfile.repeatMs}
+                                onChange={(e) => updateTeleopProfile({ repeatMs: Number(e.target.value || 140) })}
+                                placeholder="Repeat ms"
+                            />
+                        </div>
+                        <div className="text-xs">
+                            deadman: <b>{deadmanPressed ? "pressed" : "released"}</b> | active command: {Object.entries(pressedDirections).find(([, active]) => active)?.[0] || "none"}
+                        </div>
+                    </CardContent>
+                </Card>
+
                 {(episode?.launchProfile?.enableVrTeleop || episode?.launchProfile?.enableMoveIt || episode?.launchProfile?.enableWebRTC) && (
                     <Card className="bg-purple-50/50 border-purple-200 dark:bg-purple-950/20 dark:border-purple-900">
                         <CardHeader className="pb-2">
@@ -328,6 +555,7 @@ export default function EpisodeDetailPage() {
                                 <Button onClick={() => handleAction("grasp_mug")} variant="secondary" size="sm" className="w-full text-xs h-7 mt-2 col-span-1">Grasp Mug</Button>
                                 <Button onClick={() => handleAction("move_backward")} variant="outline" size="sm" className="w-full text-xs h-7 mt-2">Backward</Button>
                                 <Button onClick={() => handleAction("go_home")} variant="secondary" size="sm" className="w-full text-xs h-7 mt-2 col-span-1">Home Pose</Button>
+                                <Button onClick={() => executeImmediateAction("stop_motion", { source: "ui_button", deadmanActive: true })} variant="destructive" size="sm" className="w-full text-xs h-7 mt-2 col-span-3">Emergency Stop</Button>
                             </div>
 
                             {episode?.launchProfile?.enableMoveIt && (
@@ -367,6 +595,20 @@ export default function EpisodeDetailPage() {
                                     </Button>
                                 </div>
                             )}
+                            <div className="grid grid-cols-1 gap-2 mt-2">
+                                <Button
+                                    onClick={() => executeImmediateAction("", {
+                                        source: "mock_vr_replay",
+                                        deadmanActive: true,
+                                        replayFrame: { linearX: 0.8, angularZ: 0.0 },
+                                    })}
+                                    variant="outline"
+                                    size="sm"
+                                    className="w-full text-xs h-7"
+                                >
+                                    Mock VR Replay Step
+                                </Button>
+                            </div>
                             {(teleopStatus?.vrEnabled || teleopStatus?.moveitEnabled) && (
                                 <div className="rounded border border-purple-200 p-2 mt-2 text-[11px]">
                                     <div>VR session: {teleopStatus?.vrSessionActive ? "active" : "inactive"}</div>
@@ -381,6 +623,9 @@ export default function EpisodeDetailPage() {
                                         <div>ROS2 setup command: not set</div>
                                     )}
                                     {teleopStatus?.lastCommand && <div>Last command: {teleopStatus.lastCommand}</div>}
+                                    {Array.isArray(teleopStatus?.supportedInputSources) && (
+                                        <div>Input sources: {teleopStatus.supportedInputSources.join(", ")}</div>
+                                    )}
                                     {teleopStatus?.lastError && <div className="text-red-500">Last error: {teleopStatus.lastError}</div>}
                                 </div>
                             )}
@@ -415,19 +660,65 @@ export default function EpisodeDetailPage() {
 
                 {config?.streamingMode === "browser_embedded_optional" && (
                     <Card className="h-[400px] flex flex-col overflow-hidden">
-                        <CardHeader className="pb-2">
-                            <CardTitle className="flex items-center text-sm">
-                                Live WebRTC Stream (Embedded)
+                        <CardHeader className="pb-2 space-y-2">
+                            <CardTitle className="flex items-center text-sm justify-between">
+                                <span>Live WebRTC Stream (Embedded)</span>
+                                <span className="text-xs font-normal">State: {streamState}</span>
                             </CardTitle>
+                            <div className="flex gap-2">
+                                <Button size="sm" variant="outline" onClick={() => setStreamLayout((prev) => (prev === "fit" ? "fill" : "fit"))}>
+                                    Layout: {streamLayout}
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                        setStreamTransport("webrtc");
+                                        setStreamRefreshToken((prev) => prev + 1);
+                                    }}
+                                >
+                                    <RefreshCcw className="w-4 h-4 mr-1" /> Reconnect
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setStreamTransport((prev) => (prev === "webrtc" ? "frame_fallback" : "webrtc"))}
+                                >
+                                    Transport: {streamTransport === "webrtc" ? "WebRTC" : "Frame"}
+                                </Button>
+                                {config?.isaacHost && (
+                                    <Button size="sm" variant="outline" asChild>
+                                        <a href={streamHintUrl} target="_blank" rel="noreferrer">
+                                            Open tab
+                                        </a>
+                                    </Button>
+                                )}
+                            </div>
                         </CardHeader>
                         <CardContent className="flex-1 p-0 bg-black">
                             {isRunning ? (
-                                <iframe
-                                    src={`http://${config.isaacHost}:8211/streaming/webrtc-demo/`}
-                                    className="w-full h-full border-0"
-                                    sandbox="allow-scripts allow-same-origin"
-                                    title="Isaac WebRTC Stream"
-                                />
+                                streamTransport === "webrtc" ? (
+                                    <iframe
+                                        key={streamRefreshToken}
+                                        src={streamHintUrl}
+                                        className={`w-full h-full border-0 ${streamLayout === "fill" ? "object-cover" : "object-contain"}`}
+                                        sandbox="allow-scripts allow-same-origin"
+                                        title="Isaac WebRTC Stream"
+                                        onLoad={() => setStreamState((prev) => (prev === "offline" ? "offline" : "connecting"))}
+                                        onError={() => {
+                                            setStreamState("reconnecting");
+                                            setStreamTransport("frame_fallback");
+                                        }}
+                                    />
+                                ) : (
+                                    <img
+                                        src={`/api/episodes/${id}/stream/frame?refresh=${streamRefreshToken}&tick=${frameTick}`}
+                                        alt="Live frame stream"
+                                        className={`w-full h-full ${streamLayout === "fill" ? "object-cover" : "object-contain"}`}
+                                        onLoad={() => setStreamState("live")}
+                                        onError={() => setStreamState("reconnecting")}
+                                    />
+                                )
                             ) : (
                                 <div className="h-full w-full flex items-center justify-center text-muted-foreground text-sm">
                                     Start episode to connect stream.
@@ -438,6 +729,23 @@ export default function EpisodeDetailPage() {
                 )}
 
                 <VideoPlayerCard videos={videos} />
+
+                <Card>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm">Dataset Validation</CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-xs space-y-1">
+                        <div>valid: {String(!!validation?.valid)}</div>
+                        <div>required outputs: {(validation?.requiredOutputs || []).join(", ") || "n/a"}</div>
+                        {(validation?.missingFiles || []).length > 0 && (
+                            <div className="text-red-500">missing: {validation.missingFiles.join(", ")}</div>
+                        )}
+                        {(validation?.issues || []).length > 0 && (
+                            <div className="text-red-500">issues: {validation.issues.join(" | ")}</div>
+                        )}
+                        {validation?.summary && <div>summary: {validation.summary}</div>}
+                    </CardContent>
+                </Card>
 
                 {episode.status === "completed" && (
                     <Card>
@@ -455,7 +763,7 @@ export default function EpisodeDetailPage() {
                             {videos.filter(v => v.name.endsWith('.json')).length > 0 ? (
                                 videos.filter(v => v.name.endsWith('.json')).map(file => (
                                     <Button key={file.name} variant="outline" size="sm" asChild className="w-full mb-2">
-                                        <a href={file.url} download={file.name}>
+                                        <a href={file.downloadUrl || file.playUrl} download={file.name}>
                                             <Download className="w-4 h-4 mr-2" /> Download {file.name}
                                         </a>
                                     </Button>

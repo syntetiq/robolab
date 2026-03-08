@@ -24,6 +24,26 @@ const SENSORS = [
     "RGB", "Depth", "CameraInfo", "PointCloud2", "GT Poses", "JointStates"
 ];
 
+const TASK_PRESETS: Record<string, { label: string; tasks: string[]; sensors: string[] }> = {
+    home_assist_full: {
+        label: "Home Assist (all 5 tasks)",
+        tasks: [...TASKS],
+        sensors: [...SENSORS],
+    },
+    pick_place_pack: {
+        label: "Pick & Place trio (sink/fridge/dishwasher)",
+        tasks: ["pick_place_sink", "pick_place_fridge", "pick_place_dishwasher"],
+        sensors: [...SENSORS],
+    },
+    door_manipulation_pack: {
+        label: "Door manipulation (fridge + dishwasher)",
+        tasks: ["open_close_fridge", "open_close_dishwasher"],
+        sensors: [...SENSORS],
+    },
+};
+
+const DEFAULT_SAFE_PROFILE_NAME = "Default Safe Live Teleop";
+
 export default function NewEpisodeWizard() {
     const router = useRouter();
     const [step, setStep] = useState(1);
@@ -46,6 +66,7 @@ export default function NewEpisodeWizard() {
     });
 
     const [submitting, setSubmitting] = useState(false);
+    const [preset, setPreset] = useState<string>("");
 
     useEffect(() => {
         Promise.all([
@@ -58,6 +79,13 @@ export default function NewEpisodeWizard() {
             setScenes(scenesData);
             setObjectSets(objectSetsData);
             setProfiles(profilesData);
+            const defaultProfile =
+                (profilesData || []).find((p: any) => p?.name === DEFAULT_SAFE_PROFILE_NAME && p?.enabled !== false) ||
+                (profilesData || []).find((p: any) => p?.runnerMode === "LOCAL_RUNNER" && p?.enableWebRTC === true && p?.enabled !== false) ||
+                (profilesData || []).find((p: any) => p?.enableWebRTC === true && p?.enabled !== false);
+            if (defaultProfile?.id) {
+                setFormData((prev) => ({ ...prev, launchProfileId: String(defaultProfile.id) }));
+            }
             setLoadingConfig(false);
         });
     }, []);
@@ -106,6 +134,17 @@ export default function NewEpisodeWizard() {
             alert(e.message);
             setSubmitting(false);
         }
+    };
+
+    const applyTaskPreset = (presetKey: string) => {
+        const spec = TASK_PRESETS[presetKey];
+        if (!spec) return;
+        setPreset(presetKey);
+        setFormData((prev) => ({
+            ...prev,
+            tasks: [...spec.tasks],
+            sensors: [...spec.sensors],
+        }));
     };
 
     const selectedScene = scenes.find(s => s.id === formData.sceneId);
@@ -180,18 +219,31 @@ export default function NewEpisodeWizard() {
                     )}
 
                     {step === 3 && (
-                        <div className="grid grid-cols-2 gap-4">
-                            {TASKS.map(task => (
-                                <div key={task} className="flex flex-row items-center space-x-3 space-y-0 rounded-md border p-4">
-                                    <Checkbox
-                                        checked={formData.tasks.includes(task)}
-                                        onCheckedChange={() => toggleTask(task)}
-                                    />
-                                    <div className="space-y-1 leading-none">
-                                        <Label className="font-medium cursor-pointer" onClick={() => toggleTask(task)}>{task}</Label>
+                        <div className="space-y-4">
+                            <div className="space-y-2">
+                                <Label>Task preset</Label>
+                                <Select value={preset} onValueChange={applyTaskPreset}>
+                                    <SelectTrigger><SelectValue placeholder="Select preset (optional)" /></SelectTrigger>
+                                    <SelectContent>
+                                        {Object.entries(TASK_PRESETS).map(([key, spec]) => (
+                                            <SelectItem key={key} value={key}>{spec.label}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                {TASKS.map(task => (
+                                    <div key={task} className="flex flex-row items-center space-x-3 space-y-0 rounded-md border p-4">
+                                        <Checkbox
+                                            checked={formData.tasks.includes(task)}
+                                            onCheckedChange={() => toggleTask(task)}
+                                        />
+                                        <div className="space-y-1 leading-none">
+                                            <Label className="font-medium cursor-pointer" onClick={() => toggleTask(task)}>{task}</Label>
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                ))}
+                            </div>
                         </div>
                     )}
 

@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+import numpy as np
 
 
 def parse_args():
@@ -69,8 +70,26 @@ def parse_args():
     parser.add_argument(
         "--trajectory-time-scale",
         type=float,
-        default=8.0,
+        default=1.5,
         help="Execution speed multiplier for FollowJointTrajectory playback in Isaac.",
+    )
+    parser.add_argument(
+        "--replicator-subsample",
+        type=int,
+        default=10,
+        help="Write replicator data (depth/pointcloud/semantics) every Nth simulation step. "
+             "RGB is always captured for video. 1=every frame, 10=every 10th (default).",
+    )
+    parser.add_argument(
+        "--spawn-objects",
+        action="store_true",
+        help="Spawn diverse graspable objects (mugs, bottles, fruits) on tables.",
+    )
+    parser.add_argument(
+        "--objects-dir",
+        type=str,
+        default=os.environ.get("ROBOLAB_OBJECTS_DIR", r"C:\RoboLab_Data\data\object_sets"),
+        help="Directory containing object USD files for spawning.",
     )
     return parser.parse_known_args()[0]
 
@@ -90,8 +109,43 @@ def safe_enable_extension(name):
     try:
         enable_extension(name)
         print(f"[RoboLab] Enabled extension: {name}")
+        return True
     except Exception as err:
         print(f"[RoboLab] WARN: Failed to enable extension {name}: {err}")
+        return False
+
+
+def prepare_ros2_runtime_env(ros2_dll_dir: str, use_isaac_bridge_dlls: bool = True) -> None:
+    """Prepare ROS2 env vars for Isaac bridge startup on Windows.
+
+    When use_isaac_bridge_dlls=False (MoveIt mode with direct rclpy), we skip
+    adding the Isaac Sim bridge's internal DLL directory. This prevents the
+    Isaac-bundled rclpy DLLs from shadowing the conda ros2_humble DLLs that
+    the direct rclpy publisher relies on.
+    """
+    ros_distro = os.environ.get("ROS_DISTRO", "humble")
+    rmw = os.environ.get("RMW_IMPLEMENTATION", "rmw_fastrtps_cpp")
+    os.environ["ROS_DISTRO"] = ros_distro
+    os.environ["RMW_IMPLEMENTATION"] = rmw
+
+    # Build candidate paths in priority order (first = highest priority).
+    candidate_paths = []
+    if ros2_dll_dir:
+        candidate_paths.append(str(Path(ros2_dll_dir)))
+    if use_isaac_bridge_dlls:
+        # Isaac Sim internal ROS2 bridge native libs.  Only add when using
+        # the isaacsim.ros2.bridge extension to avoid DLL version conflicts.
+        candidate_paths.append("C:/Users/max/Documents/IsaacSim/exts/isaacsim.ros2.bridge/humble/lib")
+
+    current_path = os.environ.get("PATH", "")
+    for p in candidate_paths:
+        if not p:
+            continue
+        p_norm = p.replace("\\", "/").lower()
+        if p_norm not in current_path.replace("\\", "/").lower():
+            current_path = f"{p};{current_path}" if current_path else p
+    os.environ["PATH"] = current_path
+    print(f"[RoboLab] ROS2 env prepared (ROS_DISTRO={ros_distro}, RMW={rmw}, isaac_dlls={use_isaac_bridge_dlls}).")
 
 
 def build_output_manifest(root_dir):
@@ -509,7 +563,9 @@ print(f"[RoboLab] Robot POV prim: {args.robot_pov_camera_prim}")
 from isaacsim import SimulationApp
 
 simulation_app = SimulationApp({
-    "headless": args.headless or (not args.vr),
+    # WebRTC on Windows is more reliable with an active display/session.
+    # Keep headless for non-streaming runs, but default to windowed when --webrtc.
+    "headless": args.headless or (not args.vr and not args.webrtc),
     "livestream": 2 if args.webrtc else 0,
     "width": args.capture_width,
     "height": args.capture_height,
@@ -517,7 +573,58 @@ simulation_app = SimulationApp({
 
 try:
     safe_enable_extension("omni.isaac.core_nodes")
-    safe_enable_extension("omni.isaac.ros2_bridge")
+    # Decide bridge strategy before preparing PATH so DLL order is correct.
+    # In MoveIt mode we skip the isaac bridge extension and use conda rclpy instead,
+    # so we must NOT add the isaac bridge DLL dir to PATH (it would override conda DLLs).
+    _skip_bridge_on_windows = (
+        os.name == "nt"
+        and args.moveit
+        and os.environ.get("ROBOLAB_ROS2_BRIDGE_ORDER", "").strip().lower()
+        not in {"legacy_first", "legacy", "new_first", "new"}
+    )
+    prepare_ros2_runtime_env(args.ros2_dll_dir, use_isaac_bridge_dlls=not _skip_bridge_on_windows)
+    # ROS2 bridge extension loading strategy for Windows + Isaac Sim 5.1:
+    #
+    # isaacsim.ros2.bridge is the correct extension in Isaac Sim 5.1, but on
+    # some Windows setups its rclpy.context.init() call triggers a native
+    # access violation that kills the process – NOT catchable by Python.
+    #
+    # omni.isaac.ros2_bridge is the legacy bridge (Isaac Sim < 5.x) and is
+    # typically NOT present in Isaac Sim 5.1, so enabling it silently fails.
+    #
+    # When --moveit is active we skip the bridge extension entirely: all
+    # ROS2 communication (joint_states, FollowJointTrajectory action servers)
+    # is handled by the direct rclpy node created further below, which uses
+    # the Mamba ros2_humble environment and NOT Isaac's bundled rclpy.
+    #
+    # The bridge extension (OmniGraph nodes) is only needed for the non-MoveIt
+    # teleop path; we still attempt it there, but only with a safe single
+    # candidate to avoid the access-violation fallback.
+    bridge_pref = os.environ.get("ROBOLAB_ROS2_BRIDGE_ORDER", "").strip().lower()
+    ros2_bridge_enabled = False
+
+    if bridge_pref == "skip" or _skip_bridge_on_windows:
+        # Safe path: skip bridge on Windows in MoveIt mode to avoid crashes.
+        print("[RoboLab] Skipping ROS2 bridge extension on Windows/MoveIt (using direct rclpy publishers).")
+    else:
+        if bridge_pref in {"legacy_first", "legacy"}:
+            bridge_candidates = ["omni.isaac.ros2_bridge", "isaacsim.ros2.bridge"]
+        elif bridge_pref in {"new_first", "new"}:
+            bridge_candidates = ["isaacsim.ros2.bridge", "omni.isaac.ros2_bridge"]
+        elif os.name == "nt":
+            # On Windows (non-MoveIt) try legacy first; avoid new bridge that crashes.
+            bridge_candidates = ["omni.isaac.ros2_bridge"]
+        else:
+            bridge_candidates = ["isaacsim.ros2.bridge", "omni.isaac.ros2_bridge"]
+
+        for bridge_ext in bridge_candidates:
+            if safe_enable_extension(bridge_ext):
+                ros2_bridge_enabled = True
+                print(f"[RoboLab] ROS2 bridge active: {bridge_ext}")
+                break
+
+        if not ros2_bridge_enabled:
+            print("[RoboLab] WARN: ROS2 bridge extension is unavailable; OmniGraph joint_states fallback disabled.")
     safe_enable_extension("omni.replicator.core")
     safe_enable_extension("omni.replicator.isaac")
 
@@ -526,6 +633,9 @@ try:
     if args.webrtc:
         import carb
 
+        # Explicitly enable livestream extension. In some Isaac builds it is only
+        # registered by default and does not start unless enabled.
+        safe_enable_extension("omni.kit.livestream.webrtc")
         carb.settings.get_settings().set("/exts/omni.kit.livestream.webrtc/port", 8211)
         print("[RoboLab] WebRTC stream configured on port 8211.")
 
@@ -537,12 +647,149 @@ try:
     from omni.isaac.core.articulations import Articulation
     from omni.isaac.core.prims import XFormPrim
     from omni.isaac.core.utils.semantics import add_update_semantics, get_semantics
-    from pxr import UsdGeom, UsdPhysics
+    from pxr import Gf, UsdGeom, UsdPhysics, UsdLux
+    try:
+        from pxr import PhysxSchema
+    except ImportError:
+        PhysxSchema = None
 
-    # Prepare stage and world.
-    world = World()
+    # Prepare stage and world — use 120 Hz physics for stable articulated contacts.
+    world = World(physics_dt=1.0 / 120.0, rendering_dt=1.0 / 60.0)
     env_usd = resolve_usd_path(args.env)
     stage_utils.add_reference_to_stage(usd_path=env_usd, prim_path="/World/Environment")
+    # Ensure scene is lit for camera capture; many lightweight USDs have no lights.
+    dome_path = "/World/RoboLabDomeLight"
+    if not stage_utils.get_current_stage().GetPrimAtPath(dome_path).IsValid():
+        dome = UsdLux.DomeLight.Define(stage_utils.get_current_stage(), dome_path)
+        dome.CreateIntensityAttr(1500.0)
+
+    # --- PhysX scene tuning: solver iterations + ground plane -----------------
+    _stage_tmp = stage_utils.get_current_stage()
+    _phys_scene_prim = None
+    for _p in _stage_tmp.Traverse():
+        if _p.IsA(UsdPhysics.Scene):
+            _phys_scene_prim = _p
+            break
+    if _phys_scene_prim is None:
+        UsdPhysics.Scene.Define(_stage_tmp, "/World/PhysicsScene")
+        _phys_scene_prim = _stage_tmp.GetPrimAtPath("/World/PhysicsScene")
+    if _phys_scene_prim and _phys_scene_prim.IsValid():
+        _phys_api = UsdPhysics.Scene(_phys_scene_prim)
+        _phys_api.CreateGravityDirectionAttr(Gf.Vec3f(0, 0, -1))
+        _phys_api.CreateGravityMagnitudeAttr(9.81)
+        if PhysxSchema:
+            _px = PhysxSchema.PhysxSceneAPI.Apply(_phys_scene_prim)
+            _px.CreateSolverTypeAttr("TGS")
+            _px.CreateMinPositionIterationCountAttr(16)
+            _px.CreateMinVelocityIterationCountAttr(4)
+            _px.CreateEnableStabilizationAttr(True)
+            print("[RoboLab] PhysX scene: TGS solver, posIter=16, velIter=4, stabilization=ON")
+        else:
+            print("[RoboLab] WARN: PhysxSchema not available — using default solver settings")
+
+    # Ground plane collider — top surface at z=0, prevents objects falling.
+    _floor_path = "/World/RoboLabFloor"
+    if not _stage_tmp.GetPrimAtPath(_floor_path).IsValid():
+        _floor = UsdGeom.Cube.Define(_stage_tmp, _floor_path)
+        _floor.CreateSizeAttr(1.0)
+        _floor.AddScaleOp().Set(Gf.Vec3f(200, 200, 0.2))
+        _floor.AddTranslateOp().Set(Gf.Vec3d(0, 0, -0.1))
+        _floor.CreateVisibilityAttr("invisible")
+        UsdPhysics.CollisionAPI.Apply(_stage_tmp.GetPrimAtPath(_floor_path))
+        print("[RoboLab] Added ground-plane collider at z=0")
+
+    # Anchor environment objects (fridge, dishwasher, etc.) as kinematic so
+    # they don't fall through the floor under gravity.
+    _env_root = _stage_tmp.GetPrimAtPath("/World/Environment")
+    _anchored = 0
+    if _env_root and _env_root.IsValid():
+        _anchor_stack = list(_env_root.GetChildren())
+        while _anchor_stack:
+            _ap = _anchor_stack.pop()
+            _ap_path = str(_ap.GetPath())
+            if _ap.HasAPI(UsdPhysics.RigidBodyAPI):
+                _rb = UsdPhysics.RigidBodyAPI(_ap)
+                _rb.CreateKinematicEnabledAttr(True)
+                _anchored += 1
+            else:
+                _name_low = _ap.GetName().lower()
+                _needs_anchor = any(kw in _name_low for kw in (
+                    "fridge", "refrigerator", "dishwasher", "sink", "counter",
+                    "table", "shelf", "cabinet", "oven", "microwave", "wall",
+                    "floor", "ceiling", "door",
+                ))
+                if _needs_anchor:
+                    UsdPhysics.RigidBodyAPI.Apply(_ap)
+                    UsdPhysics.RigidBodyAPI(_ap).CreateKinematicEnabledAttr(True)
+                    _anchored += 1
+                else:
+                    _anchor_stack.extend(_ap.GetChildren())
+    print(f"[RoboLab] Anchored {_anchored} environment prims as kinematic")
+
+    # Spawn diverse graspable objects on table surfaces when --spawn-objects is set.
+    _spawned_objects = []
+    if args.spawn_objects:
+        import random as _rng
+        _obj_dir = Path(args.objects_dir)
+        _obj_usds = []
+        if _obj_dir.exists():
+            for _ext in ("*.usd", "*.usdc", "*.usdz"):
+                _obj_usds.extend(_obj_dir.glob(_ext))
+        if not _obj_usds:
+            _builtin_shapes = ["Cube", "Cylinder", "Sphere", "Cone"]
+            print(f"[RoboLab] No object USDs in {_obj_dir}, spawning built-in shapes as graspable objects")
+            for _si, _shape in enumerate(_builtin_shapes):
+                _obj_path = f"/World/GraspableObjects/{_shape}_{_si}"
+                _xoff = 0.8 + _si * 0.15
+                _yoff = -0.7 + (_si % 2) * 0.15
+                _scale = 0.04
+                if _shape == "Cube":
+                    _prim_def = UsdGeom.Cube.Define(_stage_tmp, _obj_path)
+                    _prim_def.CreateSizeAttr(1.0)
+                elif _shape == "Cylinder":
+                    _prim_def = UsdGeom.Cylinder.Define(_stage_tmp, _obj_path)
+                    _prim_def.CreateRadiusAttr(0.5)
+                    _prim_def.CreateHeightAttr(1.0)
+                elif _shape == "Sphere":
+                    _prim_def = UsdGeom.Sphere.Define(_stage_tmp, _obj_path)
+                    _prim_def.CreateRadiusAttr(0.5)
+                elif _shape == "Cone":
+                    _prim_def = UsdGeom.Cone.Define(_stage_tmp, _obj_path)
+                    _prim_def.CreateRadiusAttr(0.5)
+                    _prim_def.CreateHeightAttr(1.0)
+                _obj_prim = _stage_tmp.GetPrimAtPath(_obj_path)
+                _xf = UsdGeom.Xformable(_obj_prim)
+                _xf.AddTranslateOp().Set(Gf.Vec3d(_xoff, _yoff, 0.85))
+                _xf.AddScaleOp().Set(Gf.Vec3f(_scale, _scale, _scale))
+                UsdPhysics.RigidBodyAPI.Apply(_obj_prim)
+                UsdPhysics.CollisionAPI.Apply(_obj_prim)
+                UsdPhysics.MassAPI.Apply(_obj_prim).CreateMassAttr(0.2)
+                add_update_semantics(_obj_prim, _shape.lower())
+                _spawned_objects.append((_obj_path, _shape.lower()))
+                print(f"[RoboLab]   spawned built-in: {_obj_path}")
+        else:
+            _rng.shuffle(_obj_usds)
+            _to_spawn = _obj_usds[:6]
+            for _si, _obj_usd in enumerate(_to_spawn):
+                _obj_name = _obj_usd.stem
+                _obj_path = f"/World/GraspableObjects/{_obj_name}_{_si}"
+                stage_utils.add_reference_to_stage(
+                    usd_path=str(_obj_usd), prim_path=_obj_path,
+                )
+                _obj_prim = _stage_tmp.GetPrimAtPath(_obj_path)
+                if _obj_prim.IsValid():
+                    _xf = UsdGeom.Xformable(_obj_prim)
+                    _xoff = 0.7 + _si * 0.12
+                    _yoff = -0.7 + (_si % 3) * 0.12
+                    _xf.AddTranslateOp().Set(Gf.Vec3d(_xoff, _yoff, 0.85))
+                    if not _obj_prim.HasAPI(UsdPhysics.RigidBodyAPI):
+                        UsdPhysics.RigidBodyAPI.Apply(_obj_prim)
+                    if not _obj_prim.HasAPI(UsdPhysics.CollisionAPI):
+                        UsdPhysics.CollisionAPI.Apply(_obj_prim)
+                    add_update_semantics(_obj_prim, _obj_name)
+                    _spawned_objects.append((_obj_path, _obj_name))
+                    print(f"[RoboLab]   spawned: {_obj_path} from {_obj_usd.name}")
+        print(f"[RoboLab] Spawned {len(_spawned_objects)} graspable objects")
 
     tiago_prim_path = "/World/Tiago"
     tiago_usd = resolve_usd_path(args.tiago_usd)
@@ -558,6 +805,40 @@ try:
     if not tiago_prim.IsValid():
         raise RuntimeError(f"Tiago prim not found after load: {tiago_prim_path}")
     add_update_semantics(tiago_prim, "tiago")
+
+    # Stabilize known problematic Tiago rigid-body mass/inertia values that can
+    # cause immediate toppling in PhysX.
+    mass_overrides = {
+        f"{tiago_prim_path}/tiago_dual_functional/base_footprint": (45.0, Gf.Vec3f(2.5, 2.5, 2.5)),
+        f"{tiago_prim_path}/tiago_dual_functional/gemini2_link": (0.5, Gf.Vec3f(0.01, 0.01, 0.01)),
+        f"{tiago_prim_path}/tiago_dual_functional/wheel_front_left_link/mecanum_wheel_fl/wheel_link": (
+            1.0,
+            Gf.Vec3f(0.01, 0.01, 0.01),
+        ),
+        f"{tiago_prim_path}/tiago_dual_functional/wheel_front_right_link/mecanum_wheel_fr/wheel_link": (
+            1.0,
+            Gf.Vec3f(0.01, 0.01, 0.01),
+        ),
+        f"{tiago_prim_path}/tiago_dual_functional/wheel_rear_left_link/mecanum_wheel_rl/wheel_link": (
+            1.0,
+            Gf.Vec3f(0.01, 0.01, 0.01),
+        ),
+        f"{tiago_prim_path}/tiago_dual_functional/wheel_rear_right_link/mecanum_wheel_rr/wheel_link": (
+            1.0,
+            Gf.Vec3f(0.01, 0.01, 0.01),
+        ),
+    }
+    for prim_path, (mass_value, inertia_value) in mass_overrides.items():
+        prim = stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            continue
+        try:
+            mass_api = UsdPhysics.MassAPI.Apply(prim)
+            mass_api.CreateMassAttr(float(mass_value))
+            mass_api.CreateDiagonalInertiaAttr(inertia_value)
+            print(f"[RoboLab] Applied mass override at {prim_path} (mass={mass_value}).")
+        except Exception as err:
+            print(f"[RoboLab] WARN: Failed mass override at {prim_path}: {err}")
 
     tiago_articulation = None
     tiago_articulation_path = tiago_prim_path
@@ -613,8 +894,25 @@ try:
     if not stage.GetPrimAtPath(camera_parent_prim).IsValid():
         print(f"[RoboLab] WARN: POV parent prim '{camera_parent_prim}' not found, falling back to {tiago_prim_path}")
         camera_parent_prim = tiago_prim_path
-    head_camera = rep.create.camera(position=(0, 0, 1.35), look_at=(1, 0, 1.15), parent=camera_parent_prim)
+
+    # Camera setup: VR mode mounts camera at robot head for operator POV.
+    # Non-VR mode uses a world-fixed overview camera for recording.
+    if args.vr:
+        head_link = f"{tiago_prim_path}/tiago_dual_functional/head_2_link"
+        if not stage.GetPrimAtPath(head_link).IsValid():
+            head_link = camera_parent_prim
+        head_camera = rep.create.camera(
+            position=(0.05, 0, 0.05), look_at=(1, 0, 0), parent=head_link
+        )
+        camera_parent_prim = head_link
+        print(f"[RoboLab] VR head camera mounted at {head_link}")
+    elif camera_parent_prim == tiago_prim_path:
+        head_camera = rep.create.camera(position=(3.0, -3.0, 2.0), look_at=(0.0, 0.0, 1.0))
+        camera_parent_prim = "/World"
+    else:
+        head_camera = rep.create.camera(position=(0, 0, 1.35), look_at=(1, 0, 1.15), parent=camera_parent_prim)
     render_product = rep.create.render_product(head_camera, (args.capture_width, args.capture_height))
+    _rep_subsample = max(1, int(args.replicator_subsample))
     writer = rep.WriterRegistry.get("BasicWriter")
     writer.initialize(
         output_dir=replicator_dir,
@@ -624,18 +922,119 @@ try:
         semantic_segmentation=True,
     )
     writer.attach([render_product])
+    print(f"[RoboLab] Replicator subsample={_rep_subsample} (capture every {_rep_subsample} frames, with pointcloud)")
 
     tracked_prims = []
+    _tracked_paths: set = set()
     for prim in stage.Traverse():
         if not prim.HasAPI(UsdGeom.Xformable):
             continue
         semantic = get_semantics(prim)
         if semantic and semantic.get("class") and semantic["class"] != "class":
-            tracked_prims.append((str(prim.GetPath()), semantic["class"]))
+            _p = str(prim.GetPath())
+            tracked_prims.append((_p, semantic["class"]))
+            _tracked_paths.add(_p)
+    # Recursively scan /World/Environment for furniture prims (fridge,
+    # dishwasher, sink, etc.) that may lack USD semantic labels.
+    # USD scenes often nest geometry several levels deep (e.g.
+    # /World/Environment/Environment/Fridge).
+    _FURNITURE_KW = ("fridge", "refrigerator", "dishwasher", "sink", "counter",
+                     "table", "shelf", "cabinet", "oven", "microwave", "door")
+    _env_prim = stage.GetPrimAtPath("/World/Environment")
+    if _env_prim and _env_prim.IsValid():
+        _env_stack = list(_env_prim.GetChildren())
+        while _env_stack:
+            _child = _env_stack.pop()
+            _cp = str(_child.GetPath())
+            _raw_name = _child.GetName().lower()
+            _matched_kw = None
+            for _kw in _FURNITURE_KW:
+                if _kw in _raw_name:
+                    _matched_kw = _kw
+                    break
+            if _matched_kw and _cp not in _tracked_paths:
+                tracked_prims.append((_cp, _matched_kw))
+                _tracked_paths.add(_cp)
+                print(f"[RoboLab]   env object: {_cp} -> {_matched_kw}")
+            else:
+                _env_stack.extend(_child.GetChildren())
+    for _sp_path, _sp_class in _spawned_objects:
+        if _sp_path not in _tracked_paths:
+            tracked_prims.append((_sp_path, _sp_class))
+            _tracked_paths.add(_sp_path)
     print(f"[RoboLab] Tracking {len(tracked_prims)} semantic objects.")
 
     world.reset()
     simulation_app.update()
+
+    # Force a stable startup pose and clear residual dynamics to avoid base tilt.
+    # z=0.08 places the robot comfortably above the floor top surface (z=0)
+    # so PhysX contact resolution starts from a clean state without penetration.
+    try:
+        tiago_xform = XFormPrim(prim_path=tiago_prim_path, name="tiago_root_pose")
+        # Face +X direction (no rotation needed as base is aligned with world X).
+        tiago_xform.set_world_pose(
+            position=np.array([1.0, -1.0, 0.08], dtype=np.float32),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+        )
+        print("[RoboLab] Applied startup pose: pos=(1.0, -1.0, 0.08) orientation=identity")
+    except Exception as err:
+        print(f"[RoboLab] WARN: failed to apply startup pose stabilization: {err}")
+
+    # Run physics warm-up steps so the robot and environment settle fully
+    # before data collection. 100 steps at 1/120s ≈ 0.83s of simulated time.
+    for _ in range(100):
+        world.step(render=False)
+
+    if tiago_articulation:
+        try:
+            get_vel = getattr(tiago_articulation, "get_joint_velocities", None) or getattr(
+                tiago_articulation, "get_dof_velocities", None
+            )
+            set_vel = getattr(tiago_articulation, "set_joint_velocities", None) or getattr(
+                tiago_articulation, "set_dof_velocities", None
+            )
+            vel_values = _as_list(get_vel()) if get_vel else []
+            if set_vel and vel_values:
+                set_vel([0.0 for _ in vel_values])
+                print(f"[RoboLab] Zeroed {len(vel_values)} joint velocities after warm-up steps.")
+        except Exception as err:
+            print(f"[RoboLab] WARN: failed to zero startup articulation velocities: {err}")
+
+    # Joint drive tuning: set stiffness/damping on each revolute/prismatic drive
+    # to prevent oscillation and overshooting during trajectory playback.
+    if tiago_articulation:
+        _DRIVE_CONFIG = {
+            "torso_lift_joint": (800.0, 200.0),
+            "arm_1_joint": (400.0, 80.0),
+            "arm_2_joint": (400.0, 80.0),
+            "arm_3_joint": (400.0, 80.0),
+            "arm_4_joint": (400.0, 80.0),
+            "arm_5_joint": (200.0, 40.0),
+            "arm_6_joint": (200.0, 40.0),
+            "arm_7_joint": (200.0, 40.0),
+            "head_1_joint": (100.0, 20.0),
+            "head_2_joint": (100.0, 20.0),
+            "gripper_left_joint": (100.0, 20.0),
+            "gripper_right_joint": (100.0, 20.0),
+        }
+        _DEFAULT_DRIVE = (300.0, 60.0)
+        _drive_count = 0
+        _stage_d = stage_utils.get_current_stage()
+        for _jp in _stage_d.Traverse():
+            if not _jp.GetPath().pathString.startswith(tiago_prim_path):
+                continue
+            _rev = UsdPhysics.RevoluteJoint(_jp) if _jp.IsA(UsdPhysics.RevoluteJoint) else None
+            _pri = UsdPhysics.PrismaticJoint(_jp) if not _rev and _jp.IsA(UsdPhysics.PrismaticJoint) else None
+            if not _rev and not _pri:
+                continue
+            _jname = _jp.GetName()
+            _stiff, _damp = _DRIVE_CONFIG.get(_jname, _DEFAULT_DRIVE)
+            _drive_api = UsdPhysics.DriveAPI.Apply(_jp, "angular" if _rev else "linear")
+            _drive_api.CreateStiffnessAttr(_stiff)
+            _drive_api.CreateDampingAttr(_damp)
+            _drive_count += 1
+        print(f"[RoboLab] Configured drives on {_drive_count} joints (stiffness+damping)")
 
     # Resolve DOF names from articulation (dof_names, dof_paths, or fallback).
     dof_names = []
@@ -705,7 +1104,19 @@ try:
             wrapped = ((wrapped + math.pi) % (2.0 * math.pi)) - math.pi
         return wrapped
 
-    # MoveIt bridge path: publish /joint_states directly and host trajectory actions.
+    # MoveIt bridge path: IPC with external ros2_fjt_proxy.py process via shared JSON files.
+    # The proxy runs in conda Python (avoids DLL conflicts inside Isaac Sim).
+    # Isaac Sim writes joint_state.json → proxy reads & publishes /joint_states.
+    # Isaac Sim polls pending_{N}.json → executes trajectories via articulation.
+    # Isaac Sim writes done_{N}.json → proxy returns FJT result to MoveGroup.
+    FJT_PROXY_DIR = Path(os.environ.get("FJT_PROXY_DIR", r"C:\RoboLab_Data\fjt_proxy"))
+    _proxy_ipc_enabled = args.moveit and FJT_PROXY_DIR.exists()
+    if args.moveit:
+        FJT_PROXY_DIR.mkdir(parents=True, exist_ok=True)
+        _proxy_ipc_enabled = True
+        print(f"[RoboLab] FJT proxy IPC dir: {FJT_PROXY_DIR}")
+
+    # Keep the rclpy block for backwards compatibility / fallback, but don't depend on it.
     js_node = None
     js_pub = None
     js_msg_type = None
@@ -719,6 +1130,10 @@ try:
     active_trajectory_goals = []
     rclpy_mod = None
 
+    # IPC state for proxy communication.
+    _seen_traj_ids: set = set()
+    _ipc_write_counter = 0
+
     def _publish_joint_state_from_snapshot() -> None:
         if not (js_pub and js_node and js_msg_type):
             return
@@ -731,7 +1146,12 @@ try:
             }
         try:
             js_msg = js_msg_type()
-            js_msg.header.stamp = js_node.get_clock().now().to_msg()
+            # Use the wall-clock time explicitly so the timestamp is never 0.
+            # rclpy on Windows with Isaac Sim may return time=0 from get_clock().now()
+            # if no /clock topic is published, causing MoveGroup to reject joint states.
+            _wall_ns = int(time.time() * 1_000_000_000)
+            js_msg.header.stamp.sec = _wall_ns // 1_000_000_000
+            js_msg.header.stamp.nanosec = _wall_ns % 1_000_000_000
             if args.moveit:
                 js_msg.name = [j for j in moveit_state_joint_names if j in snapshot]
                 if not js_msg.name:
@@ -744,7 +1164,16 @@ try:
         except Exception:
             pass
 
-    if args.moveit:
+    # NOTE: In proxy IPC mode, rclpy is NOT imported inside Isaac Sim.
+    # Importing rclpy inside Isaac Sim (bundled Python) causes a native DLL crash
+    # on Windows due to version conflicts with conda ros2_humble DLLs.
+    # The ros2_fjt_proxy.py process (running in conda Python) handles all ROS2 comms:
+    #   - publishes /joint_states by reading joint_state.json from FJT_PROXY_DIR
+    #   - hosts FJT action servers and writes pending_{N}.json for Isaac Sim
+    # Isaac Sim reads pending trajectories and writes done_{N}.json.
+    if args.moveit and not _proxy_ipc_enabled:
+        # Legacy path (no proxy): attempt direct rclpy in Isaac Sim.
+        # Only used when FJT_PROXY_DIR is not set. Likely to crash on Windows.
         try:
             import rclpy as rclpy_mod
             from sensor_msgs.msg import JointState
@@ -752,7 +1181,14 @@ try:
 
             if not rclpy_mod.ok():
                 rclpy_mod.init(args=None)
-            js_node = rclpy_mod.create_node("robolab_moveit_bridge")
+            try:
+                from rclpy.parameter import Parameter
+                js_node = rclpy_mod.create_node(
+                    "robolab_moveit_bridge",
+                    parameter_overrides=[Parameter("use_sim_time", Parameter.Type.BOOL, False)],
+                )
+            except Exception:
+                js_node = rclpy_mod.create_node("robolab_moveit_bridge")
             js_pub = js_node.create_publisher(JointState, "/joint_states", 10)
             js_msg_type = JointState
             js_node.create_timer(0.05, _publish_joint_state_from_snapshot)
@@ -760,9 +1196,11 @@ try:
             ros_executor.add_node(js_node)
             ros_executor_thread = threading.Thread(target=ros_executor.spin, daemon=True)
             ros_executor_thread.start()
-            print("[RoboLab] Direct /joint_states publisher enabled (MoveIt mode).")
+            print("[RoboLab] Direct /joint_states publisher enabled (MoveIt mode, legacy path).")
         except Exception as err:
             print(f"[RoboLab] WARN: direct /joint_states publisher unavailable: {err}")
+    elif args.moveit and _proxy_ipc_enabled:
+        print("[RoboLab] Proxy IPC mode: skipping rclpy inside Isaac Sim (ros2_fjt_proxy handles ROS2).")
 
     def _apply_joint_positions(joint_values: dict) -> bool:
         if not tiago_articulation or not joint_values:
@@ -855,27 +1293,11 @@ try:
                 goal["error"] = reason
                 goal["done_event"].set()
 
-    if args.moveit and tiago_articulation and js_node:
+    # FJT action servers inside Isaac Sim are only needed for the legacy (non-proxy) path.
+    # In proxy IPC mode, ros2_fjt_proxy.py hosts the FJT servers externally.
+    if args.moveit and tiago_articulation and js_node and not _proxy_ipc_enabled:
         try:
-            try:
-                from control_msgs.action import FollowJointTrajectory
-            except Exception:
-                ros2_dll_dir = Path(args.ros2_dll_dir)
-                if os.name == "nt" and ros2_dll_dir.exists():
-                    try:
-                        os.add_dll_directory(str(ros2_dll_dir))
-                    except Exception:
-                        pass
-                    if str(ros2_dll_dir) not in os.environ.get("PATH", ""):
-                        os.environ["PATH"] = f"{ros2_dll_dir};{os.environ.get('PATH', '')}"
-                ros2_site = Path(args.ros2_site_packages)
-                if ros2_site.exists():
-                    ros2_site_str = str(ros2_site)
-                    if ros2_site_str not in sys.path:
-                        sys.path.append(ros2_site_str)
-                    from control_msgs.action import FollowJointTrajectory
-                else:
-                    raise
+            from control_msgs.action import FollowJointTrajectory
             from rclpy.action import ActionServer
             from rclpy.action import GoalResponse, CancelResponse
 
@@ -940,16 +1362,34 @@ try:
                             goal_state["done_event"].set()
                             break
 
+                    t_end = time.time() - start_time
                     if goal_state["status"] == "succeeded":
                         result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
                         result.error_string = ""
                         goal_handle.succeed()
-                        print(f"[RoboLab] {controller_name} trajectory executed ({len(parsed_points)} points)")
+                        print(f"[RoboLab] {controller_name} trajectory executed ({len(parsed_points)} pts, "
+                              f"t_start={goal_state['start_wall'] - start_time:.2f}s t_end={t_end:.2f}s)")
+                        dataset["joint_trajectories_executed"].append({
+                            "controller": controller_name,
+                            "joint_names": joint_names_local,
+                            "num_points": len(parsed_points),
+                            "t_start": goal_state["start_wall"] - start_time if goal_state["start_wall"] else t_end,
+                            "t_end": t_end,
+                            "status": "succeeded",
+                        })
                         return result
 
                     result.error_code = FollowJointTrajectory.Result.PATH_TOLERANCE_VIOLATED
                     result.error_string = goal_state.get("error", "Trajectory execution failed")
                     goal_handle.abort()
+                    dataset["joint_trajectories_executed"].append({
+                        "controller": controller_name,
+                        "joint_names": joint_names_local,
+                        "num_points": len(parsed_points),
+                        "t_end": t_end,
+                        "status": "failed",
+                        "error": result.error_string,
+                    })
                     return result
 
                 return _execute_cb
@@ -979,7 +1419,8 @@ try:
             print(f"[RoboLab] WARN: could not start direct trajectory action servers: {err}")
 
     # Fallback only: add OmniGraph joint_states publisher when direct rclpy publisher is unavailable.
-    if args.moveit and tiago_articulation and not js_pub:
+    # Skip in proxy IPC mode — proxy reads joint_state.json written by Isaac Sim.
+    if args.moveit and tiago_articulation and not js_pub and not _proxy_ipc_enabled:
         try:
             import omni.graph.core as og
 
@@ -1043,16 +1484,21 @@ try:
                 "/gt/object_poses",
             ],
             "sensors": ["rgb", "distance_to_camera", "pointcloud", "semantic_segmentation"],
+            "replicator_subsample": _rep_subsample,
             "joint_source": "articulation_api" if tiago_articulation else "synthetic_fallback",
             "vr_teleop_enabled": bool(args.vr),
             "moveit_mode_enabled": bool(args.moveit),
             "robot_pov_camera_prim": camera_parent_prim,
         },
         "frames": [],
+        # Per-frame joint states (positions + velocities) — continuous 20 Hz log.
         "joint_trajectories": [],
+        # Each FJT trajectory execution event (start/end timestamps, joints, status).
+        "joint_trajectories_executed": [],
     }
 
     telemetry_data = []
+    _sim_frame_idx = 0
     start_time = time.time()
     print("[RoboLab] Starting simulation loop...")
 
@@ -1063,8 +1509,105 @@ try:
 
         # Apply queued trajectory points from action callbacks in simulation thread.
         _process_trajectory_dispatcher()
-        world.step(render=False)
-        rep.orchestrator.step(rt_subframes=1)
+
+        # IPC with ros2_fjt_proxy: poll for new pending trajectories from proxy,
+        # write joint state snapshot, and write done markers after completion.
+        if _proxy_ipc_enabled:
+            # 1. Write current joint state snapshot for proxy to publish as /joint_states.
+            _ipc_write_counter += 1
+            if _ipc_write_counter % 3 == 0:  # ~20 Hz at 60 fps
+                with latest_joint_snapshot_lock:
+                    _snap = dict(latest_joint_snapshot)
+                if _snap:
+                    try:
+                        (FJT_PROXY_DIR / "joint_state.json").write_text(
+                            json.dumps(_snap), encoding="utf-8"
+                        )
+                    except Exception:
+                        pass
+
+            # 2. Poll for pending trajectory files written by the proxy.
+            try:
+                for _pf in sorted(FJT_PROXY_DIR.glob("pending_*.json")):
+                    try:
+                        _traj_id = int(_pf.stem.split("_", 1)[1])
+                    except (ValueError, IndexError):
+                        continue
+                    if _traj_id in _seen_traj_ids:
+                        continue
+                    _seen_traj_ids.add(_traj_id)
+                    # Don't remove pending file yet — proxy checks for done_ not pending_.
+                    try:
+                        _payload = json.loads(_pf.read_text(encoding="utf-8"))
+                    except Exception:
+                        continue
+                    _joint_names_traj = _payload.get("joint_names", [])
+                    _raw_points = _payload.get("points", [])
+                    _parsed = []
+                    for _pt in _raw_points:
+                        _targets = {_joint_names_traj[i]: _pt["positions"][i]
+                                    for i in range(len(_joint_names_traj))}
+                        _parsed.append({"t": float(_pt["t"]), "targets": _targets})
+                    if _parsed:
+                        _goal_state = {
+                            "controller_name": f"proxy_{_traj_id}",
+                            "goal_handle": None,
+                            "points": _parsed,
+                            "start_wall": None,
+                            "next_point_idx": 0,
+                            "status": "pending",
+                            "error": "",
+                            "done_event": threading.Event(),
+                            "traj_id": _traj_id,
+                        }
+                        with trajectory_state_lock:
+                            pending_trajectory_goals.append(_goal_state)
+                        print(f"[RoboLab] Queued proxy trajectory id={_traj_id} ({len(_parsed)} pts)")
+
+                        # Background thread watches for completion and writes done file.
+                        def _watch_done(_gs=_goal_state, _pid=_traj_id, _pf=_pf,
+                                        _dur=args.duration, _jnames=_joint_names_traj,
+                                        _npts=len(_parsed), _t0=time.time() - start_time):
+                            _gs["done_event"].wait(timeout=_dur + 10.0)
+                            _t_end = time.time() - start_time
+                            _result = {
+                                "traj_id": _pid,
+                                "status": _gs["status"],
+                                "error": _gs.get("error", ""),
+                            }
+                            try:
+                                (FJT_PROXY_DIR / f"done_{_pid}.json").write_text(
+                                    json.dumps(_result), encoding="utf-8"
+                                )
+                            except Exception:
+                                pass
+                            try:
+                                _pf.unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                            # Record executed trajectory metadata in the dataset.
+                            try:
+                                dataset["joint_trajectories_executed"].append({
+                                    "traj_id": _pid,
+                                    "controller": f"proxy_{_pid}",
+                                    "joint_names": _jnames,
+                                    "num_points": _npts,
+                                    "t_start": _t0,
+                                    "t_end": _t_end,
+                                    "status": _gs["status"],
+                                    "error": _gs.get("error", ""),
+                                })
+                            except Exception:
+                                pass
+
+                        threading.Thread(target=_watch_done, daemon=True).start()
+            except Exception as _ipc_err:
+                pass  # non-fatal IPC errors
+
+        world.step(render=True)
+        if _rep_subsample <= 1 or (_sim_frame_idx % _rep_subsample) == 0:
+            rep.orchestrator.step(rt_subframes=1)
+        _sim_frame_idx += 1
 
         # Joint states + velocities.
         joint_snapshot = {}

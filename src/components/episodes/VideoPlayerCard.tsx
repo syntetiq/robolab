@@ -5,7 +5,10 @@ import { Download } from 'lucide-react';
 
 export interface VideoArtifact {
     name: string;
-    url: string;
+    playUrl: string;
+    downloadUrl: string;
+    bytes?: number;
+    updatedAt?: string;
 }
 
 export function VideoPlayerCard({ videos }: { videos: VideoArtifact[] }) {
@@ -25,11 +28,11 @@ export function VideoPlayerCard({ videos }: { videos: VideoArtifact[] }) {
                         <div key={vid.name} className="space-y-2">
                             <p className="text-xs font-mono text-muted-foreground">{vid.name}</p>
                             <video controls className="w-full rounded border bg-black" data-testid={`video-${vid.name}`}>
-                                <source src={vid.url} type={vid.name.endsWith('.mp4') ? 'video/mp4' : 'video/webm'} />
+                                <source src={vid.playUrl} type={vid.name.endsWith('.mp4') ? 'video/mp4' : 'video/webm'} />
                             </video>
                             <div className="flex justify-end">
                                 <Button variant="outline" size="sm" asChild>
-                                    <a href={vid.url} download={vid.name}><Download className="w-4 h-4 mr-2" /> Download</a>
+                                    <a href={vid.downloadUrl} download={vid.name}><Download className="w-4 h-4 mr-2" /> Download</a>
                                 </Button>
                             </div>
                         </div>

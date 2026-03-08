@@ -7,15 +7,23 @@ import { Plus, Eye, Play, CheckCircle2, XCircle, Clock, Square } from "lucide-re
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { format } from "date-fns";
+import { Input } from "@/components/ui/input";
 
 export default function EpisodesPage() {
     const [episodes, setEpisodes] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [statusFilter, setStatusFilter] = useState("");
+    const [taskFilter, setTaskFilter] = useState("");
+    const [queryFilter, setQueryFilter] = useState("");
 
     const fetchEpisodes = async () => {
         setLoading(true);
         try {
-            const res = await fetch("/api/episodes");
+            const qp = new URLSearchParams();
+            if (statusFilter) qp.set("status", statusFilter);
+            if (taskFilter) qp.set("task", taskFilter);
+            if (queryFilter) qp.set("q", queryFilter);
+            const res = await fetch(`/api/episodes?${qp.toString()}`);
             const data = await res.json();
             setEpisodes(data);
         } catch (e) {
@@ -27,7 +35,7 @@ export default function EpisodesPage() {
 
     useEffect(() => {
         fetchEpisodes();
-    }, []);
+    }, [statusFilter, taskFilter, queryFilter]);
 
     const getStatusBadge = (status: string) => {
         switch (status) {
@@ -53,6 +61,27 @@ export default function EpisodesPage() {
                         <Plus className="w-4 h-4 mr-2" />
                         New Episode
                     </Button>
+                </Link>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+                <Input
+                    value={queryFilter}
+                    onChange={(e) => setQueryFilter(e.target.value)}
+                    placeholder="Search by id, note, scene..."
+                />
+                <Input
+                    value={taskFilter}
+                    onChange={(e) => setTaskFilter(e.target.value)}
+                    placeholder="Task tag (e.g. pick_place_sink)"
+                />
+                <Input
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                    placeholder="Status (running/completed/failed)"
+                />
+                <Link href="/recordings">
+                    <Button variant="outline" className="w-full">Open Recordings Library</Button>
                 </Link>
             </div>
 

@@ -5,10 +5,46 @@ import path from "path";
 import { execFile, spawn } from "child_process";
 
 export class LocalRunner implements Runner {
+    private getLatestModifiedMs(targetPath: string): number {
+        try {
+            if (!fs.existsSync(targetPath)) return 0;
+            const stat = fs.statSync(targetPath);
+            if (!stat.isDirectory()) return stat.mtimeMs || 0;
+            let latest = stat.mtimeMs || 0;
+            const stack = [targetPath];
+            while (stack.length > 0) {
+                const current = stack.pop() as string;
+                const entries = fs.readdirSync(current, { withFileTypes: true });
+                for (const entry of entries) {
+                    const full = path.join(current, entry.name);
+                    try {
+                        if (entry.isDirectory()) {
+                            stack.push(full);
+                            continue;
+                        }
+                        const childStat = fs.statSync(full);
+                        if (childStat.mtimeMs > latest) latest = childStat.mtimeMs;
+                    } catch {
+                        // ignore per-file stat errors
+                    }
+                }
+            }
+            return latest;
+        } catch {
+            return 0;
+        }
+    }
+
     private resolveEnvironmentUsd(episode: any): string {
-        const configured = (episode.launchProfile?.environmentUsd || episode.scene?.stageUsdPath || "").trim();
-        if (configured && !configured.startsWith("/Isaac/")) {
-            return configured;
+        // Respect scene selection from episode wizard first.
+        const sceneUsd = (episode.scene?.stageUsdPath || "").trim();
+        if (sceneUsd && !sceneUsd.startsWith("/Isaac/")) {
+            return sceneUsd;
+        }
+
+        const profileUsd = (episode.launchProfile?.environmentUsd || "").trim();
+        if (profileUsd && !profileUsd.startsWith("/Isaac/")) {
+            return profileUsd;
         }
 
         const defaultHome = "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd";
@@ -21,7 +57,7 @@ export class LocalRunner implements Runner {
         if (fs.existsSync(candidate)) {
             return candidate;
         }
-        return configured || candidate;
+        return sceneUsd || profileUsd || candidate;
     }
 
     private buildEpisodePaths(config: any, episodeId: string) {
@@ -108,7 +144,11 @@ export class LocalRunner implements Runner {
                 const escapedPyBat = pyBat.replace(/'/g, "''");
                 const envUsd = this.resolveEnvironmentUsd(episode);
                 const escapedEnvUsd = envUsd.replace(/'/g, "''");
-                let psCmd = `& '${escapedPyBat}' '${escapedScriptPath}' --env '${escapedEnvUsd}' --output_dir '${escapedOutputDir}' --duration ${duration} --headless`;
+                const wantsWebRTC = !!episode.launchProfile?.enableWebRTC;
+                let psCmd = `& '${escapedPyBat}' '${escapedScriptPath}' --env '${escapedEnvUsd}' --output_dir '${escapedOutputDir}' --duration ${duration}`;
+                if (!wantsWebRTC) {
+                    psCmd += " --headless";
+                }
 
                 if (!fs.existsSync(pyBat)) {
                     throw new Error(`Isaac Sim executable not found: ${pyBat}`);
@@ -116,7 +156,7 @@ export class LocalRunner implements Runner {
                 if (!fs.existsSync(scriptPath)) {
                     throw new Error(`Episode script not found: ${scriptPath}`);
                 }
-                if (episode.launchProfile?.enableWebRTC) {
+                if (wantsWebRTC) {
                     psCmd += " --webrtc";
                 }
                 if (episode.launchProfile?.enableVrTeleop) {
@@ -135,9 +175,12 @@ export class LocalRunner implements Runner {
             }
 
             const cmdWithLogs = `${detachedCommand} 1> "${stdoutLog}" 2> "${stderrLog}"`;
+            const wantsWebRTC = !!episode.launchProfile?.enableWebRTC;
             const child = spawn(cmdWithLogs, {
                 detached: true,
-                windowsHide: true,
+                // WebRTC capture path on Windows may fail in fully hidden mode.
+                // Keep the process detached, but allow visible window for stream runs.
+                windowsHide: !wantsWebRTC,
                 shell: true,
                 stdio: "ignore",
             });
@@ -177,13 +220,35 @@ export class LocalRunner implements Runner {
     }
 
     async getLiveStatus(episode: any, config: any): Promise<StatusSnapshot> {
-        const { pidFile } = this.buildEpisodePaths(config, episode.id);
+        const { pidFile, episodeOutDir, stdoutLog, stderrLog } = this.buildEpisodePaths(config, episode.id);
         const uptimeSec = Math.floor((Date.now() - new Date(episode.startedAt || Date.now()).getTime()) / 1000);
         let isRunning = false;
 
         if (fs.existsSync(pidFile)) {
             const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
             isRunning = this.isPidRunning(pid);
+        }
+
+        // Fail-safe: if launcher pid still exists but episode output/log heartbeat
+        // has gone stale after expected duration, treat episode as completed.
+        if (isRunning) {
+            const now = Date.now();
+            const startedMs = new Date(episode.startedAt || Date.now()).getTime();
+            const durationSec = Math.max(1, Number(episode.durationSec || 60));
+            const expectedEndMs = startedMs + durationSec * 1000;
+            const hardGraceMs = 25_000;
+            const staleThresholdMs = 10_000;
+
+            const outputHeartbeat = this.getLatestModifiedMs(episodeOutDir);
+            const stdoutHeartbeat = this.getLatestModifiedMs(stdoutLog);
+            const stderrHeartbeat = this.getLatestModifiedMs(stderrLog);
+            const heartbeat = Math.max(outputHeartbeat, stdoutHeartbeat, stderrHeartbeat, startedMs);
+            const staleMs = now - heartbeat;
+            const exceededExpectedWindow = now > (expectedEndMs + hardGraceMs);
+
+            if (exceededExpectedWindow && staleMs > staleThresholdMs) {
+                isRunning = false;
+            }
         }
 
         return {

@@ -91,6 +91,21 @@ For end-to-end success without fake controllers, expect all of:
 At the end of the run, script prints exact paths to `move_group` and bridge logs
 for quick debugging.
 
+## Scene Physics Prerequisite
+
+If orchestration fails early with PhysX hierarchy errors like:
+
+- `Rigid Body ... missing xformstack reset when child of another enabled rigid body`
+
+regenerate the interactive scenes with the latest scene builder (door rigid bodies
+now apply `xformstack reset`):
+
+```powershell
+C:\Users\max\Documents\IsaacSim\python.bat C:\Users\max\Documents\Cursor\robolab\scripts\create_interactive_scenes.py --scene all --output-dir C:\RoboLab_Data\scenes --seed 42
+```
+
+After regenerating, rerun `run_tiago_moveit_execute_smoke.ps1`.
+
 ## Real Isaac Tiago Requirement
 
 For real (non-synthetic) Tiago execution in Isaac, the collector must load a Tiago

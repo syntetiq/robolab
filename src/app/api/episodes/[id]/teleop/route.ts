@@ -6,6 +6,7 @@ import { promisify } from "util";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { getSupportedTeleopSources, resolveTeleopInput } from "@/server/teleop/inputAdapters";
 
 const execAsync = promisify(exec);
 
@@ -14,6 +15,7 @@ const SUPPORTED_COMMANDS = new Set([
     "move_backward",
     "move_left",
     "move_right",
+    "stop_motion",
     "grasp_mug",
     "go_home",
     "start_vr_session",
@@ -24,8 +26,16 @@ const SUPPORTED_COMMANDS = new Set([
     "moveit_plan_place",
     "moveit_plan_pick_sink",
     "moveit_plan_pick_fridge",
+    "moveit_plan_pick_dishwasher",
+    "moveit_approach_workzone",
+    "moveit_open_close_fridge",
+    "moveit_open_close_dishwasher",
     "moveit_go_home",
 ]);
+
+const RATE_LIMIT_WINDOW_MS = 1000;
+const RATE_LIMIT_MAX = 25;
+const teleopRateBuckets = new Map<string, number[]>();
 
 function mapCommandToLogLine(command: string): string {
     switch (command) {
@@ -33,6 +43,7 @@ function mapCommandToLogLine(command: string): string {
         case "move_backward": return "[Teleop] move_backward requested.";
         case "move_left": return "[Teleop] move_left requested.";
         case "move_right": return "[Teleop] move_right requested.";
+        case "stop_motion": return "[Teleop] stop_motion requested.";
         case "grasp_mug": return "[Teleop] grasp_mug requested.";
         case "go_home": return "[Teleop] go_home requested.";
         case "start_vr_session": return "[Teleop] start_vr_session requested.";
@@ -43,9 +54,22 @@ function mapCommandToLogLine(command: string): string {
         case "moveit_plan_place": return "[Teleop] moveit_plan_place requested.";
         case "moveit_plan_pick_sink": return "[Teleop] moveit_plan_pick_sink requested.";
         case "moveit_plan_pick_fridge": return "[Teleop] moveit_plan_pick_fridge requested.";
+        case "moveit_plan_pick_dishwasher": return "[Teleop] moveit_plan_pick_dishwasher requested.";
+        case "moveit_approach_workzone": return "[Teleop] moveit_approach_workzone requested.";
+        case "moveit_open_close_fridge": return "[Teleop] moveit_open_close_fridge requested.";
+        case "moveit_open_close_dishwasher": return "[Teleop] moveit_open_close_dishwasher requested.";
         case "moveit_go_home": return "[Teleop] moveit_go_home requested.";
         default: return `[Teleop] ${command} requested.`;
     }
+}
+
+function withinRateLimit(bucketKey: string): boolean {
+    const now = Date.now();
+    const bucket = teleopRateBuckets.get(bucketKey) || [];
+    const recent = bucket.filter((ts) => now - ts <= RATE_LIMIT_WINDOW_MS);
+    recent.push(now);
+    teleopRateBuckets.set(bucketKey, recent);
+    return recent.length <= RATE_LIMIT_MAX;
 }
 
 function templateWithTokens(template: string, params: Record<string, string>): string {
@@ -203,12 +227,20 @@ async function execMoveitIntentPub(
 ): Promise<void> {
     const ns = normalizeNamespace(rosNamespace);
     const topic = `${ns}/moveit/intent`;
+    await execRos2StringPub(topic, intentValue, ros2SetupCommand);
+}
+
+async function execRos2StringPub(
+    topic: string,
+    value: string,
+    ros2SetupCommand: string,
+): Promise<void> {
     const py = resolveCondaPython();
     const scriptPath = path.join(process.cwd(), "scripts", "ros2_pub_string.py");
     if (!py || !fs.existsSync(scriptPath)) {
         throw new Error("Conda python or ros2_pub_string.py not found");
     }
-    const cmd = `${py} ${scriptPath} ${topic} ${intentValue}`;
+    const cmd = `${py} ${scriptPath} ${topic} ${value}`;
     await execAsync(wrapWithSetup(cmd, ros2SetupCommand), { timeout: 10000 });
 }
 
@@ -221,21 +253,27 @@ function buildDefaultRos2Command(command: string, rosNamespace: string, ros2Invo
 
     switch (command) {
         case "move_forward":
-            return `${ros2} topic pub -1 ${teleopIntent} std_msgs/msg/String {data:move_forward}`;
+            return "";
         case "move_backward":
-            return `${ros2} topic pub -1 ${teleopIntent} std_msgs/msg/String {data:move_backward}`;
+            return "";
         case "move_left":
-            return `${ros2} topic pub -1 ${teleopIntent} std_msgs/msg/String {data:move_left}`;
+            return "";
         case "move_right":
-            return `${ros2} topic pub -1 ${teleopIntent} std_msgs/msg/String {data:move_right}`;
+            return "";
+        case "stop_motion":
+            return "";
         case "grasp_mug":
-            return `${ros2} topic pub -1 ${teleopIntent} std_msgs/msg/String {data:grasp_mug}`;
+            return "";
         case "go_home":
-            return `${ros2} topic pub -1 ${teleopIntent} std_msgs/msg/String {data:go_home}`;
+            return "";
         case "moveit_plan_pick":
         case "moveit_plan_place":
         case "moveit_plan_pick_sink":
         case "moveit_plan_pick_fridge":
+        case "moveit_plan_pick_dishwasher":
+        case "moveit_approach_workzone":
+        case "moveit_open_close_fridge":
+        case "moveit_open_close_dishwasher":
         case "moveit_go_home":
             return ""; // handled via execMoveitIntentPub (Python script)
         default:
@@ -271,6 +309,7 @@ export async function GET(
             runnerMode: config.runnerMode,
             activeRos2SetupCommand: activeSetupCommand,
             ros2SetupSource: setupSource,
+            supportedInputSources: getSupportedTeleopSources(),
         });
     } catch (e: any) {
         return NextResponse.json({ error: e.message }, { status: 500 });
@@ -290,10 +329,28 @@ export async function POST(
         if (!episode) return NextResponse.json({ error: "Episode not found" }, { status: 404 });
 
         const body = await req.json();
-        const command = String(body.command || "");
+        const resolvedInput = resolveTeleopInput({
+            source: body.source,
+            command: body.command,
+            replayFrame: body.replayFrame,
+        });
+        const command = String(resolvedInput.command || "");
 
         if (!command || !SUPPORTED_COMMANDS.has(command)) {
             return NextResponse.json({ error: "Unknown or missing command" }, { status: 400 });
+        }
+        if (!["running", "stopping"].includes(episode.status)) {
+            return NextResponse.json({ error: "Teleop commands are only allowed while episode is running or stopping." }, { status: 409 });
+        }
+        if (resolvedInput.source === "keyboard_mouse") {
+            const movementCommands = new Set(["move_forward", "move_backward", "move_left", "move_right", "stop_motion"]);
+            if (movementCommands.has(command) && body.deadmanActive !== true) {
+                return NextResponse.json({ error: "deadmanActive=true is required for keyboard/mouse motion commands." }, { status: 400 });
+            }
+        }
+        const rateKey = `${episode.id}:${resolvedInput.source}`;
+        if (!withinRateLimit(rateKey)) {
+            return NextResponse.json({ error: "Teleop rate limit exceeded. Slow down command rate." }, { status: 429 });
         }
 
         const config = await prisma.config.findUnique({ where: { id: 1 } });
@@ -313,6 +370,7 @@ export async function POST(
             SCENE_USD: sceneUsd,
             ACTION: command,
             ROS2_SETUP: ros2SetupCommand,
+            INPUT_SOURCE: resolvedInput.source,
         };
 
         const teleopTemplate = (episode.launchProfile?.teleopLaunchTemplate || "").trim();
@@ -384,10 +442,25 @@ export async function POST(
                     moveit_plan_place: "plan_place",
                     moveit_plan_pick_sink: "plan_pick_sink",
                     moveit_plan_pick_fridge: "plan_pick_fridge",
+                    moveit_plan_pick_dishwasher: "plan_pick_dishwasher",
+                    moveit_approach_workzone: "approach_workzone",
+                    moveit_open_close_fridge: "open_close_fridge",
+                    moveit_open_close_dishwasher: "open_close_dishwasher",
                     moveit_go_home: "go_home",
+                };
+                const teleopIntentMap: Record<string, string> = {
+                    move_forward: "move_forward",
+                    move_backward: "move_backward",
+                    move_left: "move_left",
+                    move_right: "move_right",
+                    stop_motion: "stop_motion",
+                    grasp_mug: "grasp_mug",
+                    go_home: "go_home",
                 };
                 const moveitIntentValue = moveitIntentMap[command] ?? null;
                 const isMoveitIntent = !!moveitIntentValue;
+                const teleopIntentValue = teleopIntentMap[command] ?? null;
+                const isTeleopIntent = !!teleopIntentValue;
 
                 if (isMoveitIntent && moveitIntentValue && ros2Probe.ros2Available) {
                     try {
@@ -402,6 +475,19 @@ export async function POST(
                         state.bridgeMode = "ros2_failed";
                         state.lastError = err?.message || "ROS2 moveit intent pub failed.";
                         await appendLogLocal(logPath, `[Teleop] ROS2 moveit intent failed for ${command}: ${state.lastError}`);
+                    }
+                } else if (isTeleopIntent && teleopIntentValue && ros2Probe.ros2Available) {
+                    try {
+                        await execRos2StringPub(
+                            `${normalizeNamespace(config.rosNamespace)}/teleop/intent`,
+                            teleopIntentValue,
+                            ros2SetupCommand,
+                        );
+                        state.bridgeMode = "ros2_default";
+                    } catch (err: any) {
+                        state.bridgeMode = "ros2_failed";
+                        state.lastError = err?.message || "ROS2 teleop intent pub failed.";
+                        await appendLogLocal(logPath, `[Teleop] ROS2 teleop intent failed for ${command}: ${state.lastError}`);
                     }
                 } else {
                     const defaultCommand = buildDefaultRos2Command(command, config.rosNamespace, ros2Probe.ros2Invoker);
@@ -422,7 +508,7 @@ export async function POST(
                     }
                 }
             }
-            state.lastCommand = command;
+            state.lastCommand = `${command} [${resolvedInput.source}]`;
             if (state.bridgeMode !== "ros2_failed") {
                 state.lastError = "";
             }
@@ -461,7 +547,7 @@ export async function POST(
             return NextResponse.json({ error: "Failed to append teleop log on remote host" }, { status: 500 });
         }
 
-        let resultTemplate = { code: 0, stderr: "" };
+        let resultTemplate: { code: number | null; stderr: string } = { code: 0, stderr: "" };
         if (resolvedTemplateCommand) {
             resultTemplate = await ssh.execCommand(resolvedTemplateCommand);
             state.bridgeMode = "template_command";

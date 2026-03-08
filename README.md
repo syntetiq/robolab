@@ -53,6 +53,10 @@ A self-hosted MVP web application operator console for configuring and running t
    - `C:\RoboLab_Data\scenes\Small_House_Interactive.usd`
    - `C:\RoboLab_Data\scenes\Office_Interactive.usd`
 
+   If MoveIt orchestration reports a fridge/freezer rigid-body hierarchy error,
+   regenerate scenes with the command above (latest generator applies door
+   xform stack reset for stable PhysX articulation hierarchy).
+
 ## Tiago Dataset Pipeline (Milestone 1)
 
 - The default episode runner script is `data_collector_tiago.py`.

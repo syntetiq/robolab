@@ -12,6 +12,9 @@ param(
     [string]$IsaacPython = "C:\Users\max\Documents\IsaacSim\python.bat",
     [string]$EnvUsd = "C:\RoboLab_Data\scenes\Small_House_Interactive.usd",
     [string]$TiagoUsd = "C:\RoboLab_Data\data\tiago_isaac\tiago_dual_functional.usd",
+    # ros2_humble conda paths – Library/bin has the DLLs, Lib/site-packages has Python packages.
+    [string]$Ros2DllDir      = "C:\Users\max\Mambaforge\envs\ros2_humble\Library\bin",
+    [string]$Ros2SitePackages = "C:\Users\max\Mambaforge\envs\ros2_humble\Lib\site-packages",
     [switch]$RequireRealTiago,
     [switch]$UseApi,
     [string]$ApiBase = "http://localhost:3000"
@@ -80,16 +83,22 @@ if ($UseApi) {
     }
 
     Write-Host "[Smoke] Running collector with --moveit --duration $Duration"
-    # Keep Isaac ROS2 bridge isolated from active conda/ROS overlays in parent shell.
+    # In --moveit mode the data_collector uses its own rclpy node (not the Isaac bridge).
+    # Place conda ros2_humble Library/bin FIRST in PATH so its DLLs (librcl, etc.)
+    # take priority over Isaac Sim's bundled RMW. Do NOT add Isaac bridge DLL dir.
     $pathItems = ($env:Path -split ';' | Where-Object {
-        $_ -and ($_ -notmatch 'Mambaforge') -and ($_ -notmatch 'Miniconda') -and ($_ -notmatch 'ros2_humble')
+        $_ -and ($_ -notmatch 'Mambaforge\\envs\\base') -and ($_ -notmatch 'Miniconda')
     })
-    $env:Path = (($pathItems -join ';') + ';C:\Users\max\Documents\IsaacSim\exts\isaacsim.ros2.bridge\humble\lib')
+    $env:Path = ($Ros2DllDir + ';' + ($pathItems -join ';'))
     $env:HOME = "C:\Users\max"
     $env:ROS_DISTRO = "humble"
     $env:RMW_IMPLEMENTATION = "rmw_fastrtps_cpp"
     $env:ROS_DOMAIN_ID = "0"
     $env:ROS_LOCALHOST_ONLY = "0"
+    $env:PYTHONUNBUFFERED = "1"
+    $env:ROBOLAB_ROS2_BRIDGE_ORDER = "skip"
+    # Tell data_collector to use proxy IPC instead of rclpy inside Isaac Sim.
+    $env:FJT_PROXY_DIR = "C:\RoboLab_Data\fjt_proxy"
     $collectorArgs = @(
         $ScriptPath,
         "--env", $EnvUsd,
@@ -97,7 +106,9 @@ if ($UseApi) {
         "--output_dir", $EpisodeDir,
         "--duration", $Duration,
         "--headless",
-        "--moveit"
+        "--moveit",
+        "--ros2-dll-dir", $Ros2DllDir,
+        "--ros2-site-packages", $Ros2SitePackages
     )
     if ($RequireRealTiago) {
         $collectorArgs += "--require-real-tiago"

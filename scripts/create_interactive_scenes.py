@@ -37,10 +37,12 @@ def add_semantic_label(prim, label):
 
 
 def create_articulated_door(stage, parent_path, name, door_size, door_pos, joint_axis="Y", hinge_pos=None):
-    from pxr import UsdPhysics
+    from pxr import UsdGeom, UsdPhysics
 
     door_path = f"{parent_path}/{name}"
     door = add_box(stage, door_path, door_size, door_pos, (0.8, 0.8, 0.8))
+    # Door is a child rigid body under appliance body. Reset xform stack to avoid PhysX hierarchy errors.
+    UsdGeom.Xformable(door).SetResetXformStack(True)
 
     UsdPhysics.RigidBodyAPI.Apply(door)
     mass_api = UsdPhysics.MassAPI.Apply(door)
@@ -51,9 +53,10 @@ def create_articulated_door(stage, parent_path, name, door_size, door_pos, joint
     joint.CreateBody0Rel().SetTargets([parent_path])
     joint.CreateBody1Rel().SetTargets([door_path])
 
-    if hinge_pos:
-        joint.CreateLocalPos0Attr().Set(hinge_pos)
-        joint.CreateLocalPos1Attr().Set((-door_size[0] / 2, 0, 0))
+    if hinge_pos is None:
+        hinge_pos = (door_pos[0] - (door_size[0] / 2.0), door_pos[1], door_pos[2])
+    joint.CreateLocalPos0Attr().Set(hinge_pos)
+    joint.CreateLocalPos1Attr().Set((-door_size[0] / 2, 0, 0))
 
     joint.CreateAxisAttr().Set(joint_axis)
     joint.CreateLowerLimitAttr().Set(0)
@@ -74,7 +77,11 @@ def build_fridge(stage, root_path, position):
     fridge_path = f"{root_path}/Fridge"
     body = add_box(stage, fridge_path, (0.8, 0.8, 2.0), position, (0.9, 0.9, 0.9))
     UsdPhysics.RigidBodyAPI.Apply(body)
+    body_mass = UsdPhysics.MassAPI.Apply(body)
+    body_mass.CreateMassAttr(80.0)
     UsdPhysics.ArticulationRootAPI.Apply(body)
+    anchor = UsdPhysics.FixedJoint.Define(stage, f"{fridge_path}/WorldAnchor")
+    anchor.CreateBody1Rel().SetTargets([fridge_path])
 
     create_articulated_door(
         stage,
@@ -83,7 +90,6 @@ def build_fridge(stage, root_path, position):
         (0.05, 0.78, 0.8),
         (0.42, 0, 0.5),
         "Z",
-        (0.4, -0.4, 0.5),
     )
     create_articulated_door(
         stage,
@@ -92,7 +98,6 @@ def build_fridge(stage, root_path, position):
         (0.05, 0.78, 1.1),
         (0.42, 0, -0.45),
         "Z",
-        (0.4, -0.4, -0.45),
     )
     add_semantic_label(body, "fridge")
 
@@ -103,7 +108,11 @@ def build_dishwasher(stage, root_path, position):
     dishwasher_path = f"{root_path}/Dishwasher"
     body = add_box(stage, dishwasher_path, (0.6, 0.6, 0.8), position, (0.2, 0.2, 0.2))
     UsdPhysics.RigidBodyAPI.Apply(body)
+    body_mass = UsdPhysics.MassAPI.Apply(body)
+    body_mass.CreateMassAttr(50.0)
     UsdPhysics.ArticulationRootAPI.Apply(body)
+    anchor = UsdPhysics.FixedJoint.Define(stage, f"{dishwasher_path}/WorldAnchor")
+    anchor.CreateBody1Rel().SetTargets([dishwasher_path])
 
     create_articulated_door(
         stage,
@@ -112,7 +121,6 @@ def build_dishwasher(stage, root_path, position):
         (0.05, 0.58, 0.78),
         (0.32, 0, 0),
         "Y",
-        (0.3, 0, -0.4),
     )
     add_semantic_label(body, "dishwasher")
 
