@@ -658,10 +658,22 @@ try:
     env_usd = resolve_usd_path(args.env)
     stage_utils.add_reference_to_stage(usd_path=env_usd, prim_path="/World/Environment")
     # Ensure scene is lit for camera capture; many lightweight USDs have no lights.
+    _cur_stage = stage_utils.get_current_stage()
     dome_path = "/World/RoboLabDomeLight"
-    if not stage_utils.get_current_stage().GetPrimAtPath(dome_path).IsValid():
-        dome = UsdLux.DomeLight.Define(stage_utils.get_current_stage(), dome_path)
+    if not _cur_stage.GetPrimAtPath(dome_path).IsValid():
+        dome = UsdLux.DomeLight.Define(_cur_stage, dome_path)
         dome.CreateIntensityAttr(1500.0)
+
+    # Interior fill light near the robot so enclosed rooms (Kitchen, Modern_Kitchen)
+    # are not pitch-black when the dome light cannot penetrate walls/ceiling.
+    _fill_path = "/World/RoboLabFillLight"
+    if not _cur_stage.GetPrimAtPath(_fill_path).IsValid():
+        _fill = UsdLux.SphereLight.Define(_cur_stage, _fill_path)
+        _fill.CreateIntensityAttr(30000.0)
+        _fill.CreateRadiusAttr(0.5)
+        _fill.CreateColorAttr(Gf.Vec3f(1.0, 0.98, 0.95))
+        _fill_xf = UsdGeom.Xformable(_fill.GetPrim())
+        _fill_xf.AddTranslateOp().Set(Gf.Vec3d(1.0, -1.0, 2.5))
 
     # --- PhysX scene tuning: solver iterations + ground plane -----------------
     _stage_tmp = stage_utils.get_current_stage()

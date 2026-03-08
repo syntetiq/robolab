@@ -92,135 +92,135 @@ TIAGO_READY_JOINTS = {
 #    arm_7_joint      : [-2.20, 2.20]
 # ──────────────────────────────────────────────────────────────────────────────
 
-# "Ready" / home pose – arm tucked close to body, very safe configuration.
-# Matches PAL Robotics default "arm_tuck" pose.
+# "Ready" / home pose – arm tucked close to body.
+# PAL Robotics standard tuck: shoulder back, elbow bent, wrist folded.
 TIAGO_READY_JOINTS = {
     "torso_lift_joint": 0.15,
-    "arm_1_joint": 0.10,
-    "arm_2_joint": -0.20,
-    "arm_3_joint": -0.15,
-    "arm_4_joint": 0.0,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
+    "arm_1_joint": 0.20,
+    "arm_2_joint": -1.34,
+    "arm_3_joint": -0.20,
+    "arm_4_joint": 1.94,
+    "arm_5_joint": -1.57,
+    "arm_6_joint": 1.37,
     "arm_7_joint": 0.0,
 }
 
-# Approach workzone – slightly extended, distinct from home.
+# Approach workzone – torso up, arm extended forward at mid-height.
 TIAGO_APPROACH_WORKZONE_JOINTS = {
-    "torso_lift_joint": 0.18,
-    "arm_1_joint": 0.25,
-    "arm_2_joint": -0.35,
-    "arm_3_joint": -0.12,
-    "arm_4_joint": 0.50,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
+    "torso_lift_joint": 0.30,
+    "arm_1_joint": 1.10,
+    "arm_2_joint": -0.50,
+    "arm_3_joint": -1.20,
+    "arm_4_joint": 1.50,
+    "arm_5_joint": -0.80,
+    "arm_6_joint": 0.20,
     "arm_7_joint": 0.0,
 }
 
-# Pick from sink – arm rotated toward sink side (distinct arm_1 angle).
+# Pick from sink – arm reaches to the side and forward.
 TIAGO_PICK_SINK_JOINTS = {
-    "torso_lift_joint": 0.22,
-    "arm_1_joint": 0.55,
-    "arm_2_joint": -0.35,
-    "arm_3_joint": -0.22,
-    "arm_4_joint": 0.85,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
-    "arm_7_joint": 0.0,
+    "torso_lift_joint": 0.25,
+    "arm_1_joint": 1.50,
+    "arm_2_joint": -0.30,
+    "arm_3_joint": -1.80,
+    "arm_4_joint": 1.80,
+    "arm_5_joint": -1.00,
+    "arm_6_joint": 0.50,
+    "arm_7_joint": -0.30,
 }
 
-# Pick from fridge – arm angled slightly differently (distinct arm_1/arm_4).
+# Pick from fridge – arm extends forward at chest height.
 TIAGO_PICK_FRIDGE_JOINTS = {
-    "torso_lift_joint": 0.22,
-    "arm_1_joint": 0.45,
-    "arm_2_joint": -0.30,
-    "arm_3_joint": -0.18,
-    "arm_4_joint": 0.75,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
-    "arm_7_joint": 0.0,
+    "torso_lift_joint": 0.30,
+    "arm_1_joint": 1.20,
+    "arm_2_joint": -0.60,
+    "arm_3_joint": -1.50,
+    "arm_4_joint": 1.60,
+    "arm_5_joint": -0.50,
+    "arm_6_joint": 0.30,
+    "arm_7_joint": -0.20,
 }
 
 # Pick from dishwasher – lower torso, arm reaching forward-low.
 TIAGO_PICK_DISHWASHER_JOINTS = {
-    "torso_lift_joint": 0.18,
-    "arm_1_joint": 0.50,
-    "arm_2_joint": -0.30,
-    "arm_3_joint": -0.22,
-    "arm_4_joint": 0.82,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
+    "torso_lift_joint": 0.10,
+    "arm_1_joint": 1.30,
+    "arm_2_joint": 0.10,
+    "arm_3_joint": -1.60,
+    "arm_4_joint": 2.00,
+    "arm_5_joint": -0.80,
+    "arm_6_joint": 0.50,
     "arm_7_joint": 0.0,
 }
 
-# Place pose – arm lowered slightly.
+# Place pose – arm extended to the side at table height.
 TIAGO_PLACE_JOINTS = {
-    "torso_lift_joint": 0.15,
-    "arm_1_joint": 0.0,
-    "arm_2_joint": -0.50,
-    "arm_3_joint": 0.0,
-    "arm_4_joint": 0.50,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
-    "arm_7_joint": 0.0,
-}
-
-# Open/close fridge – arm_7 adds wrist rotation to distinguish from home.
-TIAGO_OPEN_CLOSE_FRIDGE_JOINTS = {
-    "torso_lift_joint": 0.15,
-    "arm_1_joint": 0.0,
-    "arm_2_joint": -0.50,
-    "arm_3_joint": 0.0,
-    "arm_4_joint": 0.50,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
-    "arm_7_joint": 0.25,
-}
-
-# Open/close dishwasher – arm_7 has larger rotation for distinction.
-TIAGO_OPEN_CLOSE_DISHWASHER_JOINTS = {
-    "torso_lift_joint": 0.15,
-    "arm_1_joint": 0.0,
-    "arm_2_joint": -0.50,
-    "arm_3_joint": 0.0,
-    "arm_4_joint": 0.50,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
-    "arm_7_joint": 0.40,
-}
-
-# Pre-grasp: arm extended, wrist aligned for top-down approach.
-TIAGO_PRE_GRASP_JOINTS = {
     "torso_lift_joint": 0.25,
-    "arm_1_joint": 0.40,
-    "arm_2_joint": -0.50,
-    "arm_3_joint": -0.20,
-    "arm_4_joint": 1.20,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": -0.30,
+    "arm_1_joint": 0.80,
+    "arm_2_joint": -0.20,
+    "arm_3_joint": -1.40,
+    "arm_4_joint": 1.90,
+    "arm_5_joint": -1.20,
+    "arm_6_joint": 0.60,
+    "arm_7_joint": 0.30,
+}
+
+# Open/close fridge – arm up and forward for handle grip.
+TIAGO_OPEN_CLOSE_FRIDGE_JOINTS = {
+    "torso_lift_joint": 0.30,
+    "arm_1_joint": 1.00,
+    "arm_2_joint": -0.80,
+    "arm_3_joint": -1.30,
+    "arm_4_joint": 1.50,
+    "arm_5_joint": -0.70,
+    "arm_6_joint": 0.40,
+    "arm_7_joint": 0.50,
+}
+
+# Open/close dishwasher – arm down and forward for low handle.
+TIAGO_OPEN_CLOSE_DISHWASHER_JOINTS = {
+    "torso_lift_joint": 0.10,
+    "arm_1_joint": 1.20,
+    "arm_2_joint": 0.20,
+    "arm_3_joint": -1.50,
+    "arm_4_joint": 2.00,
+    "arm_5_joint": -0.90,
+    "arm_6_joint": 0.30,
+    "arm_7_joint": 0.60,
+}
+
+# Pre-grasp: arm extended forward, wrist aligned for top-down approach.
+TIAGO_PRE_GRASP_JOINTS = {
+    "torso_lift_joint": 0.30,
+    "arm_1_joint": 1.30,
+    "arm_2_joint": -0.40,
+    "arm_3_joint": -1.60,
+    "arm_4_joint": 1.80,
+    "arm_5_joint": -0.80,
+    "arm_6_joint": -0.50,
     "arm_7_joint": 0.0,
 }
 
-# Grasp: arm lowered to table surface level.
+# Grasp: arm lowered from pre-grasp to object level.
 TIAGO_GRASP_JOINTS = {
     "torso_lift_joint": 0.20,
-    "arm_1_joint": 0.40,
-    "arm_2_joint": -0.60,
-    "arm_3_joint": -0.20,
-    "arm_4_joint": 1.40,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": -0.30,
+    "arm_1_joint": 1.30,
+    "arm_2_joint": 0.10,
+    "arm_3_joint": -1.60,
+    "arm_4_joint": 2.10,
+    "arm_5_joint": -0.80,
+    "arm_6_joint": -0.80,
     "arm_7_joint": 0.0,
 }
 
-# Lift: after grasping, lift object off surface.
+# Lift: after grasping, raise arm with object.
 TIAGO_LIFT_JOINTS = {
-    "torso_lift_joint": 0.30,
-    "arm_1_joint": 0.40,
-    "arm_2_joint": -0.35,
-    "arm_3_joint": -0.20,
-    "arm_4_joint": 1.00,
-    "arm_5_joint": 0.0,
+    "torso_lift_joint": 0.35,
+    "arm_1_joint": 1.30,
+    "arm_2_joint": -0.80,
+    "arm_3_joint": -1.60,
+    "arm_4_joint": 1.40,
+    "arm_5_joint": -0.80,
     "arm_6_joint": -0.30,
     "arm_7_joint": 0.0,
 }
@@ -232,70 +232,70 @@ GRIPPER_JOINTS = ["gripper_left_left_finger_joint", "gripper_right_left_finger_j
 
 # Fridge door interaction poses.
 TIAGO_FRIDGE_APPROACH_JOINTS = {
-    "torso_lift_joint": 0.20,
-    "arm_1_joint": 0.30,
-    "arm_2_joint": -0.40,
-    "arm_3_joint": -0.10,
-    "arm_4_joint": 0.60,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
+    "torso_lift_joint": 0.30,
+    "arm_1_joint": 0.90,
+    "arm_2_joint": -0.70,
+    "arm_3_joint": -1.20,
+    "arm_4_joint": 1.40,
+    "arm_5_joint": -0.60,
+    "arm_6_joint": 0.30,
     "arm_7_joint": 0.0,
 }
 
 TIAGO_FRIDGE_HANDLE_JOINTS = {
-    "torso_lift_joint": 0.25,
-    "arm_1_joint": 0.50,
-    "arm_2_joint": -0.50,
-    "arm_3_joint": -0.15,
-    "arm_4_joint": 0.90,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
-    "arm_7_joint": 0.25,
+    "torso_lift_joint": 0.30,
+    "arm_1_joint": 1.30,
+    "arm_2_joint": -0.60,
+    "arm_3_joint": -1.50,
+    "arm_4_joint": 1.70,
+    "arm_5_joint": -0.50,
+    "arm_6_joint": 0.20,
+    "arm_7_joint": 0.50,
 }
 
 TIAGO_FRIDGE_PULL_JOINTS = {
-    "torso_lift_joint": 0.25,
-    "arm_1_joint": 0.20,
-    "arm_2_joint": -0.30,
-    "arm_3_joint": -0.15,
-    "arm_4_joint": 0.60,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
-    "arm_7_joint": 0.25,
+    "torso_lift_joint": 0.30,
+    "arm_1_joint": 0.60,
+    "arm_2_joint": -0.90,
+    "arm_3_joint": -0.80,
+    "arm_4_joint": 1.20,
+    "arm_5_joint": -0.70,
+    "arm_6_joint": 0.40,
+    "arm_7_joint": 0.50,
 }
 
 # Dishwasher door interaction poses (lower than fridge).
 TIAGO_DW_APPROACH_JOINTS = {
     "torso_lift_joint": 0.10,
-    "arm_1_joint": 0.30,
-    "arm_2_joint": -0.50,
-    "arm_3_joint": -0.10,
-    "arm_4_joint": 0.80,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
+    "arm_1_joint": 1.10,
+    "arm_2_joint": 0.10,
+    "arm_3_joint": -1.40,
+    "arm_4_joint": 1.80,
+    "arm_5_joint": -0.80,
+    "arm_6_joint": 0.30,
     "arm_7_joint": 0.0,
 }
 
 TIAGO_DW_HANDLE_JOINTS = {
     "torso_lift_joint": 0.10,
-    "arm_1_joint": 0.50,
-    "arm_2_joint": -0.60,
-    "arm_3_joint": -0.20,
-    "arm_4_joint": 1.10,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
-    "arm_7_joint": 0.40,
+    "arm_1_joint": 1.40,
+    "arm_2_joint": 0.30,
+    "arm_3_joint": -1.60,
+    "arm_4_joint": 2.10,
+    "arm_5_joint": -0.70,
+    "arm_6_joint": 0.20,
+    "arm_7_joint": 0.60,
 }
 
 TIAGO_DW_PULL_JOINTS = {
     "torso_lift_joint": 0.10,
-    "arm_1_joint": 0.20,
-    "arm_2_joint": -0.40,
-    "arm_3_joint": -0.20,
-    "arm_4_joint": 0.70,
-    "arm_5_joint": 0.0,
-    "arm_6_joint": 0.0,
-    "arm_7_joint": 0.40,
+    "arm_1_joint": 0.70,
+    "arm_2_joint": -0.20,
+    "arm_3_joint": -1.00,
+    "arm_4_joint": 1.40,
+    "arm_5_joint": -0.90,
+    "arm_6_joint": 0.50,
+    "arm_7_joint": 0.60,
 }
 
 
@@ -327,8 +327,8 @@ def build_motion_plan_request(
     req.group_name = group_name
     req.num_planning_attempts = num_attempts
     req.allowed_planning_time = planning_time
-    req.max_velocity_scaling_factor = 0.08
-    req.max_acceleration_scaling_factor = 0.08
+    req.max_velocity_scaling_factor = 0.20
+    req.max_acceleration_scaling_factor = 0.20
     req.goal_constraints.append(build_joint_goal_constraint(joint_goal, tolerance=0.05))
     return req
 
