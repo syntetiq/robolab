@@ -18,8 +18,10 @@ def main():
     msg = String()
     msg.data = data
     import time
-    time.sleep(1.5)  # allow DDS discovery (subscriber may need up to 1-2s to register)
-    pub.publish(msg)
+    time.sleep(2.5)
+    for _ in range(5):
+        pub.publish(msg)
+        time.sleep(0.15)
     time.sleep(0.3)
     node.destroy_node()
     rclpy.shutdown()

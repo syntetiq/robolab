@@ -27,6 +27,15 @@ import time
 from pathlib import Path
 
 
+_MOVEIT_JOINTS = frozenset([
+    "torso_lift_joint",
+    "arm_1_joint", "arm_2_joint", "arm_3_joint", "arm_4_joint",
+    "arm_5_joint", "arm_6_joint", "arm_7_joint",
+    "head_1_joint", "head_2_joint",
+    "gripper_left_left_finger_joint", "gripper_right_left_finger_joint",
+])
+
+
 def parse_args():
     p = argparse.ArgumentParser(description="ROS2 FJT Proxy for Isaac Sim IPC")
     p.add_argument(
@@ -68,6 +77,12 @@ def parse_args():
         default=120.0,
         help="Max seconds to wait for Isaac Sim to execute a trajectory.",
     )
+    p.add_argument(
+        "--filter-joints",
+        action="store_true",
+        default=True,
+        help="Only publish joints known to MoveGroup model (avoids 'not found' errors).",
+    )
     return p.parse_args()
 
 
@@ -88,6 +103,7 @@ import rclpy
 from rclpy.action import ActionServer, GoalResponse, CancelResponse
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from sensor_msgs.msg import JointState
 from control_msgs.action import FollowJointTrajectory
 
@@ -147,8 +163,12 @@ class FJTProxyNode(Node):
     def __init__(self):
         super().__init__("ros2_fjt_proxy")
 
-        # Joint state publisher.
-        self._js_pub = self.create_publisher(JointState, ARGS.joint_state_topic, 10)
+        js_qos = QoSProfile(
+            depth=10,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        self._js_pub = self.create_publisher(JointState, ARGS.joint_state_topic, js_qos)
         self._js_timer = self.create_timer(1.0 / ARGS.js_rate, self._publish_js)
 
         # FollowJointTrajectory action servers for arm and torso controllers.
@@ -185,7 +205,12 @@ class FJTProxyNode(Node):
 
     def _publish_js(self):
         snapshot = _read_joint_state_file()
-        if not snapshot:
+        if ARGS.filter_joints:
+            if snapshot:
+                snapshot = {k: v for k, v in snapshot.items() if k in _MOVEIT_JOINTS}
+            if not snapshot:
+                snapshot = {j: {"position": 0.0, "velocity": 0.0} for j in _MOVEIT_JOINTS}
+        elif not snapshot:
             return
         msg = JointState()
         _wall_ns = int(time.time() * 1_000_000_000)

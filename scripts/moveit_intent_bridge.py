@@ -228,7 +228,7 @@ TIAGO_LIFT_JOINTS = {
 # Gripper positions (finger joint values).
 GRIPPER_OPEN = 0.04
 GRIPPER_CLOSED = 0.0
-GRIPPER_JOINTS = ["gripper_left_joint", "gripper_right_joint"]
+GRIPPER_JOINTS = ["gripper_left_left_finger_joint", "gripper_right_left_finger_joint"]
 
 # Fridge door interaction poses.
 TIAGO_FRIDGE_APPROACH_JOINTS = {
@@ -327,8 +327,8 @@ def build_motion_plan_request(
     req.group_name = group_name
     req.num_planning_attempts = num_attempts
     req.allowed_planning_time = planning_time
-    req.max_velocity_scaling_factor = 0.15
-    req.max_acceleration_scaling_factor = 0.15
+    req.max_velocity_scaling_factor = 0.08
+    req.max_acceleration_scaling_factor = 0.08
     req.goal_constraints.append(build_joint_goal_constraint(joint_goal, tolerance=0.05))
     return req
 

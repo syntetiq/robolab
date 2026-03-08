@@ -964,15 +964,24 @@ try:
             _tracked_paths.add(_sp_path)
     print(f"[RoboLab] Tracking {len(tracked_prims)} semantic objects.")
 
-    world.reset()
-    simulation_app.update()
+    # Pin the articulation root as a fixed base BEFORE world.reset() so PhysX
+    # builds the articulation tree with the root body locked to the world frame.
+    try:
+        from pxr import Sdf
+        _art_prim = stage.GetPrimAtPath(tiago_articulation_path)
+        if _art_prim.IsValid():
+            _fb_attr = _art_prim.GetAttribute("physxArticulation:fixedBase")
+            if _fb_attr and _fb_attr.IsValid():
+                _fb_attr.Set(True)
+            else:
+                _art_prim.CreateAttribute("physxArticulation:fixedBase", Sdf.ValueTypeNames.Bool).Set(True)
+            print(f"[RoboLab] Set articulation fixedBase=True at {tiago_articulation_path}")
+    except Exception as err:
+        print(f"[RoboLab] WARN: failed to set fixedBase: {err}")
 
-    # Force a stable startup pose and clear residual dynamics to avoid base tilt.
-    # z=0.08 places the robot comfortably above the floor top surface (z=0)
-    # so PhysX contact resolution starts from a clean state without penetration.
+    # Force a stable startup pose BEFORE world.reset().
     try:
         tiago_xform = XFormPrim(prim_path=tiago_prim_path, name="tiago_root_pose")
-        # Face +X direction (no rotation needed as base is aligned with world X).
         tiago_xform.set_world_pose(
             position=np.array([1.0, -1.0, 0.08], dtype=np.float32),
             orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
@@ -981,23 +990,55 @@ try:
     except Exception as err:
         print(f"[RoboLab] WARN: failed to apply startup pose stabilization: {err}")
 
-    # Run physics warm-up steps so the robot and environment settle fully
-    # before data collection. 100 steps at 1/120s ≈ 0.83s of simulated time.
-    for _ in range(100):
-        world.step(render=False)
+    world.reset()
+    simulation_app.update()
 
+    # Set initial joint position targets via ArticulationAction before warm-up.
+    # This makes PD drives actively hold the robot in its startup configuration.
     if tiago_articulation:
         try:
-            get_vel = getattr(tiago_articulation, "get_joint_velocities", None) or getattr(
-                tiago_articulation, "get_dof_velocities", None
+            from omni.isaac.core.utils.types import ArticulationAction
+            _get_pos = getattr(tiago_articulation, "get_joint_positions", None) or getattr(
+                tiago_articulation, "get_dof_positions", None
             )
-            set_vel = getattr(tiago_articulation, "set_joint_velocities", None) or getattr(
+            _set_vel = getattr(tiago_articulation, "set_joint_velocities", None) or getattr(
                 tiago_articulation, "set_dof_velocities", None
             )
-            vel_values = _as_list(get_vel()) if get_vel else []
-            if set_vel and vel_values:
-                set_vel([0.0 for _ in vel_values])
-                print(f"[RoboLab] Zeroed {len(vel_values)} joint velocities after warm-up steps.")
+            _cur_pos = _as_list(_get_pos()) if _get_pos else []
+            if _cur_pos:
+                tiago_articulation.apply_action(
+                    ArticulationAction(joint_positions=np.array(_cur_pos, dtype=np.float32))
+                )
+                print(f"[RoboLab] Set {len(_cur_pos)} initial joint position targets")
+            if _set_vel and _cur_pos:
+                _set_vel([0.0] * len(_cur_pos))
+                print(f"[RoboLab] Zeroed {len(_cur_pos)} initial joint velocities")
+        except Exception as err:
+            print(f"[RoboLab] WARN: failed to set initial joint targets: {err}")
+
+    # Run physics warm-up steps so the robot and environment settle fully
+    # before data collection. 200 steps at 1/120s ≈ 1.67s of simulated time.
+    for _ in range(200):
+        world.step(render=False)
+
+    # After warm-up, zero all velocities and re-lock position targets.
+    if tiago_articulation:
+        try:
+            from omni.isaac.core.utils.types import ArticulationAction as _AA
+            _get_pos2 = getattr(tiago_articulation, "get_joint_positions", None) or getattr(
+                tiago_articulation, "get_dof_positions", None
+            )
+            _set_vel2 = getattr(tiago_articulation, "set_joint_velocities", None) or getattr(
+                tiago_articulation, "set_dof_velocities", None
+            )
+            _settled_pos = _as_list(_get_pos2()) if _get_pos2 else []
+            if _settled_pos:
+                tiago_articulation.apply_action(
+                    _AA(joint_positions=np.array(_settled_pos, dtype=np.float32))
+                )
+            if _set_vel2 and _settled_pos:
+                _set_vel2([0.0] * len(_settled_pos))
+                print(f"[RoboLab] Post-warmup: zeroed velocities and locked {len(_settled_pos)} joints")
         except Exception as err:
             print(f"[RoboLab] WARN: failed to zero startup articulation velocities: {err}")
 
@@ -1005,20 +1046,20 @@ try:
     # to prevent oscillation and overshooting during trajectory playback.
     if tiago_articulation:
         _DRIVE_CONFIG = {
-            "torso_lift_joint": (800.0, 200.0),
-            "arm_1_joint": (400.0, 80.0),
-            "arm_2_joint": (400.0, 80.0),
-            "arm_3_joint": (400.0, 80.0),
-            "arm_4_joint": (400.0, 80.0),
-            "arm_5_joint": (200.0, 40.0),
-            "arm_6_joint": (200.0, 40.0),
-            "arm_7_joint": (200.0, 40.0),
-            "head_1_joint": (100.0, 20.0),
-            "head_2_joint": (100.0, 20.0),
-            "gripper_left_joint": (100.0, 20.0),
-            "gripper_right_joint": (100.0, 20.0),
+            "torso_lift_joint": (5000.0, 1000.0),
+            "arm_1_joint": (2000.0, 400.0),
+            "arm_2_joint": (2000.0, 400.0),
+            "arm_3_joint": (2000.0, 400.0),
+            "arm_4_joint": (2000.0, 400.0),
+            "arm_5_joint": (1000.0, 200.0),
+            "arm_6_joint": (1000.0, 200.0),
+            "arm_7_joint": (1000.0, 200.0),
+            "head_1_joint": (500.0, 100.0),
+            "head_2_joint": (500.0, 100.0),
+            "gripper_left_joint": (500.0, 100.0),
+            "gripper_right_joint": (500.0, 100.0),
         }
-        _DEFAULT_DRIVE = (300.0, 60.0)
+        _DEFAULT_DRIVE = (1000.0, 200.0)
         _drive_count = 0
         _stage_d = stage_utils.get_current_stage()
         for _jp in _stage_d.Traverse():
@@ -1203,43 +1244,49 @@ try:
         print("[RoboLab] Proxy IPC mode: skipping rclpy inside Isaac Sim (ros2_fjt_proxy handles ROS2).")
 
     def _apply_joint_positions(joint_values: dict) -> bool:
+        """Apply joint targets via ArticulationAction (PD position drive).
+
+        This sets drive targets instead of teleporting joints, so the physics
+        engine smoothly tracks the desired configuration without creating
+        reaction forces that destabilise the base.
+        """
         if not tiago_articulation or not joint_values:
             return False
+        try:
+            from omni.isaac.core.utils.types import ArticulationAction
+        except ImportError:
+            pass
         try:
             get_pos = getattr(tiago_articulation, "get_joint_positions", None) or getattr(
                 tiago_articulation, "get_dof_positions", None
             )
-            set_pos = getattr(tiago_articulation, "set_joint_positions", None) or getattr(
-                tiago_articulation, "set_dof_positions", None
-            )
-            if not get_pos or not set_pos:
+            if not get_pos:
                 return False
             current = _as_list(get_pos())
             if not current:
                 return False
+            targets = list(current)
             index_map = {n: i for i, n in enumerate(dof_names)}
-            update_indices = []
-            update_values = []
+            updated_any = False
             for name, value in joint_values.items():
                 resolved_name = _resolve_joint_name(name)
                 idx = index_map.get(resolved_name)
-                if idx is None or idx >= len(current):
+                if idx is None or idx >= len(targets):
                     continue
                 normalized = _normalize_joint_target(resolved_name, float(value))
-                update_indices.append(idx)
-                update_values.append(normalized)
-            if not update_indices:
+                targets[idx] = normalized
+                updated_any = True
+            if not updated_any:
                 return False
-            for idx, value in zip(update_indices, update_values):
-                current[idx] = value
-            # PhysX revolute drive targets must stay within [-2pi, 2pi].
             for i, joint_name in enumerate(dof_names):
-                if i >= len(current):
+                if i >= len(targets):
                     continue
-                current[i] = _normalize_joint_target(joint_name, float(current[i]))
-            set_pos(current)
+                targets[i] = _normalize_joint_target(joint_name, float(targets[i]))
+            action = ArticulationAction(joint_positions=np.array(targets, dtype=np.float32))
+            tiago_articulation.apply_action(action)
             return True
-        except Exception:
+        except Exception as exc:
+            print(f"[RoboLab] WARN: _apply_joint_positions failed: {exc}")
             return False
 
     def _process_trajectory_dispatcher() -> None:
@@ -1655,10 +1702,10 @@ try:
                 for key, value in joint_snapshot.items()
             }
 
-        # Robot base pose in map frame.
+        # Robot base pose in map frame (read from articulation root, not static Xform).
         robot_pose = {"position": [], "orientation": []}
         try:
-            robot_prim = XFormPrim(tiago_prim_path)
+            robot_prim = XFormPrim(tiago_articulation_path)
             robot_pos, robot_rot = robot_prim.get_world_pose()
             robot_pose = {
                 "position": robot_pos.tolist() if robot_pos is not None else [],

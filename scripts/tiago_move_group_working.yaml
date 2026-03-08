@@ -88,6 +88,22 @@
           <child link="arm_tool_link"/>
           <origin xyz="0 0 0.05" rpy="0 0 0"/>
         </joint>
+        <link name="gripper_left_link"/>
+        <joint name="gripper_left_left_finger_joint" type="prismatic">
+          <parent link="arm_tool_link"/>
+          <child link="gripper_left_link"/>
+          <origin xyz="0 0 0" rpy="0 0 0"/>
+          <axis xyz="0 1 0"/>
+          <limit lower="0.0" upper="0.045" effort="100" velocity="0.1"/>
+        </joint>
+        <link name="gripper_right_link"/>
+        <joint name="gripper_right_left_finger_joint" type="prismatic">
+          <parent link="arm_tool_link"/>
+          <child link="gripper_right_link"/>
+          <origin xyz="0 0 0" rpy="0 0 0"/>
+          <axis xyz="0 -1 0"/>
+          <limit lower="0.0" upper="0.045" effort="100" velocity="0.1"/>
+        </joint>
         <link name="head_1_link"/>
         <joint name="head_1_joint" type="revolute">
           <parent link="torso_lift_link"/>
@@ -128,6 +144,10 @@
           <joint name="arm_6_joint"/>
           <joint name="arm_7_joint"/>
           <joint name="arm_tool_joint"/>
+        </group>
+        <group name="gripper">
+          <joint name="gripper_left_left_finger_joint"/>
+          <joint name="gripper_right_left_finger_joint"/>
         </group>
       </robot>
     robot_description_kinematics:
@@ -170,7 +190,7 @@
     current_state_monitor_timeout: 30.0
     publish_transforms_updates: true
     moveit_simple_controller_manager:
-      controller_names: [arm_controller, torso_controller]
+      controller_names: [arm_controller, torso_controller, gripper_controller]
       arm_controller:
         action_ns: follow_joint_trajectory
         type: FollowJointTrajectory
@@ -181,3 +201,8 @@
         type: FollowJointTrajectory
         default: true
         joints: [torso_lift_joint]
+      gripper_controller:
+        action_ns: follow_joint_trajectory
+        type: FollowJointTrajectory
+        default: true
+        joints: [gripper_left_left_finger_joint, gripper_right_left_finger_joint]
