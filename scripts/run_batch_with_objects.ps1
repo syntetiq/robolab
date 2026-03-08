@@ -76,23 +76,17 @@ foreach ($scene in $validScenes) {
         $startTime = Get-Date
         $exitCode = -1
         try {
-            $orchArgs = @(
-                "-ExecutionPolicy", "Bypass",
-                "-File", $OrchestratorScript,
-                "-Duration", $DurationSec,
-                "-Intent", $scenario,
-                "-EnvUsd", $scene.Path,
-                "-TiagoUsd", $TiagoUsd,
-                "-SpawnObjects",
-                "-ObjectsDir", $ObjectsDir,
-                "-IntentDelaySec", 10,
-                "-IntentResultTimeoutSec", 35,
-                "-MaxRetriesPerIntent", 2
-            )
-
-            $orchProc = Start-Process -FilePath "powershell.exe" -ArgumentList $orchArgs `
-                -Wait -PassThru -NoNewWindow
-            $exitCode = $orchProc.ExitCode
+            & powershell.exe -ExecutionPolicy Bypass -File $OrchestratorScript `
+                -Duration $DurationSec `
+                -Intent $scenario `
+                -EnvUsd $scene.Path `
+                -TiagoUsd $TiagoUsd `
+                -SpawnObjects `
+                -ObjectsDir $ObjectsDir `
+                -IntentDelaySec 10 `
+                -IntentResultTimeoutSec 35 `
+                -MaxRetriesPerIntent 2
+            $exitCode = $LASTEXITCODE
         } catch {
             Write-Host "$pfx ERROR: $_"
             $exitCode = -99
