@@ -745,7 +745,7 @@ try:
         _obj_dir = Path(args.objects_dir)
         _obj_usds = []
         if _obj_dir.exists():
-            for _ext in ("*.usd", "*.usdc", "*.usdz"):
+            for _ext in ("*.usd", "*.usda", "*.usdc", "*.usdz"):
                 _obj_usds.extend(_obj_dir.glob(_ext))
         if not _obj_usds:
             _builtin_shapes = ["Cube", "Cylinder", "Sphere", "Cone"]
