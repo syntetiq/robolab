@@ -737,33 +737,36 @@ try:
         UsdPhysics.CollisionAPI.Apply(_stage_tmp.GetPrimAtPath(_floor_path))
         print("[RoboLab] Added ground-plane collider at z=0")
 
-    # Anchor environment objects (fridge, dishwasher, etc.) as kinematic so
-    # they don't fall through the floor under gravity.
+    # Anchor ALL environment objects as kinematic so they don't move under
+    # gravity or robot contact. Traverses the full /World/Environment subtree
+    # recursively. Every prim with RigidBodyAPI gets kinematic=True; prims
+    # matching furniture keywords get the API applied if missing.
+    _ANCHOR_KEYWORDS = (
+        "fridge", "refrigerator", "dishwasher", "sink", "counter",
+        "table", "shelf", "cabinet", "oven", "microwave", "wall",
+        "floor", "ceiling", "door", "drawer", "handle", "panel",
+        "hood", "rack", "basket", "tray",
+    )
     _env_root = _stage_tmp.GetPrimAtPath("/World/Environment")
     _anchored = 0
+    _anchored_by_name = 0
     if _env_root and _env_root.IsValid():
         _anchor_stack = list(_env_root.GetChildren())
         while _anchor_stack:
             _ap = _anchor_stack.pop()
-            _ap_path = str(_ap.GetPath())
+            _anchor_stack.extend(_ap.GetChildren())
+
             if _ap.HasAPI(UsdPhysics.RigidBodyAPI):
                 _rb = UsdPhysics.RigidBodyAPI(_ap)
                 _rb.CreateKinematicEnabledAttr(True)
                 _anchored += 1
             else:
                 _name_low = _ap.GetName().lower()
-                _needs_anchor = any(kw in _name_low for kw in (
-                    "fridge", "refrigerator", "dishwasher", "sink", "counter",
-                    "table", "shelf", "cabinet", "oven", "microwave", "wall",
-                    "floor", "ceiling", "door",
-                ))
-                if _needs_anchor:
+                if any(kw in _name_low for kw in _ANCHOR_KEYWORDS):
                     UsdPhysics.RigidBodyAPI.Apply(_ap)
                     UsdPhysics.RigidBodyAPI(_ap).CreateKinematicEnabledAttr(True)
-                    _anchored += 1
-                else:
-                    _anchor_stack.extend(_ap.GetChildren())
-    print(f"[RoboLab] Anchored {_anchored} environment prims as kinematic")
+                    _anchored_by_name += 1
+    print(f"[RoboLab] Anchored {_anchored} existing rigid bodies + {_anchored_by_name} by name as kinematic")
 
     # Spawn diverse graspable objects on table surfaces when --spawn-objects is set.
     _spawned_objects = []

@@ -48,11 +48,13 @@ class EpisodeMetrics:
     gripper_opened: bool = False
 
     object_count: int = 0
+    graspable_count: int = 0
     object_max_dxy: float = 0.0
     object_max_dz: float = 0.0
     object_lifted: bool = False
     object_fell: bool = False
     objects_moved: int = 0
+    furniture_unstable: int = 0
 
     base_travel: float = 0.0
     arm_idle_ratio: float = 0.0
@@ -203,15 +205,44 @@ def compute_metrics(ep_dir: Path, dataset: dict) -> EpisodeMetrics:
             m.gripper_closed = True
             m.gripper_opened = True
 
-    # Object displacement
+    # Object displacement — separate graspable objects from furniture.
+    # Furniture (fridge, table, sink, etc.) is environment geometry that
+    # may have unstable physics but should NOT cause episode failure.
+    _FURNITURE_KEYWORDS = frozenset((
+        "fridge", "refrigerator", "dishwasher", "sink", "counter", "table",
+        "shelf", "cabinet", "oven", "microwave", "door", "wall", "floor",
+        "ceiling", "tiago", "light", "lamp",
+    ))
+
+    def _is_furniture(prim_path: str, obj_class: str) -> bool:
+        """True if this is environment furniture, not a graspable object."""
+        if "/GraspableObjects/" in prim_path:
+            return False
+        if "/Environment/" in prim_path:
+            return True
+        name_low = prim_path.split("/")[-1].lower()
+        cls_low = obj_class.lower()
+        return any(kw in name_low or kw in cls_low for kw in _FURNITURE_KEYWORDS)
+
     wp0 = frames[0].get("world_poses", {})
     wpN = frames[-1].get("world_poses", {})
     m.object_count = len(wp0)
+
     for key in wp0:
         p0 = wp0[key].get("position", [0, 0, 0])
         pN = wpN.get(key, {}).get("position", [0, 0, 0])
+        obj_class = wp0[key].get("class", "")
         dxy = math.sqrt((pN[0] - p0[0]) ** 2 + (pN[1] - p0[1]) ** 2)
         dz = pN[2] - p0[2]
+
+        is_furn = _is_furniture(key, obj_class)
+
+        if is_furn:
+            if abs(dz) > 0.1 or dxy > 0.1:
+                m.furniture_unstable += 1
+            continue
+
+        m.graspable_count += 1
         m.object_max_dxy = max(m.object_max_dxy, dxy)
         m.object_max_dz = max(m.object_max_dz, abs(dz))
         if dxy > OBJECT_MOVE_THRESH or abs(dz) > OBJECT_MOVE_THRESH:
@@ -241,7 +272,9 @@ def classify_episode(m: EpisodeMetrics) -> EpisodeMetrics:
     if m.duration_sec < MIN_DURATION:
         reasons.append("too_short")
     if m.object_fell:
-        reasons.append("object_fell")
+        reasons.append("graspable_object_fell")
+    if m.furniture_unstable > 0:
+        reasons.append(f"furniture_unstable({m.furniture_unstable})")
 
     task = m.task.strip('"').strip("'").strip("$").strip('"')
 
@@ -281,7 +314,7 @@ def classify_episode(m: EpisodeMetrics) -> EpisodeMetrics:
 
     m.reasons = reasons
 
-    fail_reasons = {"too_few_frames", "too_short", "object_fell", "no_manipulation", "no_activity"}
+    fail_reasons = {"too_few_frames", "too_short", "graspable_object_fell", "no_manipulation", "no_activity"}
     has_fail = bool(fail_reasons & set(reasons))
     has_warn = bool(set(reasons) - fail_reasons)
 
@@ -365,8 +398,8 @@ def main():
             f"{m.n_frames:>5} fr | "
             f"arm={m.arm_travel:>6.1f}r | "
             f"grip={m.gripper_delta:>.3f} | "
-            f"obj_dxy={m.object_max_dxy:>.3f} dz={m.object_max_dz:>.3f} | "
-            f"{m.task[:25]:<25s} | "
+            f"obj={m.graspable_count} dxy={m.object_max_dxy:>.3f} dz={m.object_max_dz:>.3f} | "
+            f"furn={m.furniture_unstable} | "
             f"{reasons_str}"
         )
 
@@ -440,11 +473,13 @@ def main():
                 "gripper_closed": m.gripper_closed,
                 "gripper_opened": m.gripper_opened,
                 "object_count": m.object_count,
+                "graspable_count": m.graspable_count,
                 "object_max_dxy": round(m.object_max_dxy, 4),
                 "object_max_dz": round(m.object_max_dz, 4),
                 "object_lifted": m.object_lifted,
                 "object_fell": m.object_fell,
                 "objects_moved": m.objects_moved,
+                "furniture_unstable": m.furniture_unstable,
                 "base_travel": round(m.base_travel, 4),
                 "arm_idle_ratio": round(m.arm_idle_ratio, 3),
                 "reasons": m.reasons,
