@@ -19,6 +19,7 @@ import math
 
 import rclpy
 from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.node import Node
 from std_msgs.msg import String
 
@@ -596,7 +597,9 @@ class MoveItIntentBridge(Node):
         self.plan_only = plan_only
         self._action_client = ActionClient(self, MoveGroup, move_action_name)
         self._gripper_client = ActionClient(self, FollowJointTrajectory, gripper_action)
-        self._ik_client = self.create_client(GetPositionIK, "/compute_ik")
+        self._service_cb_group = ReentrantCallbackGroup()
+        self._ik_client = self.create_client(
+            GetPositionIK, "/compute_ik", callback_group=self._service_cb_group)
         self._cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self._sub = self.create_subscription(
             String,
@@ -646,6 +649,8 @@ class MoveItIntentBridge(Node):
         req = GetPositionIK.Request()
         req.ik_request.group_name = self.planning_group
         req.ik_request.avoid_collisions = True
+        req.ik_request.timeout.sec = 2
+        req.ik_request.timeout.nanosec = 0
 
         pose = PoseStamped()
         pose.header.frame_id = self.frame_id
@@ -657,19 +662,22 @@ class MoveItIntentBridge(Node):
         pose.pose.orientation = target_orientation or self._TOP_DOWN_QUAT
         req.ik_request.pose_stamped = pose
 
-        if seed_joints:
-            rs = RobotState()
-            rs.joint_state = JointState()
-            rs.joint_state.name = list(seed_joints.keys())
-            rs.joint_state.position = [float(v) for v in seed_joints.values()]
-            req.ik_request.robot_state = rs
+        _seed = seed_joints or TIAGO_PRE_GRASP_JOINTS
+        rs = RobotState()
+        rs.joint_state = JointState()
+        rs.joint_state.name = list(_seed.keys())
+        rs.joint_state.position = [float(v) for v in _seed.values()]
+        req.ik_request.robot_state = rs
 
         try:
             future = self._ik_client.call_async(req)
-            rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
-            if not future.done():
-                self.get_logger().warn("IK service call timed out")
-                return None
+            _deadline = _time.time() + 8.0
+            while not future.done():
+                _time.sleep(0.05)
+                if _time.time() > _deadline:
+                    self.get_logger().warn("IK service call timed out (8s)")
+                    future.cancel()
+                    return None
             response = future.result()
             if response.error_code.val != 1:
                 self.get_logger().warn(f"IK failed with code {response.error_code.val}")
@@ -689,8 +697,8 @@ class MoveItIntentBridge(Node):
     def _get_ik_grasp_sequence(self, object_xyz, destination_joints, base_pre=None, base_grasp=None):
         """Build a full grasp sequence using IK for the given object position.
         Falls back to adaptive poses if IK is unavailable."""
-        pre_grasp_pos = (object_xyz[0], object_xyz[1], object_xyz[2] + 0.12)
-        grasp_pos = (object_xyz[0], object_xyz[1], object_xyz[2] + 0.02)
+        pre_grasp_pos = (object_xyz[0], object_xyz[1], object_xyz[2] + 0.15)
+        grasp_pos = (object_xyz[0], object_xyz[1], object_xyz[2] + 0.04)
 
         seed = base_pre or TIAGO_PRE_GRASP_JOINTS
         pre_ik = self._compute_ik(pre_grasp_pos, seed_joints=seed)
@@ -1100,8 +1108,17 @@ class MoveItIntentBridge(Node):
                 if action_type == "move":
                     ok = self._send_goal_sync(value, group_override=None)
                     if not ok:
-                        self.get_logger().error(f"  Step {i+1} failed, aborting sequence")
-                        break
+                        perturbed = dict(value)
+                        for _jn in ("arm_2_joint", "arm_3_joint", "arm_4_joint"):
+                            if _jn in perturbed:
+                                perturbed[_jn] += 0.05
+                        perturbed = clamp_joints(perturbed)
+                        self.get_logger().info(f"  Step {i+1} failed, retrying with perturbation")
+                        ok = self._send_goal_sync(perturbed, group_override=None)
+                        if not ok:
+                            self.get_logger().error(f"  Step {i+1} retry also failed, aborting")
+                            break
+                        value = perturbed
                     _last_grasp_move = value
                     _last_grasp_group = None
                 elif action_type == "move_left":
@@ -1154,6 +1171,17 @@ class MoveItIntentBridge(Node):
         finally:
             self._executing = False
 
+    def _wait_future(self, future, timeout_sec: float, label: str = "future") -> bool:
+        """Poll a future until done or timeout. Works from any thread."""
+        deadline = _time.time() + timeout_sec
+        while not future.done():
+            _time.sleep(0.05)
+            if _time.time() > deadline:
+                self.get_logger().error(f"{label} timed out ({timeout_sec}s)")
+                future.cancel()
+                return False
+        return True
+
     def _send_goal_sync(self, joint_goal: dict, group_override: str = None) -> bool:
         if not self._action_client.wait_for_server(timeout_sec=10.0):
             self.get_logger().error("MoveGroup action server not available")
@@ -1166,18 +1194,14 @@ class MoveItIntentBridge(Node):
         goal_msg.planning_options = build_planning_options(plan_only=self.plan_only)
         self.get_logger().info(f"Sending MoveGroup goal for {list(joint_goal.keys())[:3]}...")
         send_future = self._action_client.send_goal_async(goal_msg)
-        rclpy.spin_until_future_complete(self, send_future, timeout_sec=15.0)
-        if not send_future.done():
-            self.get_logger().error("MoveGroup send_goal timed out")
+        if not self._wait_future(send_future, 15.0, "send_goal"):
             return False
         goal_handle = send_future.result()
         if not goal_handle.accepted:
             self.get_logger().error("Goal rejected")
             return False
         result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future, timeout_sec=60.0)
-        if not result_future.done():
-            self.get_logger().error("MoveGroup execution timed out")
+        if not self._wait_future(result_future, 60.0, "MoveGroup execution"):
             return False
         result = result_future.result().result
         code = result.error_code.val
@@ -1199,18 +1223,16 @@ class MoveItIntentBridge(Node):
         pt.time_from_start = Duration(sec=1, nanosec=0)
         goal.trajectory.points.append(pt)
         send_future = self._gripper_client.send_goal_async(goal)
-        rclpy.spin_until_future_complete(self, send_future, timeout_sec=10.0)
-        if not send_future.done():
+        if not self._wait_future(send_future, 10.0, "gripper send"):
             return False
         goal_handle = send_future.result()
         if not goal_handle.accepted:
             return False
         result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future, timeout_sec=10.0)
-        if result_future.done():
-            res = result_future.result().result
-            return res.error_code == FollowJointTrajectory.Result.SUCCESSFUL
-        return False
+        if not self._wait_future(result_future, 10.0, "gripper execute"):
+            return False
+        res = result_future.result().result
+        return res.error_code == FollowJointTrajectory.Result.SUCCESSFUL
 
     def _send_nav_sync(self, params: tuple):
         """Publish cmd_vel for a given duration. params = (vx, vy, vyaw, duration_sec)."""
@@ -1315,8 +1337,11 @@ def main():
         plan_only=args.plan_only,
         gripper_action=args.gripper_action,
     )
+    from rclpy.executors import MultiThreadedExecutor
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:

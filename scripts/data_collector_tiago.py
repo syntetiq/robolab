@@ -2058,6 +2058,9 @@ try:
         return None, None
 
     print("[RoboLab] Starting simulation loop...")
+    _grasp_events.clear()
+    _prev_gripper_gap = None
+    _prev_gripper_closing = False
 
     while simulation_app.is_running():
         elapsed = time.time() - start_time
