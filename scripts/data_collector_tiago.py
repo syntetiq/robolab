@@ -91,6 +91,11 @@ def parse_args():
         default=os.environ.get("ROBOLAB_OBJECTS_DIR", r"C:\RoboLab_Data\data\object_sets"),
         help="Directory containing object USD files for spawning.",
     )
+    parser.add_argument(
+        "--mobile-base",
+        action="store_true",
+        help="Enable mobile base (unfixed root). Base responds to velocity commands via base_cmd.json.",
+    )
     return parser.parse_known_args()[0]
 
 
@@ -976,18 +981,19 @@ try:
             _tracked_paths.add(_sp_path)
     print(f"[RoboLab] Tracking {len(tracked_prims)} semantic objects.")
 
-    # Pin the articulation root as a fixed base BEFORE world.reset() so PhysX
-    # builds the articulation tree with the root body locked to the world frame.
+    # Pin the articulation root BEFORE world.reset(). If --mobile-base is set,
+    # the base is left unfixed so the robot can navigate.
+    _use_fixed_base = not getattr(args, "mobile_base", False)
     try:
         from pxr import Sdf
         _art_prim = stage.GetPrimAtPath(tiago_articulation_path)
         if _art_prim.IsValid():
             _fb_attr = _art_prim.GetAttribute("physxArticulation:fixedBase")
             if _fb_attr and _fb_attr.IsValid():
-                _fb_attr.Set(True)
+                _fb_attr.Set(_use_fixed_base)
             else:
-                _art_prim.CreateAttribute("physxArticulation:fixedBase", Sdf.ValueTypeNames.Bool).Set(True)
-            print(f"[RoboLab] Set articulation fixedBase=True at {tiago_articulation_path}")
+                _art_prim.CreateAttribute("physxArticulation:fixedBase", Sdf.ValueTypeNames.Bool).Set(_use_fixed_base)
+            print(f"[RoboLab] Set articulation fixedBase={_use_fixed_base} at {tiago_articulation_path}")
     except Exception as err:
         print(f"[RoboLab] WARN: failed to set fixedBase: {err}")
 
@@ -1666,6 +1672,35 @@ try:
                         threading.Thread(target=_watch_done, daemon=True).start()
             except Exception as _ipc_err:
                 pass  # non-fatal IPC errors
+
+            # 3. Mobile base: read base_cmd.json and apply velocity to root body.
+            if getattr(args, "mobile_base", False) and tiago_articulation:
+                try:
+                    _base_cmd_file = FJT_PROXY_DIR / "base_cmd.json"
+                    if _base_cmd_file.exists():
+                        _bcmd = json.loads(_base_cmd_file.read_text(encoding="utf-8"))
+                        _vx = float(_bcmd.get("vx", 0.0))
+                        _vy = float(_bcmd.get("vy", 0.0))
+                        _vyaw = float(_bcmd.get("vyaw", 0.0))
+                        if abs(_vx) > 0.001 or abs(_vy) > 0.001 or abs(_vyaw) > 0.001:
+                            from omni.isaac.core.prims import XFormPrim as _XFP
+                            _root = _XFP(prim_path=tiago_prim_path)
+                            _pos, _orient = _root.get_world_pose()
+                            import math
+                            _qw, _qx, _qy, _qz = float(_orient[0]), float(_orient[1]), float(_orient[2]), float(_orient[3])
+                            _yaw = math.atan2(2.0 * (_qw * _qz + _qx * _qy), 1.0 - 2.0 * (_qy * _qy + _qz * _qz))
+                            _dt = 1.0 / 60.0
+                            _dx = (_vx * math.cos(_yaw) - _vy * math.sin(_yaw)) * _dt
+                            _dy = (_vx * math.sin(_yaw) + _vy * math.cos(_yaw)) * _dt
+                            _dyaw = _vyaw * _dt
+                            _new_pos = np.array([float(_pos[0]) + _dx, float(_pos[1]) + _dy, float(_pos[2])], dtype=np.float32)
+                            _half = _dyaw / 2.0
+                            _new_qw = _qw * math.cos(_half) - _qz * math.sin(_half)
+                            _new_qz = _qw * math.sin(_half) + _qz * math.cos(_half)
+                            _root.set_world_pose(position=_new_pos,
+                                                 orientation=np.array([_new_qw, _qx, _qy, _new_qz], dtype=np.float32))
+                except Exception:
+                    pass
 
         world.step(render=True)
         if _rep_subsample <= 1 or (_sim_frame_idx % _rep_subsample) == 0:

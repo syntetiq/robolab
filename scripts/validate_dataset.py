@@ -9,7 +9,7 @@ Checks:
   - metadata.json, telemetry.json, dataset_manifest.json
 
 Usage:
-  python scripts/validate_dataset.py [--episodes-dir C:\RoboLab_Data\episodes]
+  python scripts/validate_dataset.py [--episodes-dir C:/RoboLab_Data/episodes]
                                       [--last N]  # only check last N episodes
 """
 

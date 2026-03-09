@@ -28,6 +28,7 @@ from moveit_msgs.msg import (
 from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Time, Duration
+from geometry_msgs.msg import Twist
 
 
 # Panda arm "ready" pose (radians)
@@ -445,6 +446,7 @@ class MoveItIntentBridge(Node):
         self.plan_only = plan_only
         self._action_client = ActionClient(self, MoveGroup, move_action_name)
         self._gripper_client = ActionClient(self, FollowJointTrajectory, gripper_action)
+        self._cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self._sub = self.create_subscription(
             String,
             intent_topic,
@@ -453,7 +455,7 @@ class MoveItIntentBridge(Node):
         )
         self._executing = False
         self.get_logger().info(
-            f"Bridge: subscribe {intent_topic} -> action {move_action_name} + gripper {gripper_action}"
+            f"Bridge: subscribe {intent_topic} -> action {move_action_name} + gripper {gripper_action} + /cmd_vel"
         )
 
     def _on_intent(self, msg: String):
@@ -595,6 +597,54 @@ class MoveItIntentBridge(Node):
                 ("move", TIAGO_READY_JOINTS),
             ]
 
+        # Navigation intents: (vx, vy, vyaw, duration_sec)
+        elif intent == "nav_forward":
+            return [("nav", (0.3, 0.0, 0.0, 2.0))]
+        elif intent == "nav_backward":
+            return [("nav", (-0.3, 0.0, 0.0, 2.0))]
+        elif intent == "nav_left":
+            return [("nav", (0.0, 0.3, 0.0, 2.0))]
+        elif intent == "nav_right":
+            return [("nav", (0.0, -0.3, 0.0, 2.0))]
+        elif intent == "nav_rotate_left":
+            return [("nav", (0.0, 0.0, 0.5, 3.14))]
+        elif intent == "nav_rotate_right":
+            return [("nav", (0.0, 0.0, -0.5, 3.14))]
+        elif intent == "nav_to_table":
+            return [
+                ("nav", (0.3, 0.0, 0.0, 3.0)),
+                ("nav", (0.0, 0.0, 0.0, 0.5)),
+            ]
+        elif intent == "nav_to_fridge":
+            return [
+                ("nav", (0.0, 0.0, 0.5, 1.57)),
+                ("nav", (0.3, 0.0, 0.0, 2.0)),
+                ("nav", (0.0, 0.0, 0.0, 0.5)),
+            ]
+        elif intent == "nav_to_sink":
+            return [
+                ("nav", (0.0, 0.0, -0.5, 1.57)),
+                ("nav", (0.3, 0.0, 0.0, 2.0)),
+                ("nav", (0.0, 0.0, 0.0, 0.5)),
+            ]
+
+        # Combined navigation + manipulation
+        elif intent == "nav_pick_place_table_to_sink":
+            return [
+                ("nav", (0.3, 0.0, 0.0, 2.0)),
+                ("gripper", GRIPPER_OPEN),
+                ("move", TIAGO_PRE_GRASP_JOINTS),
+                ("move", TIAGO_GRASP_JOINTS),
+                ("gripper", GRIPPER_CLOSED),
+                ("move", TIAGO_LIFT_JOINTS),
+                ("move", TIAGO_READY_JOINTS),
+                ("nav", (0.0, 0.0, -0.5, 1.57)),
+                ("nav", (0.3, 0.0, 0.0, 2.0)),
+                ("move", TIAGO_PICK_SINK_JOINTS),
+                ("gripper", GRIPPER_OPEN),
+                ("move", TIAGO_READY_JOINTS),
+            ]
+
         return None
 
     def _resolve_simple_intent(self, intent: str) -> dict | None:
@@ -631,6 +681,8 @@ class MoveItIntentBridge(Node):
                     ok = self._send_gripper_sync(value)
                     if not ok:
                         self.get_logger().warn(f"  Gripper step {i+1} failed, continuing")
+                elif action_type == "nav":
+                    self._send_nav_sync(value)
                 _time.sleep(0.5)
             self.get_logger().info(f"Sequence '{intent_name}' complete")
         finally:
@@ -693,6 +745,23 @@ class MoveItIntentBridge(Node):
             res = result_future.result().result
             return res.error_code == FollowJointTrajectory.Result.SUCCESSFUL
         return False
+
+    def _send_nav_sync(self, params: tuple):
+        """Publish cmd_vel for a given duration. params = (vx, vy, vyaw, duration_sec)."""
+        vx, vy, vyaw, duration = params
+        self.get_logger().info(f"Nav: vx={vx:.2f} vy={vy:.2f} vyaw={vyaw:.2f} for {duration:.1f}s")
+        msg = Twist()
+        msg.linear.x = float(vx)
+        msg.linear.y = float(vy)
+        msg.angular.z = float(vyaw)
+        hz = 10.0
+        steps = int(duration * hz)
+        for _ in range(steps):
+            self._cmd_vel_pub.publish(msg)
+            _time.sleep(1.0 / hz)
+        stop = Twist()
+        self._cmd_vel_pub.publish(stop)
+        self.get_logger().info("Nav: stopped")
 
     def _send_goal(self, joint_goal: dict):
         """Legacy async goal sender (kept for compatibility)."""

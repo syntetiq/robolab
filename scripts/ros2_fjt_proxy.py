@@ -112,6 +112,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from sensor_msgs.msg import JointState
+from geometry_msgs.msg import Twist
 from control_msgs.action import FollowJointTrajectory
 
 _traj_counter = 0
@@ -213,12 +214,35 @@ class FJTProxyNode(Node):
             goal_callback=lambda _: GoalResponse.ACCEPT,
             cancel_callback=lambda _: CancelResponse.ACCEPT,
         )
+        self._cmd_vel_sub = self.create_subscription(
+            Twist, "/cmd_vel", self._on_cmd_vel, 10
+        )
+        self._base_cmd_file = SHARED / "base_cmd.json"
+
         self.get_logger().info(
             f"[FJTProxy] Action servers ready: {ARGS.arm_action}, {ARGS.arm_left_action}, {ARGS.torso_action}, {ARGS.gripper_action}"
         )
         self.get_logger().info(
+            f"[FJTProxy] Subscribing /cmd_vel for mobile base control"
+        )
+        self.get_logger().info(
             f"[FJTProxy] Publishing /joint_states at {ARGS.js_rate:.0f} Hz"
         )
+
+    def _on_cmd_vel(self, msg: Twist):
+        """Write base velocity command to IPC file for Isaac Sim."""
+        cmd = {
+            "vx": msg.linear.x,
+            "vy": msg.linear.y,
+            "vyaw": msg.angular.z,
+            "stamp": time.time(),
+        }
+        try:
+            tmp = SHARED / "base_cmd.tmp"
+            tmp.write_text(json.dumps(cmd), encoding="utf-8")
+            tmp.replace(self._base_cmd_file)
+        except Exception:
+            pass
 
     def _publish_js(self):
         snapshot = _read_joint_state_file()
