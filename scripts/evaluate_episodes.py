@@ -479,7 +479,8 @@ def classify_episode(m: EpisodeMetrics) -> EpisodeMetrics:
 
     task = m.task.strip('"').strip("'").strip("$").strip('"')
 
-    is_pick_task = task.startswith("plan_pick") or task.startswith("left_plan_pick")
+    is_pick_task = (task.startswith("plan_pick") or task.startswith("left_plan_pick")
+                    or task in ("stack_objects", "pour"))
     is_bimanual = task.startswith("bimanual")
     is_nav_pick = task.startswith("nav_pick")
 

@@ -30,6 +30,9 @@ $scenarios = @(
     "plan_pick_sink",
     "plan_pick_fridge",
     "plan_pick_dishwasher",
+    "plan_pick_table",
+    "stack_objects",
+    "pour",
     "open_close_fridge",
     "open_close_dishwasher"
 )

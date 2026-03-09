@@ -312,6 +312,65 @@ TIAGO_LEFT_PLACE_JOINTS = {
     "arm_left_7_joint": 0.30,
 }
 
+# Place back on table: same height as grasp but offset laterally.
+TIAGO_PLACE_TABLE_JOINTS = {
+    "torso_lift_joint": 0.20,
+    "arm_1_joint": 0.90,
+    "arm_2_joint": 0.10,
+    "arm_3_joint": -1.60,
+    "arm_4_joint": 2.10,
+    "arm_5_joint": -0.80,
+    "arm_6_joint": -0.80,
+    "arm_7_joint": 0.0,
+}
+
+# Stack: place object higher (on top of another object).
+TIAGO_STACK_HOVER_JOINTS = {
+    "torso_lift_joint": 0.35,
+    "arm_1_joint": 0.90,
+    "arm_2_joint": -0.20,
+    "arm_3_joint": -1.60,
+    "arm_4_joint": 1.70,
+    "arm_5_joint": -0.80,
+    "arm_6_joint": -0.50,
+    "arm_7_joint": 0.0,
+}
+
+TIAGO_STACK_LOWER_JOINTS = {
+    "torso_lift_joint": 0.30,
+    "arm_1_joint": 0.90,
+    "arm_2_joint": 0.0,
+    "arm_3_joint": -1.60,
+    "arm_4_joint": 1.90,
+    "arm_5_joint": -0.80,
+    "arm_6_joint": -0.70,
+    "arm_7_joint": 0.0,
+}
+
+# Pour: tilt wrist ~90 degrees to pour contents.
+TIAGO_POUR_TILT_JOINTS = {
+    "torso_lift_joint": 0.35,
+    "arm_1_joint": 1.30,
+    "arm_2_joint": -0.80,
+    "arm_3_joint": -1.60,
+    "arm_4_joint": 1.40,
+    "arm_5_joint": -0.80,
+    "arm_6_joint": -0.30,
+    "arm_7_joint": 1.57,
+}
+
+# Pour: return wrist upright after pouring.
+TIAGO_POUR_UPRIGHT_JOINTS = {
+    "torso_lift_joint": 0.35,
+    "arm_1_joint": 1.30,
+    "arm_2_joint": -0.80,
+    "arm_3_joint": -1.60,
+    "arm_4_joint": 1.40,
+    "arm_5_joint": -0.80,
+    "arm_6_joint": -0.30,
+    "arm_7_joint": 0.0,
+}
+
 # Gripper positions (finger joint values).
 GRIPPER_OPEN = 0.04
 GRIPPER_CLOSED = 0.0
@@ -636,6 +695,53 @@ class MoveItIntentBridge(Node):
                 ("move", TIAGO_READY_JOINTS),
             ]
 
+        elif intent == "plan_pick_table":
+            pre, grasp = self._get_adaptive_grasp_poses(
+                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+            return [
+                ("gripper", GRIPPER_OPEN),
+                ("move", pre),
+                ("move", grasp),
+                ("gripper", GRIPPER_CLOSED),
+                ("move", TIAGO_LIFT_JOINTS),
+                ("move", TIAGO_PLACE_TABLE_JOINTS),
+                ("gripper", GRIPPER_OPEN),
+                ("move", TIAGO_READY_JOINTS),
+            ]
+
+        elif intent == "stack_objects":
+            pre, grasp = self._get_adaptive_grasp_poses(
+                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+            return [
+                ("gripper", GRIPPER_OPEN),
+                ("move", pre),
+                ("move", grasp),
+                ("gripper", GRIPPER_CLOSED),
+                ("move", TIAGO_LIFT_JOINTS),
+                ("move", TIAGO_STACK_HOVER_JOINTS),
+                ("move", TIAGO_STACK_LOWER_JOINTS),
+                ("gripper", GRIPPER_OPEN),
+                ("move", TIAGO_LIFT_JOINTS),
+                ("move", TIAGO_READY_JOINTS),
+            ]
+
+        elif intent == "pour":
+            pre, grasp = self._get_adaptive_grasp_poses(
+                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+            return [
+                ("gripper", GRIPPER_OPEN),
+                ("move", pre),
+                ("move", grasp),
+                ("gripper", GRIPPER_CLOSED),
+                ("move", TIAGO_LIFT_JOINTS),
+                ("move", TIAGO_POUR_TILT_JOINTS),
+                ("wait", 2.0),
+                ("move", TIAGO_POUR_UPRIGHT_JOINTS),
+                ("move", TIAGO_PLACE_TABLE_JOINTS),
+                ("gripper", GRIPPER_OPEN),
+                ("move", TIAGO_READY_JOINTS),
+            ]
+
         elif intent == "open_close_fridge":
             return [
                 ("move", TIAGO_FRIDGE_APPROACH_JOINTS),
@@ -766,6 +872,9 @@ class MoveItIntentBridge(Node):
             "plan_pick_sink": PANDA_EXTENDED_JOINTS,
             "plan_pick_fridge": PANDA_EXTENDED_JOINTS,
             "plan_pick_dishwasher": PANDA_EXTENDED_JOINTS,
+            "plan_pick_table": PANDA_EXTENDED_JOINTS,
+            "stack_objects": PANDA_EXTENDED_JOINTS,
+            "pour": PANDA_EXTENDED_JOINTS,
             "plan_place": PANDA_PLACE_JOINTS,
             "open_close_fridge": PANDA_EXTENDED_JOINTS,
             "open_close_dishwasher": PANDA_EXTENDED_JOINTS,
@@ -843,6 +952,9 @@ class MoveItIntentBridge(Node):
                                 self.get_logger().warn("  All grasp retries failed, continuing sequence")
                 elif action_type == "nav":
                     self._send_nav_sync(value)
+                elif action_type == "wait":
+                    self.get_logger().info(f"  Waiting {value}s...")
+                    _time.sleep(float(value))
                 _time.sleep(0.5)
             self.get_logger().info(f"Sequence '{intent_name}' complete")
         finally:
