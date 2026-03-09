@@ -225,6 +225,89 @@ TIAGO_LIFT_JOINTS = {
     "arm_7_joint": 0.0,
 }
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Left arm mirrored poses (arm_left_{1-7}_joint).
+# Mirrored from right arm: same joint angles work since the kinematic chain
+# is symmetric. We only include arm joints (torso is shared).
+# ──────────────────────────────────────────────────────────────────────────────
+
+TIAGO_LEFT_READY_JOINTS = {
+    "torso_lift_joint": 0.15,
+    "arm_left_1_joint": 0.20,
+    "arm_left_2_joint": -1.34,
+    "arm_left_3_joint": -0.20,
+    "arm_left_4_joint": 1.94,
+    "arm_left_5_joint": -1.57,
+    "arm_left_6_joint": 1.37,
+    "arm_left_7_joint": 0.0,
+}
+
+TIAGO_LEFT_APPROACH_WORKZONE_JOINTS = {
+    "torso_lift_joint": 0.30,
+    "arm_left_1_joint": 1.10,
+    "arm_left_2_joint": -0.50,
+    "arm_left_3_joint": -1.20,
+    "arm_left_4_joint": 1.50,
+    "arm_left_5_joint": -0.80,
+    "arm_left_6_joint": 0.20,
+    "arm_left_7_joint": 0.0,
+}
+
+TIAGO_LEFT_PRE_GRASP_JOINTS = {
+    "torso_lift_joint": 0.30,
+    "arm_left_1_joint": 1.30,
+    "arm_left_2_joint": -0.40,
+    "arm_left_3_joint": -1.60,
+    "arm_left_4_joint": 1.80,
+    "arm_left_5_joint": -0.80,
+    "arm_left_6_joint": -0.50,
+    "arm_left_7_joint": 0.0,
+}
+
+TIAGO_LEFT_GRASP_JOINTS = {
+    "torso_lift_joint": 0.20,
+    "arm_left_1_joint": 1.30,
+    "arm_left_2_joint": 0.10,
+    "arm_left_3_joint": -1.60,
+    "arm_left_4_joint": 2.10,
+    "arm_left_5_joint": -0.80,
+    "arm_left_6_joint": -0.80,
+    "arm_left_7_joint": 0.0,
+}
+
+TIAGO_LEFT_LIFT_JOINTS = {
+    "torso_lift_joint": 0.35,
+    "arm_left_1_joint": 1.30,
+    "arm_left_2_joint": -0.80,
+    "arm_left_3_joint": -1.60,
+    "arm_left_4_joint": 1.40,
+    "arm_left_5_joint": -0.80,
+    "arm_left_6_joint": -0.30,
+    "arm_left_7_joint": 0.0,
+}
+
+TIAGO_LEFT_PICK_SINK_JOINTS = {
+    "torso_lift_joint": 0.25,
+    "arm_left_1_joint": 1.50,
+    "arm_left_2_joint": -0.30,
+    "arm_left_3_joint": -1.80,
+    "arm_left_4_joint": 1.80,
+    "arm_left_5_joint": -1.00,
+    "arm_left_6_joint": 0.50,
+    "arm_left_7_joint": -0.30,
+}
+
+TIAGO_LEFT_PLACE_JOINTS = {
+    "torso_lift_joint": 0.25,
+    "arm_left_1_joint": 0.80,
+    "arm_left_2_joint": -0.20,
+    "arm_left_3_joint": -1.40,
+    "arm_left_4_joint": 1.90,
+    "arm_left_5_joint": -1.20,
+    "arm_left_6_joint": 0.60,
+    "arm_left_7_joint": 0.30,
+}
+
 # Gripper positions (finger joint values).
 GRIPPER_OPEN = 0.04
 GRIPPER_CLOSED = 0.0
@@ -472,6 +555,46 @@ class MoveItIntentBridge(Node):
                 ("gripper", GRIPPER_OPEN),
                 ("move", TIAGO_READY_JOINTS),
             ]
+
+        # Left arm intents
+        elif intent == "left_go_home":
+            return [("move_left", TIAGO_LEFT_READY_JOINTS)]
+        elif intent == "left_approach_workzone":
+            return [("move_left", TIAGO_LEFT_APPROACH_WORKZONE_JOINTS)]
+        elif intent == "left_plan_pick_sink":
+            return [
+                ("gripper", GRIPPER_OPEN),
+                ("move_left", TIAGO_LEFT_PRE_GRASP_JOINTS),
+                ("move_left", TIAGO_LEFT_GRASP_JOINTS),
+                ("gripper", GRIPPER_CLOSED),
+                ("move_left", TIAGO_LEFT_LIFT_JOINTS),
+                ("move_left", TIAGO_LEFT_PICK_SINK_JOINTS),
+                ("gripper", GRIPPER_OPEN),
+                ("move_left", TIAGO_LEFT_READY_JOINTS),
+            ]
+        elif intent == "left_plan_place":
+            return [
+                ("move_left", TIAGO_LEFT_PLACE_JOINTS),
+                ("gripper", GRIPPER_OPEN),
+                ("move_left", TIAGO_LEFT_READY_JOINTS),
+            ]
+
+        # Bimanual: right arm picks, left arm assists
+        elif intent == "bimanual_pick_sink":
+            return [
+                ("gripper", GRIPPER_OPEN),
+                ("move_left", TIAGO_LEFT_APPROACH_WORKZONE_JOINTS),
+                ("move", TIAGO_PRE_GRASP_JOINTS),
+                ("move", TIAGO_GRASP_JOINTS),
+                ("gripper", GRIPPER_CLOSED),
+                ("move", TIAGO_LIFT_JOINTS),
+                ("move_left", TIAGO_LEFT_PRE_GRASP_JOINTS),
+                ("move", TIAGO_PICK_SINK_JOINTS),
+                ("move_left", TIAGO_LEFT_READY_JOINTS),
+                ("gripper", GRIPPER_OPEN),
+                ("move", TIAGO_READY_JOINTS),
+            ]
+
         return None
 
     def _resolve_simple_intent(self, intent: str) -> dict | None:
@@ -495,9 +618,14 @@ class MoveItIntentBridge(Node):
             for i, (action_type, value) in enumerate(steps):
                 self.get_logger().info(f"  Step {i+1}/{len(steps)}: {action_type}")
                 if action_type == "move":
-                    ok = self._send_goal_sync(value)
+                    ok = self._send_goal_sync(value, group_override=None)
                     if not ok:
                         self.get_logger().error(f"  Step {i+1} failed, aborting sequence")
+                        break
+                elif action_type == "move_left":
+                    ok = self._send_goal_sync(value, group_override="arm_left_torso")
+                    if not ok:
+                        self.get_logger().error(f"  Step {i+1} (left arm) failed, aborting sequence")
                         break
                 elif action_type == "gripper":
                     ok = self._send_gripper_sync(value)
@@ -508,13 +636,14 @@ class MoveItIntentBridge(Node):
         finally:
             self._executing = False
 
-    def _send_goal_sync(self, joint_goal: dict) -> bool:
+    def _send_goal_sync(self, joint_goal: dict, group_override: str = None) -> bool:
         if not self._action_client.wait_for_server(timeout_sec=10.0):
             self.get_logger().error("MoveGroup action server not available")
             return False
+        group = group_override or self.planning_group
         goal_msg = MoveGroup.Goal()
         goal_msg.request = build_motion_plan_request(
-            self.planning_group, joint_goal, frame_id=self.frame_id, plan_only=self.plan_only
+            group, joint_goal, frame_id=self.frame_id, plan_only=self.plan_only
         )
         goal_msg.planning_options = build_planning_options(plan_only=self.plan_only)
         self.get_logger().info(f"Sending MoveGroup goal for {list(joint_goal.keys())[:3]}...")

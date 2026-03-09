@@ -104,6 +104,68 @@
           <axis xyz="0 -1 0"/>
           <limit lower="0.0" upper="0.045" effort="100" velocity="0.1"/>
         </joint>
+        <link name="arm_left_1_link"/>
+        <joint name="arm_left_1_joint" type="revolute">
+          <parent link="torso_lift_link"/>
+          <child link="arm_left_1_link"/>
+          <origin xyz="0.155 -0.014 -0.151" rpy="0 0 1.5708"/>
+          <axis xyz="0 0 1"/>
+          <limit lower="-2.9" upper="2.9" effort="43" velocity="2.0"/>
+        </joint>
+        <link name="arm_left_2_link"/>
+        <joint name="arm_left_2_joint" type="revolute">
+          <parent link="arm_left_1_link"/>
+          <child link="arm_left_2_link"/>
+          <origin xyz="0.125 -0.0195 -0.031" rpy="1.5708 0 0"/>
+          <axis xyz="0 0 1"/>
+          <limit lower="-2.0" upper="2.0" effort="43" velocity="2.0"/>
+        </joint>
+        <link name="arm_left_3_link"/>
+        <joint name="arm_left_3_joint" type="revolute">
+          <parent link="arm_left_2_link"/>
+          <child link="arm_left_3_link"/>
+          <origin xyz="0.0895 0 -0.0015" rpy="-1.5708 0 1.5708"/>
+          <axis xyz="0 0 1"/>
+          <limit lower="-3.6" upper="1.8" effort="26" velocity="2.4"/>
+        </joint>
+        <link name="arm_left_4_link"/>
+        <joint name="arm_left_4_joint" type="revolute">
+          <parent link="arm_left_3_link"/>
+          <child link="arm_left_4_link"/>
+          <origin xyz="-0.162 -0.02 0.027" rpy="-1.5708 -1.5708 0"/>
+          <axis xyz="0 0 1"/>
+          <limit lower="-0.8" upper="2.5" effort="26" velocity="2.4"/>
+        </joint>
+        <link name="arm_left_5_link"/>
+        <joint name="arm_left_5_joint" type="revolute">
+          <parent link="arm_left_4_link"/>
+          <child link="arm_left_5_link"/>
+          <origin xyz="0 0 0.15" rpy="1.5708 -1.5708 -1.5708"/>
+          <axis xyz="0 0 1"/>
+          <limit lower="-2.2" upper="2.2" effort="6.6" velocity="2.0"/>
+        </joint>
+        <link name="arm_left_6_link"/>
+        <joint name="arm_left_6_joint" type="revolute">
+          <parent link="arm_left_5_link"/>
+          <child link="arm_left_6_link"/>
+          <origin xyz="0 0 0.12" rpy="0 -1.5708 -1.5708"/>
+          <axis xyz="0 0 1"/>
+          <limit lower="-1.5" upper="1.5" effort="6.6" velocity="2.0"/>
+        </joint>
+        <link name="arm_left_7_link"/>
+        <joint name="arm_left_7_joint" type="revolute">
+          <parent link="arm_left_6_link"/>
+          <child link="arm_left_7_link"/>
+          <origin xyz="0 0 0.05" rpy="1.5708 0 1.5708"/>
+          <axis xyz="0 0 1"/>
+          <limit lower="-2.2" upper="2.2" effort="6.6" velocity="2.0"/>
+        </joint>
+        <link name="arm_left_tool_link"/>
+        <joint name="arm_left_tool_joint" type="fixed">
+          <parent link="arm_left_7_link"/>
+          <child link="arm_left_tool_link"/>
+          <origin xyz="0 0 0.05" rpy="0 0 0"/>
+        </joint>
         <link name="head_1_link"/>
         <joint name="head_1_joint" type="revolute">
           <parent link="torso_lift_link"/>
@@ -145,6 +207,27 @@
           <joint name="arm_7_joint"/>
           <joint name="arm_tool_joint"/>
         </group>
+        <group name="arm_left">
+          <joint name="arm_left_1_joint"/>
+          <joint name="arm_left_2_joint"/>
+          <joint name="arm_left_3_joint"/>
+          <joint name="arm_left_4_joint"/>
+          <joint name="arm_left_5_joint"/>
+          <joint name="arm_left_6_joint"/>
+          <joint name="arm_left_7_joint"/>
+          <joint name="arm_left_tool_joint"/>
+        </group>
+        <group name="arm_left_torso">
+          <joint name="torso_lift_joint"/>
+          <joint name="arm_left_1_joint"/>
+          <joint name="arm_left_2_joint"/>
+          <joint name="arm_left_3_joint"/>
+          <joint name="arm_left_4_joint"/>
+          <joint name="arm_left_5_joint"/>
+          <joint name="arm_left_6_joint"/>
+          <joint name="arm_left_7_joint"/>
+          <joint name="arm_left_tool_joint"/>
+        </group>
         <group name="gripper">
           <joint name="gripper_left_left_finger_joint"/>
           <joint name="gripper_right_left_finger_joint"/>
@@ -157,6 +240,16 @@
         kinematics_solver_timeout: 0.05
         kinematics_solver_attempts: 3
       arm:
+        kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
+        kinematics_solver_search_resolution: 0.005
+        kinematics_solver_timeout: 0.05
+        kinematics_solver_attempts: 3
+      arm_left_torso:
+        kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
+        kinematics_solver_search_resolution: 0.005
+        kinematics_solver_timeout: 0.05
+        kinematics_solver_attempts: 3
+      arm_left:
         kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
         kinematics_solver_search_resolution: 0.005
         kinematics_solver_timeout: 0.05
@@ -180,6 +273,10 @@
         planner_configs: [RRTConnectkConfigDefault]
         projection_evaluator: joints(torso_lift_joint,arm_1_joint)
         longest_valid_segment_fraction: 0.01
+      arm_left_torso:
+        planner_configs: [RRTConnectkConfigDefault]
+        projection_evaluator: joints(torso_lift_joint,arm_left_1_joint)
+        longest_valid_segment_fraction: 0.01
     moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
     trajectory_execution:
       allowed_start_tolerance: 0.5
@@ -190,12 +287,17 @@
     current_state_monitor_timeout: 30.0
     publish_transforms_updates: true
     moveit_simple_controller_manager:
-      controller_names: [arm_controller, torso_controller, gripper_controller]
+      controller_names: [arm_controller, arm_left_controller, torso_controller, gripper_controller]
       arm_controller:
         action_ns: follow_joint_trajectory
         type: FollowJointTrajectory
         default: true
         joints: [arm_1_joint, arm_2_joint, arm_3_joint, arm_4_joint, arm_5_joint, arm_6_joint, arm_7_joint]
+      arm_left_controller:
+        action_ns: follow_joint_trajectory
+        type: FollowJointTrajectory
+        default: true
+        joints: [arm_left_1_joint, arm_left_2_joint, arm_left_3_joint, arm_left_4_joint, arm_left_5_joint, arm_left_6_joint, arm_left_7_joint]
       torso_controller:
         action_ns: follow_joint_trajectory
         type: FollowJointTrajectory

@@ -31,6 +31,8 @@ _MOVEIT_JOINTS = frozenset([
     "torso_lift_joint",
     "arm_1_joint", "arm_2_joint", "arm_3_joint", "arm_4_joint",
     "arm_5_joint", "arm_6_joint", "arm_7_joint",
+    "arm_left_1_joint", "arm_left_2_joint", "arm_left_3_joint", "arm_left_4_joint",
+    "arm_left_5_joint", "arm_left_6_joint", "arm_left_7_joint",
     "head_1_joint", "head_2_joint",
     "gripper_left_left_finger_joint", "gripper_right_left_finger_joint",
 ])
@@ -54,6 +56,11 @@ def parse_args():
         "--arm-action",
         type=str,
         default="/arm_controller/follow_joint_trajectory",
+    )
+    p.add_argument(
+        "--arm-left-action",
+        type=str,
+        default="/arm_left_controller/follow_joint_trajectory",
     )
     p.add_argument(
         "--torso-action",
@@ -182,6 +189,14 @@ class FJTProxyNode(Node):
             goal_callback=lambda _: GoalResponse.ACCEPT,
             cancel_callback=lambda _: CancelResponse.ACCEPT,
         )
+        self._arm_left_server = ActionServer(
+            self,
+            FollowJointTrajectory,
+            ARGS.arm_left_action,
+            execute_callback=self._make_execute_cb("arm_left_controller"),
+            goal_callback=lambda _: GoalResponse.ACCEPT,
+            cancel_callback=lambda _: CancelResponse.ACCEPT,
+        )
         self._torso_server = ActionServer(
             self,
             FollowJointTrajectory,
@@ -199,7 +214,7 @@ class FJTProxyNode(Node):
             cancel_callback=lambda _: CancelResponse.ACCEPT,
         )
         self.get_logger().info(
-            f"[FJTProxy] Action servers ready: {ARGS.arm_action}, {ARGS.torso_action}, {ARGS.gripper_action}"
+            f"[FJTProxy] Action servers ready: {ARGS.arm_action}, {ARGS.arm_left_action}, {ARGS.torso_action}, {ARGS.gripper_action}"
         )
         self.get_logger().info(
             f"[FJTProxy] Publishing /joint_states at {ARGS.js_rate:.0f} Hz"

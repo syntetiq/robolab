@@ -268,6 +268,32 @@ OBJECTS = [
      "color": (0.85, 0.10, 0.10), "mass": 0.35},
     {"name": "glass_drinking", "cat": "kitchen", "kind": "glass",
      "color": (0.82, 0.88, 0.92), "mass": 0.25},
+
+    # -- Additional diversity (10 more) --
+    {"name": "mug_travel_black", "cat": "mug",
+     "variant": {"radius": 0.042, "height": 0.16},
+     "color": (0.10, 0.10, 0.12), "mass": 0.40},
+    {"name": "bottle_wine_dark", "cat": "bottle",
+     "variant": {"body_r": 0.036, "body_h": 0.25, "neck_r": 0.012, "neck_h": 0.08},
+     "color": (0.12, 0.08, 0.15), "cap_color": (0.70, 0.55, 0.20), "mass": 0.70},
+    {"name": "fruit_lemon_yellow", "cat": "fruit", "shape": "ellipsoid",
+     "dims": {"sx": 0.03, "sy": 0.025, "sz": 0.025}, "color": (0.95, 0.90, 0.20), "mass": 0.10},
+    {"name": "fruit_avocado", "cat": "fruit", "shape": "ellipsoid",
+     "dims": {"sx": 0.035, "sy": 0.03, "sz": 0.05}, "color": (0.20, 0.35, 0.12), "mass": 0.22},
+    {"name": "container_spice_small", "cat": "container",
+     "variant": {"shape": "cylinder", "radius": 0.025, "height": 0.08, "has_lid": True},
+     "color": (0.60, 0.40, 0.15), "lid_color": (0.55, 0.55, 0.55), "mass": 0.08},
+    {"name": "bowl_soup_cream", "cat": "kitchen", "kind": "bowl",
+     "color": (0.92, 0.88, 0.78), "mass": 0.35},
+    {"name": "can_beans", "cat": "kitchen", "kind": "can",
+     "color": (0.20, 0.35, 0.65), "mass": 0.40},
+    {"name": "glass_wine", "cat": "kitchen", "kind": "glass",
+     "color": (0.90, 0.92, 0.94), "mass": 0.20},
+    {"name": "container_butter_yellow", "cat": "container",
+     "variant": {"width": 0.10, "depth": 0.06, "height": 0.04, "has_lid": True},
+     "color": (0.95, 0.90, 0.40), "lid_color": (0.95, 0.92, 0.50), "mass": 0.10},
+    {"name": "plate_small_green", "cat": "kitchen", "kind": "plate",
+     "color": (0.30, 0.60, 0.25), "mass": 0.30},
 ]
 
 
