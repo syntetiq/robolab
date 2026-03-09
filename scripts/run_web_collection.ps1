@@ -46,7 +46,17 @@ if (-not $scenes) {
     Write-Host "$pfx ERROR: Cannot reach API at $ApiBase/scenes"
     exit 1
 }
-$sceneList = $scenes | Select-Object -First $SceneCount
+
+# Top-4 production scenes (Tier S + A). See SCENE_RATING.md.
+$productionScenePatterns = @("Kitchen*Tiago*", "L-Shaped*Tiago*", "Modern_Kitchen*Tiago*", "Small_House*")
+$sceneList = $scenes | Where-Object {
+    $path = $_.stageUsdPath
+    $match = $false
+    foreach ($p in $productionScenePatterns) {
+        if ($path -like "*$p*") { $match = $true; break }
+    }
+    $match
+} | Select-Object -First $SceneCount
 
 # ── Find/create MoveIt launch profile ──
 $profiles = Invoke-Api -Method GET -Path "/launch-profiles"

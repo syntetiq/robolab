@@ -32,17 +32,13 @@ $scenarios = @(
     "open_close_dishwasher"
 )
 
+# Top-4 scenes selected for production data collection (Tier S + A).
+# See SCENE_RATING.md for full analysis and exclusion reasoning.
 $scenes = @(
-    @{ Name = "Small_House"; Path = "C:\RoboLab_Data\scenes\Small_House_Interactive.usd" },
-    @{ Name = "Office"; Path = "C:\RoboLab_Data\scenes\Office_Interactive.usd" },
     @{ Name = "Kitchen"; Path = "C:\RoboLab_Data\scenes\Kitchen_TiagoCompatible.usda" },
-    @{ Name = "Modern_Kitchen"; Path = "C:\RoboLab_Data\scenes\Modern_Kitchen_TiagoCompatible.usda" },
     @{ Name = "L_Kitchen"; Path = "C:\RoboLab_Data\scenes\L-Shaped_Contemporary_Modular_Kitchen_TiagoCompatible.usda" },
-    @{ Name = "Fridge"; Path = "C:\RoboLab_Data\scenes\Fridge_TiagoCompatible.usda" },
-    @{ Name = "Fridge_Zil"; Path = "C:\RoboLab_Data\scenes\Fridge_Zil_TiagoCompatible.usda" },
-    @{ Name = "Dishwasher"; Path = "C:\RoboLab_Data\scenes\Dishwasher_TiagoCompatible.usda" },
-    @{ Name = "Dish_Set"; Path = "C:\RoboLab_Data\scenes\Dish_set_bowl_cup_mug_spoon_teapot_vase.._TiagoCompatible.usda" },
-    @{ Name = "60s_Office"; Path = "C:\RoboLab_Data\scenes\60s_Office_Props_TiagoCompatible.usda" }
+    @{ Name = "Modern_Kitchen"; Path = "C:\RoboLab_Data\scenes\Modern_Kitchen_TiagoCompatible.usda" },
+    @{ Name = "Small_House"; Path = "C:\RoboLab_Data\scenes\Small_House_Interactive.usd" }
 )
 
 $validScenes = $scenes | Where-Object { Test-Path $_.Path }
