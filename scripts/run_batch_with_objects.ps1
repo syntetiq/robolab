@@ -5,11 +5,13 @@
 
 .USAGE
     .\scripts\run_batch_with_objects.ps1
+    .\scripts\run_batch_with_objects.ps1 -Reps 5 -DurationSec 60
     .\scripts\run_batch_with_objects.ps1 -DurationSec 60 -CooldownSec 30
 #>
 param(
     [int]$DurationSec = 50,
     [int]$CooldownSec = 45,
+    [int]$Reps = 1,
     [string]$ObjectsDir = "C:\RoboLab_Data\data\object_sets",
     [string]$TiagoUsd = "C:\RoboLab_Data\data\tiago_isaac\tiago_dual_functional.usd",
     [string]$OrchestratorScript = ""
@@ -47,7 +49,7 @@ if ($validScenes.Count -eq 0) {
     exit 1
 }
 
-$totalRuns = $scenarios.Count * $validScenes.Count
+$totalRuns = $scenarios.Count * $validScenes.Count * $Reps
 $runIdx = 0
 $results = [System.Collections.Generic.List[object]]::new()
 
@@ -63,14 +65,16 @@ Write-Host "$pfx Scenarios: $($scenarios.Count)"
 Write-Host "$pfx Scenes: $($validScenes.Count) ($($validScenes | ForEach-Object { $_.Name }))"
 Write-Host "$pfx Total runs: $totalRuns"
 Write-Host "$pfx Duration per run: ${DurationSec}s"
+Write-Host "$pfx Reps per combo: $Reps"
 Write-Host "$pfx Object assets: $objCount"
 Write-Host "$pfx Cooldown: ${CooldownSec}s"
 Write-Host ""
 
 foreach ($scene in $validScenes) {
     foreach ($scenario in $scenarios) {
+      for ($rep = 1; $rep -le $Reps; $rep++) {
         $runIdx++
-        $runLabel = "$($scene.Name) / $scenario"
+        $runLabel = "$($scene.Name) / $scenario (rep $rep/$Reps)"
         Write-Host ""
         Write-Host ("=" * 60)
         Write-Host "$pfx [$runIdx/$totalRuns] $runLabel"
@@ -114,6 +118,7 @@ foreach ($scene in $validScenes) {
             Write-Host "$pfx Skipping cooldown after failure, proceeding..."
             Start-Sleep -Seconds 10
         }
+      }
     }
 }
 
