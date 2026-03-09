@@ -112,9 +112,9 @@ def build_arrays(
     }
 
 
-def collect_pointcloud_paths(ep_dir: Path) -> list[str]:
+def collect_pointcloud_paths(ep_dir: Path, subdir: str = "replicator_data") -> list[str]:
     """Return sorted list of pointcloud .npy paths relative to episode dir."""
-    rep_dir = ep_dir / "replicator_data"
+    rep_dir = ep_dir / subdir
     if not rep_dir.exists():
         return []
     paths = sorted(
@@ -122,6 +122,30 @@ def collect_pointcloud_paths(ep_dir: Path) -> list[str]:
         for p in rep_dir.glob("pointcloud_*.npy")
     )
     return paths
+
+
+def collect_rgb_paths(ep_dir: Path, subdir: str = "replicator_data") -> list[str]:
+    """Return sorted list of RGB image paths relative to episode dir."""
+    rep_dir = ep_dir / subdir
+    if not rep_dir.exists():
+        return []
+    paths = sorted(
+        str(p.relative_to(ep_dir))
+        for p in rep_dir.rglob("rgb_*.png")
+    )
+    return paths
+
+
+def collect_camera_dirs(ep_dir: Path) -> dict[str, str]:
+    """Detect available camera replicator directories."""
+    cameras = {}
+    if (ep_dir / "replicator_data").exists():
+        cameras["camera_0"] = "replicator_data"
+    if (ep_dir / "replicator_wrist").exists():
+        cameras["camera_1_wrist"] = "replicator_wrist"
+    if (ep_dir / "replicator_external").exists():
+        cameras["camera_2_external"] = "replicator_external"
+    return cameras
 
 
 def resolve_scene_name(dataset: dict, ep_dir: Path) -> str:
@@ -168,6 +192,7 @@ def write_episode(
     duration: float,
     scene_name: str,
     task: str,
+    camera_data: dict[str, dict] | None = None,
 ) -> None:
     """Write one episode's data into the HDF5 file."""
     grp = hf.create_group(f"data/{episode_id}")
@@ -184,9 +209,22 @@ def write_episode(
         dt = h5py.string_dtype()
         obs.create_dataset("pointcloud_paths", data=pointcloud_paths, dtype=dt)
 
+    # Multi-camera image paths (each camera gets its own dataset).
+    if camera_data:
+        cam_grp = obs.create_group("cameras")
+        dt_str = h5py.string_dtype()
+        for cam_name, cam_info in camera_data.items():
+            cg = cam_grp.create_group(cam_name)
+            if cam_info.get("rgb_paths"):
+                cg.create_dataset("rgb_paths", data=cam_info["rgb_paths"], dtype=dt_str)
+            if cam_info.get("pointcloud_paths"):
+                cg.create_dataset("pointcloud_paths", data=cam_info["pointcloud_paths"], dtype=dt_str)
+            cg.attrs["n_rgb"] = len(cam_info.get("rgb_paths", []))
+            cg.attrs["n_pointcloud"] = len(cam_info.get("pointcloud_paths", []))
+            cg.attrs["replicator_dir"] = cam_info.get("dir", "")
+
     act = grp.create_group("action")
     act_jp = arrays["joint_positions"]
-    # Action = next frame's joint positions; last frame repeats itself
     action_data = np.empty_like(act_jp)
     action_data[:-1] = act_jp[1:]
     action_data[-1] = act_jp[-1]
@@ -201,6 +239,8 @@ def write_episode(
     grp.attrs["joint_names"] = json.dumps(joint_names)
     grp.attrs["n_objects"] = len(object_keys)
     grp.attrs["object_keys"] = json.dumps(object_keys)
+    grp.attrs["n_cameras"] = len(camera_data) if camera_data else 1
+    grp.attrs["camera_names"] = json.dumps(list(camera_data.keys()) if camera_data else ["camera_0"])
 
 
 def main() -> None:
@@ -285,6 +325,15 @@ def main() -> None:
             arrays = build_arrays(frames, joint_names, object_keys)
             pc_paths = collect_pointcloud_paths(ep_dir)
 
+            cam_dirs = collect_camera_dirs(ep_dir)
+            camera_data: dict[str, dict] = {}
+            for cam_name, cam_subdir in cam_dirs.items():
+                camera_data[cam_name] = {
+                    "dir": cam_subdir,
+                    "rgb_paths": collect_rgb_paths(ep_dir, cam_subdir),
+                    "pointcloud_paths": collect_pointcloud_paths(ep_dir, cam_subdir),
+                }
+
             timestamps = arrays["timestamps"]
             duration = float(timestamps[-1] - timestamps[0]) if len(timestamps) > 1 else 0.0
             fps = len(frames) / duration if duration > 0 else 0.0
@@ -303,17 +352,20 @@ def main() -> None:
                 duration=duration,
                 scene_name=scene_name,
                 task=task,
+                camera_data=camera_data if len(camera_data) > 0 else None,
             )
 
             exported += 1
             total_frames += len(frames)
+            _cam_str = "/".join(f"{k}:{len(v.get('rgb_paths', []))}" for k, v in camera_data.items())
             print(
                 f"{prefix} OK   {ep_id[:12]}.. | "
                 f"{len(frames):>5} frames | "
                 f"{fps:>5.1f} fps | "
                 f"{len(joint_names):>3} joints | "
                 f"{len(object_keys)} obj | "
-                f"{len(pc_paths)} pc"
+                f"{len(pc_paths)} pc | "
+                f"cams: {_cam_str or '0'}"
             )
 
         hf.attrs["n_episodes"] = exported

@@ -1,0 +1,187 @@
+# Sim-to-Real Configuration for PAL Tiago Dual
+#
+# This file defines the mapping between Isaac Sim joint names
+# and real Tiago ROS2 joint names, calibration offsets, and
+# safety parameters for deploying sim-trained policies on hardware.
+
+robot:
+  name: tiago_dual
+  manufacturer: PAL Robotics
+  ros_distro: humble
+
+# Joint name mapping: simulation name → real robot name.
+# Most joints share the same name; this table captures any
+# differences and provides a single source of truth.
+joint_mapping:
+  # Torso
+  torso_lift_joint: torso_lift_joint
+
+  # Right arm
+  arm_1_joint: arm_right_1_joint
+  arm_2_joint: arm_right_2_joint
+  arm_3_joint: arm_right_3_joint
+  arm_4_joint: arm_right_4_joint
+  arm_5_joint: arm_right_5_joint
+  arm_6_joint: arm_right_6_joint
+  arm_7_joint: arm_right_7_joint
+
+  # Left arm
+  arm_left_1_joint: arm_left_1_joint
+  arm_left_2_joint: arm_left_2_joint
+  arm_left_3_joint: arm_left_3_joint
+  arm_left_4_joint: arm_left_4_joint
+  arm_left_5_joint: arm_left_5_joint
+  arm_left_6_joint: arm_left_6_joint
+  arm_left_7_joint: arm_left_7_joint
+
+  # Gripper
+  gripper_left_left_finger_joint: gripper_right_left_finger_joint
+  gripper_right_left_finger_joint: gripper_right_right_finger_joint
+
+  # Head
+  head_1_joint: head_1_joint
+  head_2_joint: head_2_joint
+
+# Calibration offsets (rad for revolute, m for prismatic).
+# Measured as: real_position = sim_position + offset
+# Run scripts/calibrate_joints.py to auto-fill from encoder readings.
+joint_offsets:
+  torso_lift_joint: 0.0
+  arm_1_joint: 0.0
+  arm_2_joint: 0.0
+  arm_3_joint: 0.0
+  arm_4_joint: 0.0
+  arm_5_joint: 0.0
+  arm_6_joint: 0.0
+  arm_7_joint: 0.0
+  arm_left_1_joint: 0.0
+  arm_left_2_joint: 0.0
+  arm_left_3_joint: 0.0
+  arm_left_4_joint: 0.0
+  arm_left_5_joint: 0.0
+  arm_left_6_joint: 0.0
+  arm_left_7_joint: 0.0
+  head_1_joint: 0.0
+  head_2_joint: 0.0
+
+# Safety limits for real robot (tighter than sim).
+# Velocities in rad/s, efforts in Nm.
+safety_limits:
+  max_velocity_scale: 0.5       # multiply sim velocities by this factor
+  max_joint_delta: 0.15         # max single-step position change (rad)
+  collision_check: true
+  e_stop_topic: /emergency_stop
+
+  per_joint:
+    torso_lift_joint:
+      lower: 0.0
+      upper: 0.35
+      max_velocity: 0.035       # half of sim 0.07
+      max_effort: 1500.0
+    arm_1_joint: &arm_safety
+      lower: -1.18
+      upper: 1.57
+      max_velocity: 1.0
+      max_effort: 35.0
+    arm_2_joint:
+      <<: *arm_safety
+      lower: -1.18
+      upper: 1.57
+    arm_3_joint:
+      <<: *arm_safety
+      lower: -3.14
+      upper: 1.57
+    arm_4_joint:
+      <<: *arm_safety
+      lower: -0.35
+      upper: 2.27
+    arm_5_joint:
+      <<: *arm_safety
+      lower: -2.07
+      upper: 2.07
+    arm_6_joint:
+      <<: *arm_safety
+      lower: -1.39
+      upper: 1.39
+    arm_7_joint:
+      <<: *arm_safety
+      lower: -2.07
+      upper: 2.07
+
+# Mobile base
+mobile_base:
+  enabled: true
+  max_linear_vel: 0.3           # m/s (sim allows 1.0+)
+  max_angular_vel: 0.5          # rad/s
+  cmd_vel_topic: /mobile_base_controller/cmd_vel
+  odom_topic: /mobile_base_controller/odom
+
+# ROS2 controller configuration for the real robot.
+# These replace the FJT proxy used in simulation.
+ros2_controllers:
+  arm_right:
+    type: joint_trajectory_controller/JointTrajectoryController
+    action: /arm_right_controller/follow_joint_trajectory
+    joints:
+      - arm_right_1_joint
+      - arm_right_2_joint
+      - arm_right_3_joint
+      - arm_right_4_joint
+      - arm_right_5_joint
+      - arm_right_6_joint
+      - arm_right_7_joint
+
+  arm_left:
+    type: joint_trajectory_controller/JointTrajectoryController
+    action: /arm_left_controller/follow_joint_trajectory
+    joints:
+      - arm_left_1_joint
+      - arm_left_2_joint
+      - arm_left_3_joint
+      - arm_left_4_joint
+      - arm_left_5_joint
+      - arm_left_6_joint
+      - arm_left_7_joint
+
+  torso:
+    type: joint_trajectory_controller/JointTrajectoryController
+    action: /torso_controller/follow_joint_trajectory
+    joints:
+      - torso_lift_joint
+
+  gripper_right:
+    type: joint_trajectory_controller/JointTrajectoryController
+    action: /gripper_right_controller/follow_joint_trajectory
+    joints:
+      - gripper_right_left_finger_joint
+      - gripper_right_right_finger_joint
+
+  head:
+    type: joint_trajectory_controller/JointTrajectoryController
+    action: /head_controller/follow_joint_trajectory
+    joints:
+      - head_1_joint
+      - head_2_joint
+
+# Camera topics on real robot (for data collection).
+cameras:
+  head:
+    rgb_topic: /head_front_camera/image_raw
+    depth_topic: /head_front_camera/depth/image_raw
+    info_topic: /head_front_camera/camera_info
+    frame_id: head_front_camera_link
+    resolution: [640, 480]
+
+  wrist_right:
+    rgb_topic: /wrist_right_camera/image_raw
+    depth_topic: /wrist_right_camera/depth/image_raw
+    info_topic: /wrist_right_camera/camera_info
+    frame_id: arm_right_tool_link
+    resolution: [640, 480]
+
+  external:
+    rgb_topic: /external_camera/image_raw
+    depth_topic: /external_camera/depth/image_raw
+    info_topic: /external_camera/camera_info
+    frame_id: external_camera_link
+    resolution: [1280, 720]

@@ -96,6 +96,28 @@ def parse_args():
         action="store_true",
         help="Enable mobile base (unfixed root). Base responds to velocity commands via base_cmd.json.",
     )
+    parser.add_argument(
+        "--wrist-camera",
+        action="store_true",
+        help="Add wrist-mounted camera on arm_tool_link for close-up manipulation view.",
+    )
+    parser.add_argument(
+        "--external-camera",
+        action="store_true",
+        help="Add fixed external third-person camera for scene overview.",
+    )
+    parser.add_argument(
+        "--external-camera-pos",
+        type=str,
+        default="2.5,-2.0,2.0",
+        help="External camera position as x,y,z (default: 2.5,-2.0,2.0).",
+    )
+    parser.add_argument(
+        "--external-camera-target",
+        type=str,
+        default="0.0,0.0,0.8",
+        help="External camera look-at target as x,y,z (default: 0.0,0.0,0.8).",
+    )
     return parser.parse_known_args()[0]
 
 
@@ -938,8 +960,61 @@ try:
         pointcloud=True,
         semantic_segmentation=True,
     )
+    _all_render_products = [render_product]
+
+    # Wrist camera: mounted on arm tool link for close-up manipulation view.
+    _wrist_camera = None
+    _wrist_render_product = None
+    _wrist_replicator_dir = None
+    if getattr(args, "wrist_camera", False):
+        _wrist_link = f"{tiago_prim_path}/tiago_dual_functional/arm_tool_link"
+        if not stage.GetPrimAtPath(_wrist_link).IsValid():
+            _wrist_link = f"{tiago_prim_path}/tiago_dual_functional/arm_7_link"
+        if stage.GetPrimAtPath(_wrist_link).IsValid():
+            _wrist_camera = rep.create.camera(
+                position=(0.0, 0.0, 0.05), look_at=(0.0, 0.0, 0.2), parent=_wrist_link
+            )
+            _wrist_render_product = rep.create.render_product(
+                _wrist_camera, (args.capture_width, args.capture_height)
+            )
+            _wrist_replicator_dir = os.path.join(args.output_dir, "replicator_wrist")
+            _wrist_writer = rep.WriterRegistry.get("BasicWriter")
+            _wrist_writer.initialize(
+                output_dir=_wrist_replicator_dir,
+                rgb=True,
+                distance_to_camera=True,
+            )
+            _wrist_writer.attach([_wrist_render_product])
+            _all_render_products.append(_wrist_render_product)
+            print(f"[RoboLab] Wrist camera mounted at {_wrist_link}")
+        else:
+            print("[RoboLab] WARN: wrist link not found, skipping wrist camera")
+
+    # External camera: fixed third-person view for scene overview.
+    _external_camera = None
+    _external_render_product = None
+    _external_replicator_dir = None
+    if getattr(args, "external_camera", False):
+        _ext_pos = tuple(float(x) for x in args.external_camera_pos.split(","))
+        _ext_tgt = tuple(float(x) for x in args.external_camera_target.split(","))
+        _external_camera = rep.create.camera(position=_ext_pos, look_at=_ext_tgt)
+        _external_render_product = rep.create.render_product(
+            _external_camera, (args.capture_width, args.capture_height)
+        )
+        _external_replicator_dir = os.path.join(args.output_dir, "replicator_external")
+        _ext_writer = rep.WriterRegistry.get("BasicWriter")
+        _ext_writer.initialize(
+            output_dir=_external_replicator_dir,
+            rgb=True,
+            distance_to_camera=True,
+        )
+        _ext_writer.attach([_external_render_product])
+        _all_render_products.append(_external_render_product)
+        print(f"[RoboLab] External camera at pos={_ext_pos} target={_ext_tgt}")
+
     writer.attach([render_product])
-    print(f"[RoboLab] Replicator subsample={_rep_subsample} (capture every {_rep_subsample} frames, with pointcloud)")
+    _n_cameras = len(_all_render_products)
+    print(f"[RoboLab] Total cameras: {_n_cameras} | Replicator subsample={_rep_subsample}")
 
     tracked_prims = []
     _tracked_paths: set = set()
@@ -1559,6 +1634,12 @@ try:
             "vr_teleop_enabled": bool(args.vr),
             "moveit_mode_enabled": bool(args.moveit),
             "robot_pov_camera_prim": camera_parent_prim,
+            "cameras": {
+                "camera_0": {"type": "head", "dir": "replicator_data", "video": "camera_0.mp4"},
+                **({"camera_1_wrist": {"type": "wrist", "parent_link": "arm_tool_link", "dir": "replicator_wrist", "video": "camera_1_wrist.mp4"}} if _wrist_camera else {}),
+                **({"camera_2_external": {"type": "external", "position": list(tuple(float(x) for x in args.external_camera_pos.split(","))), "dir": "replicator_external", "video": "camera_2_external.mp4"}} if _external_camera else {}),
+            },
+            "n_cameras": _n_cameras,
         },
         "frames": [],
         # Per-frame joint states (positions + velocities) — continuous 20 Hz log.
@@ -1830,6 +1911,16 @@ try:
 
     video_path = os.path.join(args.output_dir, "camera_0.mp4")
     encode_video_from_rgb(replicator_dir, video_path)
+
+    if _wrist_replicator_dir and os.path.isdir(_wrist_replicator_dir):
+        _wrist_video = os.path.join(args.output_dir, "camera_1_wrist.mp4")
+        encode_video_from_rgb(_wrist_replicator_dir, _wrist_video)
+        print(f"[RoboLab] Wrist video saved: {_wrist_video}")
+
+    if _external_replicator_dir and os.path.isdir(_external_replicator_dir):
+        _ext_video = os.path.join(args.output_dir, "camera_2_external.mp4")
+        encode_video_from_rgb(_external_replicator_dir, _ext_video)
+        print(f"[RoboLab] External video saved: {_ext_video}")
 
     manifest_path = os.path.join(args.output_dir, "dataset_manifest.json")
     with open(manifest_path, "w", encoding="utf-8") as f:
