@@ -62,6 +62,8 @@ class EpisodeMetrics:
     min_gripper_gap: float = 1.0
     frames_with_object: int = 0
     frames_object_stable: int = 0
+    max_contact_force: float = 0.0
+    frames_with_contact: int = 0
 
     # Composite quality score
     quality_score: int = 0
@@ -172,6 +174,8 @@ def analyze_frame_grasp_states(frames: list) -> dict:
     min_gap = 1.0
     frames_with_obj = 0
     frames_stable = 0
+    max_contact_force = 0.0
+    frames_with_contact = 0
     for f in frames:
         gs = f.get("grasp_state")
         if not gs:
@@ -183,11 +187,20 @@ def analyze_frame_grasp_states(frames: list) -> dict:
             frames_with_obj += 1
         if gs.get("gripped_object_stable"):
             frames_stable += 1
+        cf = gs.get("contact_forces", {})
+        lf = cf.get("left_finger", [0, 0, 0])
+        rf = cf.get("right_finger", [0, 0, 0])
+        total_force = sum(abs(v) for v in lf) + sum(abs(v) for v in rf)
+        max_contact_force = max(max_contact_force, total_force)
+        if gs.get("left_finger_contact") or gs.get("right_finger_contact"):
+            frames_with_contact += 1
     return {
         "max_gripper_gap": max_gap,
         "min_gripper_gap": min_gap,
         "frames_with_object": frames_with_obj,
         "frames_object_stable": frames_stable,
+        "max_contact_force": max_contact_force,
+        "frames_with_contact": frames_with_contact,
     }
 
 
@@ -226,6 +239,9 @@ def compute_quality_score(m) -> int:
     if m.frames_with_object > 0:
         hold_ratio = m.frames_object_stable / max(m.frames_with_object, 1)
         score += int(hold_ratio * 5)
+
+    if m.max_contact_force > 0.1:
+        score += 5
 
     if not m.object_fell:
         score += 5
@@ -432,6 +448,8 @@ def compute_metrics(ep_dir: Path, dataset: dict) -> EpisodeMetrics:
     m.min_gripper_gap = fgs["min_gripper_gap"]
     m.frames_with_object = fgs["frames_with_object"]
     m.frames_object_stable = fgs["frames_object_stable"]
+    m.max_contact_force = fgs["max_contact_force"]
+    m.frames_with_contact = fgs["frames_with_contact"]
 
     return m
 
@@ -749,6 +767,8 @@ def main():
                 "min_gripper_gap": round(m.min_gripper_gap, 5),
                 "frames_with_object": m.frames_with_object,
                 "frames_object_stable": m.frames_object_stable,
+                "max_contact_force": round(m.max_contact_force, 3),
+                "frames_with_contact": m.frames_with_contact,
                 "grasp_phases": m.grasp_phases,
                 "reasons": m.reasons,
             })

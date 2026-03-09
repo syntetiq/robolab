@@ -1173,6 +1173,68 @@ try:
             _drive_count += 1
         print(f"[RoboLab] Configured drives on {_drive_count} joints (stiffness+damping)")
 
+    # Contact sensors on gripper fingers for physical contact force measurement.
+    _contact_sensor_left = None
+    _contact_sensor_right = None
+    _contact_sensor_interface = None
+    if tiago_articulation:
+        try:
+            from pxr import PhysxSchema
+            _gripper_left_prim_path = f"{tiago_articulation_path}/tiago_dual_functional/gripper_left_link"
+            _gripper_right_prim_path = f"{tiago_articulation_path}/tiago_dual_functional/gripper_right_link"
+
+            _gl_prim = stage.GetPrimAtPath(_gripper_left_prim_path)
+            _gr_prim = stage.GetPrimAtPath(_gripper_right_prim_path)
+
+            if not _gl_prim.IsValid():
+                _gripper_left_prim_path = f"{tiago_articulation_path}/gripper_left_link"
+                _gl_prim = stage.GetPrimAtPath(_gripper_left_prim_path)
+            if not _gr_prim.IsValid():
+                _gripper_right_prim_path = f"{tiago_articulation_path}/gripper_right_link"
+                _gr_prim = stage.GetPrimAtPath(_gripper_right_prim_path)
+
+            if _gl_prim.IsValid() and _gr_prim.IsValid():
+                for _fp, _fn in [(_gripper_left_prim_path, "left"), (_gripper_right_prim_path, "right")]:
+                    _fp_prim = stage.GetPrimAtPath(_fp)
+                    if not _fp_prim.HasAPI(PhysxSchema.PhysxContactReportAPI):
+                        PhysxSchema.PhysxContactReportAPI.Apply(_fp_prim)
+                        PhysxSchema.PhysxContactReportAPI(_fp_prim).CreateThresholdAttr(0.0)
+
+                import omni.kit.commands
+                from pxr import Gf
+
+                omni.kit.commands.execute(
+                    "IsaacSensorCreateContactSensor",
+                    path="Contact_Sensor",
+                    parent=_gripper_left_prim_path,
+                    sensor_period=0,
+                    min_threshold=0.0,
+                    max_threshold=100000.0,
+                    translation=Gf.Vec3d(0, 0, 0),
+                )
+                omni.kit.commands.execute(
+                    "IsaacSensorCreateContactSensor",
+                    path="Contact_Sensor",
+                    parent=_gripper_right_prim_path,
+                    sensor_period=0,
+                    min_threshold=0.0,
+                    max_threshold=100000.0,
+                    translation=Gf.Vec3d(0, 0, 0),
+                )
+
+                _contact_sensor_left = f"{_gripper_left_prim_path}/Contact_Sensor"
+                _contact_sensor_right = f"{_gripper_right_prim_path}/Contact_Sensor"
+
+                from isaacsim.sensors.physics import _sensor
+                _contact_sensor_interface = _sensor.acquire_contact_sensor_interface()
+
+                print(f"[RoboLab] Contact sensors created on gripper fingers: "
+                      f"{_contact_sensor_left}, {_contact_sensor_right}")
+            else:
+                print("[RoboLab] WARN: gripper finger links not found, contact sensors disabled")
+        except Exception as err:
+            print(f"[RoboLab] WARN: failed to create contact sensors: {err}")
+
     # Resolve DOF names from articulation (dof_names, dof_paths, or fallback).
     dof_names = []
     if tiago_articulation:
@@ -2005,12 +2067,38 @@ try:
         if _obj_in_grip_path and _obj_z is not None and _lift_start_z is not None:
             _stable = _obj_z >= _lift_start_z - 0.02
 
+        # Contact sensor force readings.
+        _contact_left_force = [0.0, 0.0, 0.0]
+        _contact_right_force = [0.0, 0.0, 0.0]
+        _contact_left_in = False
+        _contact_right_in = False
+        if _contact_sensor_interface and _contact_sensor_left:
+            try:
+                _cl = _contact_sensor_interface.get_sensor_reading(
+                    _contact_sensor_left, use_latest_data=True)
+                if _cl.is_valid:
+                    _contact_left_in = _cl.in_contact
+                    _contact_left_force = [round(float(_cl.value), 3), 0.0, 0.0]
+                _cr = _contact_sensor_interface.get_sensor_reading(
+                    _contact_sensor_right, use_latest_data=True)
+                if _cr.is_valid:
+                    _contact_right_in = _cr.in_contact
+                    _contact_right_force = [round(float(_cr.value), 3), 0.0, 0.0]
+            except Exception:
+                pass
+
         grasp_state = {
             "gripper_gap": round(_gripper_gap, 5),
             "gripper_closing": _gripper_closing,
             "object_in_gripper": _obj_in_grip_class,
             "object_in_gripper_path": _obj_in_grip_path,
             "gripped_object_stable": _stable,
+            "contact_forces": {
+                "left_finger": _contact_left_force,
+                "right_finger": _contact_right_force,
+            },
+            "left_finger_contact": _contact_left_in,
+            "right_finger_contact": _contact_right_in,
         }
         if _grip_center:
             grasp_state["gripper_center"] = [round(c, 4) for c in _grip_center]
@@ -2022,6 +2110,16 @@ try:
         if _gripper_opening and _prev_gripper_closing:
             _grasp_events.append({"frame": _sim_frame_idx, "time": round(elapsed, 3),
                                   "event": "gripper_open_start"})
+
+        if (_contact_left_in and _contact_right_in) and _gripper_closing and not any(
+            e.get("event") == "contact_detected" and e.get("frame", 0) > _sim_frame_idx - 30
+            for e in _grasp_events
+        ):
+            _contact_force_mag = abs(_contact_left_force[0]) + abs(_contact_right_force[0])
+            _grasp_events.append({"frame": _sim_frame_idx, "time": round(elapsed, 3),
+                                  "event": "contact_detected",
+                                  "object": _obj_in_grip_class or "unknown",
+                                  "force": round(_contact_force_mag, 2)})
 
         if _obj_in_grip_path and _gripped_object_path is None:
             _gripped_object_path = _obj_in_grip_path
