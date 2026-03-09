@@ -261,7 +261,8 @@ try {
         "-TiagoUsd", $TiagoUsd,
         "-Ros2DllDir", $condaRos2Bin,
         "-Ros2SitePackages", $condaRos2Site,
-        "-EnvUsd", $EnvUsd
+        "-EnvUsd", $EnvUsd,
+        "-TaskLabel", ($intentList -join "_")
     )
     if ($RequireRealTiago) {
         $smokeArgs += "-RequireRealTiago"

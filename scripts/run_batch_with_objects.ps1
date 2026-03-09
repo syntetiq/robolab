@@ -27,22 +27,13 @@ if (-not $OrchestratorScript) {
 }
 
 $scenarios = @(
-    "plan_pick_sink",
-    "plan_pick_fridge",
-    "plan_pick_dishwasher",
     "plan_pick_table",
-    "stack_objects",
-    "pour",
-    "open_close_fridge",
-    "open_close_dishwasher"
+    "plan_pick_sink",
+    "plan_pick_fridge"
 )
 
-# Top-4 scenes selected for production data collection (Tier S + A).
-# See SCENE_RATING.md for full analysis and exclusion reasoning.
+# Single scene selected: Small_House has fridge, dishwasher, sink, table, large navigable floor.
 $scenes = @(
-    @{ Name = "Kitchen"; Path = "C:\RoboLab_Data\scenes\Kitchen_TiagoCompatible.usda" },
-    @{ Name = "L_Kitchen"; Path = "C:\RoboLab_Data\scenes\L-Shaped_Contemporary_Modular_Kitchen_TiagoCompatible.usda" },
-    @{ Name = "Modern_Kitchen"; Path = "C:\RoboLab_Data\scenes\Modern_Kitchen_TiagoCompatible.usda" },
     @{ Name = "Small_House"; Path = "C:\RoboLab_Data\scenes\Small_House_Interactive.usd" }
 )
 

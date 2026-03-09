@@ -118,6 +118,12 @@ def parse_args():
         default="0.0,0.0,0.8",
         help="External camera look-at target as x,y,z (default: 0.0,0.0,0.8).",
     )
+    parser.add_argument(
+        "--task-label",
+        type=str,
+        default="",
+        help="Task label/intent name for this episode (e.g. pick_from_table).",
+    )
     return parser.parse_known_args()[0]
 
 
@@ -1043,6 +1049,7 @@ try:
                 output_dir=_wrist_replicator_dir,
                 rgb=True,
                 distance_to_camera=True,
+                pointcloud=True,
             )
             _wrist_writer.attach([_wrist_render_product])
             _all_render_products.append(_wrist_render_product)
@@ -1245,12 +1252,26 @@ try:
             "arm_5_joint": (1000.0, 200.0),
             "arm_6_joint": (1000.0, 200.0),
             "arm_7_joint": (1000.0, 200.0),
+            "arm_right_1_joint": (2000.0, 400.0),
+            "arm_right_2_joint": (2000.0, 400.0),
+            "arm_right_3_joint": (2000.0, 400.0),
+            "arm_right_4_joint": (2000.0, 400.0),
+            "arm_right_5_joint": (1000.0, 200.0),
+            "arm_right_6_joint": (1000.0, 200.0),
+            "arm_right_7_joint": (1000.0, 200.0),
+            "arm_left_1_joint": (2000.0, 400.0),
+            "arm_left_2_joint": (2000.0, 400.0),
+            "arm_left_3_joint": (2000.0, 400.0),
+            "arm_left_4_joint": (2000.0, 400.0),
+            "arm_left_5_joint": (1000.0, 200.0),
+            "arm_left_6_joint": (1000.0, 200.0),
+            "arm_left_7_joint": (1000.0, 200.0),
             "head_1_joint": (500.0, 100.0),
             "head_2_joint": (500.0, 100.0),
-            "gripper_right_left_finger_joint": (2000.0, 500.0),
-            "gripper_right_right_finger_joint": (2000.0, 500.0),
-            "gripper_left_left_finger_joint": (2000.0, 500.0),
-            "gripper_left_right_finger_joint": (2000.0, 500.0),
+            "gripper_right_left_finger_joint": (5000.0, 800.0),
+            "gripper_right_right_finger_joint": (5000.0, 800.0),
+            "gripper_left_left_finger_joint": (5000.0, 800.0),
+            "gripper_left_right_finger_joint": (5000.0, 800.0),
         }
         _DEFAULT_DRIVE = (1000.0, 200.0)
         _drive_count = 0
@@ -1264,11 +1285,14 @@ try:
                 continue
             _jname = _jp.GetName()
             _stiff, _damp = _DRIVE_CONFIG.get(_jname, _DEFAULT_DRIVE)
-            _drive_api = UsdPhysics.DriveAPI.Apply(_jp, "angular" if _rev else "linear")
-            _drive_api.CreateStiffnessAttr(_stiff)
-            _drive_api.CreateDampingAttr(_damp)
+            _drive_type = "angular" if _rev else "linear"
+            _drive_api = UsdPhysics.DriveAPI.Apply(_jp, _drive_type)
+            _drive_api.CreateTypeAttr("force")
+            _drive_api.CreateStiffnessAttr().Set(_stiff)
+            _drive_api.CreateDampingAttr().Set(_damp)
+            _drive_api.CreateMaxForceAttr().Set(1000.0)
             _drive_count += 1
-        print(f"[RoboLab] Configured drives on {_drive_count} joints (stiffness+damping)")
+        print(f"[RoboLab] Configured drives on {_drive_count} joints (stiffness+damping+maxForce)")
 
     # Raycast-based object placement: reposition spawned objects onto actual surfaces.
     if _spawn_needs_raycast and _spawned_objects:
@@ -1493,9 +1517,23 @@ try:
                 if candidate in available:
                     aliases[moveit_name] = candidate
                     break
+        for side in ("right", "left"):
+            for finger in ("left_finger", "right_finger"):
+                moveit_name = f"gripper_{side}_{finger}_joint"
+                if moveit_name in available:
+                    aliases[moveit_name] = moveit_name
+        for hj in ("head_1_joint", "head_2_joint"):
+            if hj in available:
+                aliases[hj] = hj
         return aliases
 
     moveit_joint_aliases = _build_moveit_joint_aliases(dof_names)
+    print(f"[RoboLab] DOF names ({len(dof_names)}): {dof_names[:20]}{'...' if len(dof_names) > 20 else ''}")
+    print(f"[RoboLab] MoveIt joint aliases: {moveit_joint_aliases}")
+    _arm_dofs = [n for n in dof_names if "arm" in n.lower()]
+    print(f"[RoboLab] Arm DOFs found: {_arm_dofs}")
+    if not moveit_joint_aliases:
+        print("[RoboLab] WARNING: No MoveIt joint aliases resolved! Trajectories will NOT move the arm.")
     moveit_state_joint_names = fallback_moveit_joint_names + ["head_1_joint", "head_2_joint"]
     moveit_joint_limits = {
         "torso_lift_joint": (0.0, 0.35),
@@ -1629,6 +1667,8 @@ try:
     elif args.moveit and _proxy_ipc_enabled:
         print("[RoboLab] Proxy IPC mode: skipping rclpy inside Isaac Sim (ros2_fjt_proxy handles ROS2).")
 
+    _apply_logged_once: set = set()
+
     def _apply_joint_positions(joint_values: dict) -> bool:
         """Apply joint targets via ArticulationAction (PD position drive).
 
@@ -1654,15 +1694,28 @@ try:
             targets = list(current)
             index_map = {n: i for i, n in enumerate(dof_names)}
             updated_any = False
+            _resolved_joints = []
+            _skipped_joints = []
             for name, value in joint_values.items():
                 resolved_name = _resolve_joint_name(name)
                 idx = index_map.get(resolved_name)
                 if idx is None or idx >= len(targets):
+                    _skipped_joints.append(f"{name}->{resolved_name}")
                     continue
                 normalized = _normalize_joint_target(resolved_name, float(value))
                 targets[idx] = normalized
                 updated_any = True
+                _resolved_joints.append(f"{name}->{resolved_name}[{idx}]={normalized:.4f}")
+            if _skipped_joints and "skipped" not in _apply_logged_once:
+                _apply_logged_once.add("skipped")
+                print(f"[RoboLab] WARN: joints skipped (not in DOF list): {_skipped_joints}")
+            if _resolved_joints and "resolved" not in _apply_logged_once:
+                _apply_logged_once.add("resolved")
+                print(f"[RoboLab] Joint targets applied: {_resolved_joints}")
             if not updated_any:
+                if "no_update" not in _apply_logged_once:
+                    _apply_logged_once.add("no_update")
+                    print(f"[RoboLab] WARN: _apply_joint_positions updated NO joints from {list(joint_values.keys())}")
                 return False
             for i, joint_name in enumerate(dof_names):
                 if i >= len(targets):
@@ -1674,6 +1727,8 @@ try:
         except Exception as exc:
             print(f"[RoboLab] WARN: _apply_joint_positions failed: {exc}")
             return False
+
+    _persistent_targets: dict = {}
 
     def _process_trajectory_dispatcher() -> None:
         now = time.time()
@@ -1708,8 +1763,11 @@ try:
                     done_goals.append(goal)
 
             if merged_targets:
-                ok = _apply_joint_positions(merged_targets)
-                if not ok:
+                _persistent_targets.update(merged_targets)
+
+            if _persistent_targets:
+                ok = _apply_joint_positions(_persistent_targets)
+                if not ok and merged_targets:
                     for goal in active_trajectory_goals:
                         if goal not in done_goals:
                             goal["status"] = "failed"
@@ -1933,6 +1991,7 @@ try:
                 **({"camera_2_external": {"type": "external", "position": list(tuple(float(x) for x in args.external_camera_pos.split(","))), "dir": "replicator_external", "video": "camera_2_external.mp4"}} if _external_camera else {}),
             },
             "n_cameras": _n_cameras,
+            "task_label": args.task_label if args.task_label else "unlabeled",
         },
         "frames": [],
         # Per-frame joint states (positions + velocities) — continuous 20 Hz log.
@@ -1957,8 +2016,8 @@ try:
     _GRIPPER_JOINT_NAMES = (
         "gripper_right_left_finger_joint", "gripper_right_right_finger_joint",
     )
-    _GRIPPER_GAP_EMPTY = 0.0001
-    _GRIPPER_GAP_GRASPED = 0.005
+    _GRIPPER_GAP_EMPTY = 0.015
+    _GRIPPER_GAP_GRASPED = 0.012
     _OBJECT_IN_GRIPPER_RADIUS = 0.25
 
     _graspable_prim_paths = [p for p, _ in _spawned_objects]
