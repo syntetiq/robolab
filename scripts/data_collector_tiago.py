@@ -768,22 +768,52 @@ try:
                     _anchored_by_name += 1
     print(f"[RoboLab] Anchored {_anchored} existing rigid bodies + {_anchored_by_name} by name as kinematic")
 
+    # Per-scene spawn zones: table bounding boxes in world coordinates.
+    # Each zone is (x_min, x_max, y_min, y_max). Objects are scattered
+    # within these bounds and raycasted downward to find the table surface.
+    _SCENE_SPAWN_ZONES = {
+        "Kitchen":        [(0.4, 1.2, -1.0, -0.4)],
+        "L_Kitchen":      [(0.4, 1.2, -1.0, -0.4)],
+        "Modern_Kitchen": [(0.4, 1.2, -1.0, -0.4)],
+        "Small_House":    [(0.3, 1.0, -1.2, -0.5)],
+    }
+    _DEFAULT_SPAWN_ZONE = [(0.4, 1.2, -1.0, -0.4)]
+
+    def _get_spawn_zones():
+        """Pick spawn zones based on the scene USD path."""
+        _scene_path = str(getattr(args, "env_usd", "") or "")
+        for _key, _zones in _SCENE_SPAWN_ZONES.items():
+            if _key.lower() in _scene_path.lower():
+                return _zones
+        return _DEFAULT_SPAWN_ZONE
+
     # Spawn diverse graspable objects on table surfaces when --spawn-objects is set.
+    # Objects are initially placed at Z=3.0 (above all furniture). After world.reset()
+    # and physics warm-up, they are repositioned via raycast to actual table surfaces.
     _spawned_objects = []
+    _spawn_needs_raycast = False
     if args.spawn_objects:
         import random as _rng
         _obj_dir = Path(args.objects_dir)
+        _ycb_dir = Path(args.objects_dir).parent / "object_sets_ycb"
         _obj_usds = []
+        _ycb_usds = []
+        if _ycb_dir.exists():
+            for _ext in ("*.usd", "*.usda", "*.usdc", "*.usdz"):
+                _ycb_usds.extend(_ycb_dir.glob(_ext))
         if _obj_dir.exists():
             for _ext in ("*.usd", "*.usda", "*.usdc", "*.usdz"):
                 _obj_usds.extend(_obj_dir.glob(_ext))
-        if not _obj_usds:
+        _all_usds = _ycb_usds + _obj_usds
+        if not _all_usds:
             _builtin_shapes = ["Cube", "Cylinder", "Sphere", "Cone"]
-            print(f"[RoboLab] No object USDs in {_obj_dir}, spawning built-in shapes as graspable objects")
+            print(f"[RoboLab] No object USDs found, spawning built-in shapes as graspable objects")
+            _spawn_zones = _get_spawn_zones()
             for _si, _shape in enumerate(_builtin_shapes):
                 _obj_path = f"/World/GraspableObjects/{_shape}_{_si}"
-                _xoff = 0.8 + _si * 0.15
-                _yoff = -0.7 + (_si % 2) * 0.15
+                _zone = _spawn_zones[_si % len(_spawn_zones)]
+                _xoff = _zone[0] + (_si / max(len(_builtin_shapes) - 1, 1)) * (_zone[1] - _zone[0])
+                _yoff = _zone[2] + ((_si % 2) * 0.5 + 0.25) * (_zone[3] - _zone[2])
                 _scale = 0.04
                 if _shape == "Cube":
                     _prim_def = UsdGeom.Cube.Define(_stage_tmp, _obj_path)
@@ -801,7 +831,7 @@ try:
                     _prim_def.CreateHeightAttr(1.0)
                 _obj_prim = _stage_tmp.GetPrimAtPath(_obj_path)
                 _xf = UsdGeom.Xformable(_obj_prim)
-                _xf.AddTranslateOp().Set(Gf.Vec3d(_xoff, _yoff, 0.85))
+                _xf.AddTranslateOp().Set(Gf.Vec3d(_xoff, _yoff, 3.0))
                 _xf.AddScaleOp().Set(Gf.Vec3f(_scale, _scale, _scale))
                 UsdPhysics.RigidBodyAPI.Apply(_obj_prim)
                 UsdPhysics.CollisionAPI.Apply(_obj_prim)
@@ -810,20 +840,23 @@ try:
                 _spawned_objects.append((_obj_path, _shape.lower()))
                 print(f"[RoboLab]   spawned built-in: {_obj_path}")
         else:
-            _rng.shuffle(_obj_usds)
-            _to_spawn = _obj_usds[:6]
+            _rng.shuffle(_all_usds)
+            _to_spawn = _all_usds[:6]
+            _spawn_zones = _get_spawn_zones()
             for _si, _obj_usd in enumerate(_to_spawn):
                 _obj_name = _obj_usd.stem
-                _obj_path = f"/World/GraspableObjects/{_obj_name}_{_si}"
+                _safe_name = _obj_name if not _obj_name[0].isdigit() else f"obj_{_obj_name}"
+                _obj_path = f"/World/GraspableObjects/{_safe_name}_{_si}"
                 stage_utils.add_reference_to_stage(
                     usd_path=str(_obj_usd), prim_path=_obj_path,
                 )
                 _obj_prim = _stage_tmp.GetPrimAtPath(_obj_path)
                 if _obj_prim.IsValid():
                     _xf = UsdGeom.Xformable(_obj_prim)
-                    _xoff = 0.7 + _si * 0.12
-                    _yoff = -0.7 + (_si % 3) * 0.12
-                    _xf.AddTranslateOp().Set(Gf.Vec3d(_xoff, _yoff, 0.85))
+                    _zone = _spawn_zones[_si % len(_spawn_zones)]
+                    _xoff = _rng.uniform(_zone[0], _zone[1])
+                    _yoff = _rng.uniform(_zone[2], _zone[3])
+                    _xf.AddTranslateOp().Set(Gf.Vec3d(_xoff, _yoff, 3.0))
                     if not _obj_prim.HasAPI(UsdPhysics.RigidBodyAPI):
                         UsdPhysics.RigidBodyAPI.Apply(_obj_prim)
                     if not _obj_prim.HasAPI(UsdPhysics.CollisionAPI):
@@ -831,7 +864,8 @@ try:
                     add_update_semantics(_obj_prim, _obj_name)
                     _spawned_objects.append((_obj_path, _obj_name))
                     print(f"[RoboLab]   spawned: {_obj_path} from {_obj_usd.name}")
-        print(f"[RoboLab] Spawned {len(_spawned_objects)} graspable objects")
+        _spawn_needs_raycast = len(_spawned_objects) > 0
+        print(f"[RoboLab] Spawned {len(_spawned_objects)} graspable objects (pending raycast placement)")
 
     tiago_prim_path = "/World/Tiago"
     tiago_usd = resolve_usd_path(args.tiago_usd)
@@ -970,10 +1004,33 @@ try:
     _wrist_render_product = None
     _wrist_replicator_dir = None
     if getattr(args, "wrist_camera", False):
-        _wrist_link = f"{tiago_prim_path}/tiago_dual_functional/arm_tool_link"
-        if not stage.GetPrimAtPath(_wrist_link).IsValid():
-            _wrist_link = f"{tiago_prim_path}/tiago_dual_functional/arm_7_link"
-        if stage.GetPrimAtPath(_wrist_link).IsValid():
+        _wrist_link = None
+        _wrist_candidates = [
+            "arm_tool_link", "arm_7_link", "gripper_link",
+            "arm_right_tool_link", "arm_right_7_link",
+        ]
+        for _base in [tiago_articulation_path, tiago_prim_path]:
+            for _mid in ["/tiago_dual_functional", ""]:
+                for _name in _wrist_candidates:
+                    _cand = f"{_base}{_mid}/{_name}"
+                    if stage.GetPrimAtPath(_cand).IsValid():
+                        _wrist_link = _cand
+                        break
+                if _wrist_link:
+                    break
+            if _wrist_link:
+                break
+        if not _wrist_link:
+            _wrist_match_names = {"arm_tool_link", "arm_7_link", "arm_right_tool_link"}
+            for _p in stage.Traverse():
+                _pn = _p.GetName().lower()
+                if _pn in _wrist_match_names or "tool_link" in _pn:
+                    _pp = str(_p.GetPath())
+                    if _pp.startswith(tiago_prim_path):
+                        _wrist_link = _pp
+                        print(f"[RoboLab] Wrist link found via traversal: {_wrist_link}")
+                        break
+        if _wrist_link:
             _wrist_camera = rep.create.camera(
                 position=(0.0, 0.0, 0.05), look_at=(0.0, 0.0, 0.2), parent=_wrist_link
             )
@@ -1112,10 +1169,48 @@ try:
         except Exception as err:
             print(f"[RoboLab] WARN: failed to set initial joint targets: {err}")
 
-    # Run physics warm-up steps so the robot and environment settle fully
-    # before data collection. 200 steps at 1/120s ≈ 1.67s of simulated time.
-    for _ in range(200):
+    # Run physics warm-up steps so the robot, environment, and spawned objects
+    # settle fully before data collection. 500 base steps + stability check.
+    _WARMUP_BASE_STEPS = 500
+    _WARMUP_MAX_EXTRA = 300
+    _WARMUP_VELOCITY_THRESH = 0.01
+    for _ in range(_WARMUP_BASE_STEPS):
         world.step(render=False)
+    if _spawned_objects and tiago_articulation:
+        _stable = False
+        for _extra in range(_WARMUP_MAX_EXTRA):
+            world.step(render=False)
+            _max_vel = 0.0
+            for _sp, _ in _spawned_objects:
+                try:
+                    _sxf = XFormPrim(_sp)
+                    _spos, _ = _sxf.get_world_pose()
+                    if _spos is not None and len(_spos) >= 3 and float(_spos[2]) < 0.01:
+                        _sxf.set_world_pose(
+                            position=np.array([float(_spos[0]), float(_spos[1]), 0.85], dtype=np.float32),
+                            orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32))
+                except Exception:
+                    pass
+            if _extra % 30 == 0 and _extra > 0:
+                _all_settled = True
+                for _sp, _ in _spawned_objects:
+                    try:
+                        _rb = UsdPhysics.RigidBodyAPI(stage.GetPrimAtPath(_sp))
+                        _vel = _rb.GetVelocityAttr().Get()
+                        if _vel is not None:
+                            _v = sum(float(v)**2 for v in _vel) ** 0.5
+                            if _v > _WARMUP_VELOCITY_THRESH:
+                                _all_settled = False
+                    except Exception:
+                        pass
+                if _all_settled:
+                    _stable = True
+                    print(f"[RoboLab] Objects settled after {_WARMUP_BASE_STEPS + _extra} warm-up steps")
+                    break
+        if not _stable:
+            print(f"[RoboLab] Objects did not fully settle after {_WARMUP_BASE_STEPS + _WARMUP_MAX_EXTRA} steps")
+    else:
+        print(f"[RoboLab] Physics warm-up: {_WARMUP_BASE_STEPS} steps complete")
 
     # After warm-up, zero all velocities and re-lock position targets.
     if tiago_articulation:
@@ -1152,8 +1247,10 @@ try:
             "arm_7_joint": (1000.0, 200.0),
             "head_1_joint": (500.0, 100.0),
             "head_2_joint": (500.0, 100.0),
-            "gripper_left_joint": (500.0, 100.0),
-            "gripper_right_joint": (500.0, 100.0),
+            "gripper_right_left_finger_joint": (2000.0, 500.0),
+            "gripper_right_right_finger_joint": (2000.0, 500.0),
+            "gripper_left_left_finger_joint": (2000.0, 500.0),
+            "gripper_left_right_finger_joint": (2000.0, 500.0),
         }
         _DEFAULT_DRIVE = (1000.0, 200.0)
         _drive_count = 0
@@ -1173,27 +1270,158 @@ try:
             _drive_count += 1
         print(f"[RoboLab] Configured drives on {_drive_count} joints (stiffness+damping)")
 
+    # Raycast-based object placement: reposition spawned objects onto actual surfaces.
+    if _spawn_needs_raycast and _spawned_objects:
+        _placed = 0
+        _fell = 0
+        try:
+            from omni.physx import get_physx_scene_query_interface
+            _pq = get_physx_scene_query_interface()
+
+            for _ in range(10):
+                world.step(render=False)
+
+            for _obj_path, _obj_class in _spawned_objects:
+                _obj_prim = stage.GetPrimAtPath(_obj_path)
+                if not _obj_prim.IsValid():
+                    continue
+                _oxf = XFormPrim(_obj_path)
+                _opos, _orot = _oxf.get_world_pose()
+                if _opos is None:
+                    continue
+                _ox, _oy = float(_opos[0]), float(_opos[1])
+
+                _hit_info = _pq.raycast_closest(
+                    (_ox, _oy, 2.5), (0.0, 0.0, -1.0), 3.0
+                )
+                if _hit_info["hit"]:
+                    _surface_z = float(_hit_info["position"][2])
+                    if _surface_z > 0.3:
+                        _spawn_z = _surface_z + 0.08
+                        _oxf.set_world_pose(
+                            position=np.array([_ox, _oy, _spawn_z], dtype=np.float32),
+                            orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+                        )
+                        _placed += 1
+                        continue
+
+                _zones = _get_spawn_zones()
+                _found_surface = False
+                for _attempt in range(8):
+                    _zone = _zones[_attempt % len(_zones)]
+                    _tx = _rng.uniform(_zone[0], _zone[1])
+                    _ty = _rng.uniform(_zone[2], _zone[3])
+                    _hit2 = _pq.raycast_closest((_tx, _ty, 2.5), (0.0, 0.0, -1.0), 3.0)
+                    if _hit2["hit"] and float(_hit2["position"][2]) > 0.3:
+                        _sz = float(_hit2["position"][2]) + 0.08
+                        _oxf.set_world_pose(
+                            position=np.array([_tx, _ty, _sz], dtype=np.float32),
+                            orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+                        )
+                        _placed += 1
+                        _found_surface = True
+                        break
+                if not _found_surface:
+                    _oxf.set_world_pose(
+                        position=np.array([_ox, _oy, 0.85], dtype=np.float32),
+                        orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+                    )
+                    _fell += 1
+
+            print(f"[RoboLab] Raycast placement: {_placed} on surface, {_fell} fallback")
+        except ImportError:
+            print("[RoboLab] WARN: omni.physx not available, using fallback Z=0.85 for objects")
+            for _obj_path, _ in _spawned_objects:
+                try:
+                    _oxf = XFormPrim(_obj_path)
+                    _opos, _ = _oxf.get_world_pose()
+                    if _opos is not None:
+                        _oxf.set_world_pose(
+                            position=np.array([float(_opos[0]), float(_opos[1]), 0.85], dtype=np.float32),
+                            orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+                        )
+                except Exception:
+                    pass
+        except Exception as _re:
+            print(f"[RoboLab] WARN: raycast placement failed: {_re}")
+
+    # Gripper startup diagnostic: verify the gripper responds to position commands.
+    _diag_dof_names = resolve_dof_names(tiago_articulation) if tiago_articulation else []
+    if tiago_articulation and _diag_dof_names:
+        _gripper_test_joints = ["gripper_right_left_finger_joint", "gripper_right_right_finger_joint"]
+        _gt_indices = []
+        for _gtj in _gripper_test_joints:
+            if _gtj in _diag_dof_names:
+                _gt_indices.append(_diag_dof_names.index(_gtj))
+        if _gt_indices:
+            try:
+                _get_jp = getattr(tiago_articulation, "get_joint_positions", None) or getattr(
+                    tiago_articulation, "get_dof_positions", None)
+                _before = [float(_as_list(_get_jp())[i]) for i in _gt_indices] if _get_jp else []
+                _open_targets = list(_as_list(_get_jp()) if _get_jp else [0.0] * len(_diag_dof_names))
+                for _gi in _gt_indices:
+                    _open_targets[_gi] = 0.04
+                tiago_articulation.apply_action(
+                    ArticulationAction(joint_positions=np.array(_open_targets, dtype=np.float32)))
+                for _ in range(60):
+                    world.step(render=False)
+                _after = [float(_as_list(_get_jp())[i]) for i in _gt_indices] if _get_jp else []
+                if _before and _after:
+                    _delta = max(abs(a - b) for a, b in zip(_before, _after))
+                    print(f"[RoboLab] Gripper diagnostic: before={[round(v,4) for v in _before]} "
+                          f"after={[round(v,4) for v in _after]} delta={_delta:.4f}")
+                    if _delta < 0.005:
+                        print("[RoboLab] WARNING: Gripper joints did not respond to open command! "
+                              "Check USD drive stiffness or joint limits.")
+                    else:
+                        print("[RoboLab] Gripper responds to commands OK")
+                _close_targets = list(_as_list(_get_jp()) if _get_jp else [0.0] * len(_diag_dof_names))
+                for _gi in _gt_indices:
+                    _close_targets[_gi] = 0.0
+                tiago_articulation.apply_action(
+                    ArticulationAction(joint_positions=np.array(_close_targets, dtype=np.float32)))
+                for _ in range(30):
+                    world.step(render=False)
+            except Exception as _ge:
+                print(f"[RoboLab] WARN: gripper diagnostic failed: {_ge}")
+        else:
+            print(f"[RoboLab] WARN: gripper joints {_gripper_test_joints} not in DOF list")
+
     # Contact sensors on gripper fingers for physical contact force measurement.
     _contact_sensor_left = None
     _contact_sensor_right = None
     _contact_sensor_interface = None
+    _gripper_left_prim_path = None
+    _gripper_right_prim_path = None
     if tiago_articulation:
         try:
             from pxr import PhysxSchema
-            _gripper_left_prim_path = f"{tiago_articulation_path}/tiago_dual_functional/gripper_left_link"
-            _gripper_right_prim_path = f"{tiago_articulation_path}/tiago_dual_functional/gripper_right_link"
 
-            _gl_prim = stage.GetPrimAtPath(_gripper_left_prim_path)
-            _gr_prim = stage.GetPrimAtPath(_gripper_right_prim_path)
+            def _find_gripper_link(link_name):
+                """Search for a gripper link prim across common Tiago USD structures."""
+                _search_bases = [tiago_articulation_path, tiago_prim_path]
+                _search_mids = ["", "/tiago_dual_functional"]
+                for _base in _search_bases:
+                    for _mid in _search_mids:
+                        _path = f"{_base}{_mid}/{link_name}"
+                        _pr = stage.GetPrimAtPath(_path)
+                        if _pr.IsValid():
+                            return _path, _pr
+                for _p in stage.Traverse():
+                    _pn = _p.GetPath().pathString
+                    if _pn.startswith(tiago_prim_path) and _pn.endswith(f"/{link_name}"):
+                        return _pn, _p
+                return None, None
 
-            if not _gl_prim.IsValid():
-                _gripper_left_prim_path = f"{tiago_articulation_path}/gripper_left_link"
-                _gl_prim = stage.GetPrimAtPath(_gripper_left_prim_path)
-            if not _gr_prim.IsValid():
-                _gripper_right_prim_path = f"{tiago_articulation_path}/gripper_right_link"
-                _gr_prim = stage.GetPrimAtPath(_gripper_right_prim_path)
+            _gripper_left_prim_path, _gl_prim = _find_gripper_link("gripper_left_link")
+            _gripper_right_prim_path, _gr_prim = _find_gripper_link("gripper_right_link")
 
-            if _gl_prim.IsValid() and _gr_prim.IsValid():
+            if _gripper_left_prim_path:
+                print(f"[RoboLab] Found gripper_left_link: {_gripper_left_prim_path}")
+            if _gripper_right_prim_path:
+                print(f"[RoboLab] Found gripper_right_link: {_gripper_right_prim_path}")
+
+            if _gl_prim is not None and _gr_prim is not None:
                 for _fp, _fn in [(_gripper_left_prim_path, "left"), (_gripper_right_prim_path, "right")]:
                     _fp_prim = stage.GetPrimAtPath(_fp)
                     if not _fp_prim.HasAPI(PhysxSchema.PhysxContactReportAPI):
@@ -1726,25 +1954,79 @@ try:
     _grip_start_frame = -1
     _lift_start_z = None
 
-    _GRIPPER_JOINT_NAMES = ("gripper_left_joint", "gripper_right_joint",
-                            "gripper_left_left_finger_joint", "gripper_right_left_finger_joint")
-    _GRIPPER_GAP_EMPTY = 0.002
-    _GRIPPER_GAP_GRASPED = 0.025
-    _OBJECT_IN_GRIPPER_RADIUS = 0.18
+    _GRIPPER_JOINT_NAMES = (
+        "gripper_right_left_finger_joint", "gripper_right_right_finger_joint",
+    )
+    _GRIPPER_GAP_EMPTY = 0.0001
+    _GRIPPER_GAP_GRASPED = 0.005
+    _OBJECT_IN_GRIPPER_RADIUS = 0.25
 
     _graspable_prim_paths = [p for p, _ in _spawned_objects]
     _graspable_prim_classes = {p: c for p, c in _spawned_objects}
 
-    def _get_gripper_center():
-        """Return approximate gripper center position from the tool link."""
+    _gripper_center_paths = [None, None]  # [left_link, right_link] or [tool_link, None]
+
+    def _init_gripper_center_paths():
+        """Find gripper link paths for computing gripper center."""
+        if _gripper_left_prim_path and _gripper_right_prim_path:
+            _gripper_center_paths[0] = _gripper_left_prim_path
+            _gripper_center_paths[1] = _gripper_right_prim_path
+            print(f"[RoboLab] Gripper center: midpoint of finger links")
+            return
+
+        _candidates = [
+            f"{tiago_articulation_path}/arm_right_tool_link",
+            f"{tiago_articulation_path}/arm_tool_link",
+            f"{tiago_articulation_path}/arm_right_7_link",
+            f"{tiago_articulation_path}/arm_7_link",
+            f"{tiago_prim_path}/tiago_dual_functional/arm_tool_link",
+            f"{tiago_prim_path}/tiago_dual_functional/arm_7_link",
+            f"{tiago_prim_path}/tiago_dual_functional/arm_right_tool_link",
+            f"{tiago_prim_path}/tiago_dual_functional/arm_right_7_link",
+            f"{tiago_prim_path}/arm_tool_link",
+            f"{tiago_prim_path}/arm_right_tool_link",
+            f"{tiago_prim_path}/arm_7_link",
+            f"{tiago_prim_path}/arm_right_7_link",
+        ]
+        for _cl in _candidates:
+            try:
+                if stage.GetPrimAtPath(_cl).IsValid():
+                    _gripper_center_paths[0] = _cl
+                    print(f"[RoboLab] Gripper center: single link {_cl}")
+                    return
+            except Exception:
+                continue
+
         try:
-            _tool_link = f"{tiago_prim_path}/tiago_dual_functional/arm_tool_link"
-            _tlp = stage.GetPrimAtPath(_tool_link)
-            if not _tlp.IsValid():
-                _tool_link = f"{tiago_prim_path}/tiago_dual_functional/arm_7_link"
-                _tlp = stage.GetPrimAtPath(_tool_link)
-            if _tlp.IsValid():
-                _xf = XFormPrim(_tool_link)
+            for _p in stage.Traverse():
+                _pn = _p.GetPath().pathString
+                if not _pn.startswith(tiago_prim_path):
+                    continue
+                if "arm" in _pn and ("tool_link" in _pn or "7_link" in _pn):
+                    if "left" not in _pn.lower():
+                        _gripper_center_paths[0] = _pn
+                        print(f"[RoboLab] Gripper center: single link (search) {_pn}")
+                        return
+        except Exception:
+            pass
+        print("[RoboLab] WARNING: Could not find gripper center link")
+
+    _init_gripper_center_paths()
+
+    def _get_gripper_center():
+        """Return approximate gripper center position."""
+        if _gripper_center_paths[0] is None:
+            return None
+        try:
+            if _gripper_center_paths[1] is not None:
+                _xf_l = XFormPrim(_gripper_center_paths[0])
+                _xf_r = XFormPrim(_gripper_center_paths[1])
+                _pl, _ = _xf_l.get_world_pose()
+                _pr, _ = _xf_r.get_world_pose()
+                if _pl is not None and _pr is not None:
+                    return [float((_pl[i] + _pr[i]) / 2.0) for i in range(3)]
+            else:
+                _xf = XFormPrim(_gripper_center_paths[0])
                 _pos, _ = _xf.get_world_pose()
                 return _pos.tolist() if _pos is not None else None
         except Exception:
@@ -1945,6 +2227,11 @@ try:
                     "gripper_gap": round(_prev_gripper_gap, 5) if _prev_gripper_gap is not None else None,
                     "object_in_gripper": _gripped_object_class,
                     "gripped_object_stable": _gripped_object_path is not None,
+                    "left_finger_contact": _contact_left_in,
+                    "right_finger_contact": _contact_right_in,
+                    "contact_forces": round(
+                        abs(_contact_left_force[0]) + abs(_contact_right_force[0]), 3
+                    ) if (_contact_left_force and _contact_right_force) else 0.0,
                 }
                 _gr_file.write_text(json.dumps(_gr_data), encoding="utf-8")
             except Exception:
@@ -2050,8 +2337,9 @@ try:
             if _gj:
                 _gripper_positions.append(float(_gj["position"]))
         _gripper_gap = sum(_gripper_positions) / len(_gripper_positions) if _gripper_positions else 0.0
-        _gripper_closing = (_prev_gripper_gap is not None and _gripper_gap < _prev_gripper_gap - 0.0005)
-        _gripper_opening = (_prev_gripper_gap is not None and _gripper_gap > _prev_gripper_gap + 0.0005)
+        _gap_delta = (_gripper_gap - _prev_gripper_gap) if _prev_gripper_gap is not None else 0.0
+        _gripper_closing = _gap_delta < -0.00002
+        _gripper_opening = _gap_delta > 0.00002
 
         _grip_center = _get_gripper_center()
         _obj_in_grip_path, _obj_in_grip_class = _find_object_in_gripper(
@@ -2218,6 +2506,12 @@ try:
     print(f"[RoboLab] Telemetry saved: {telemetry_path}")
     print(f"[RoboLab] Video saved: {video_path}")
     print(f"[RoboLab] Manifest saved: {manifest_path}")
+
+except Exception as _top_err:
+    import traceback
+    print(f"[RoboLab] FATAL ERROR: {_top_err}")
+    traceback.print_exc()
+    sys.exit(1)
 
 finally:
     try:

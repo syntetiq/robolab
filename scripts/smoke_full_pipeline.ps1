@@ -110,7 +110,9 @@ if ($UseApi) {
         "--headless",
         "--moveit",
         "--ros2-dll-dir", $Ros2DllDir,
-        "--ros2-site-packages", $Ros2SitePackages
+        "--ros2-site-packages", $Ros2SitePackages,
+        "--wrist-camera",
+        "--external-camera"
     )
     if ($RequireRealTiago) {
         $collectorArgs += "--require-real-tiago"
@@ -169,6 +171,17 @@ if (-not $UseApi) {
         } else {
             Write-Host "[Smoke] WARN moveit_mode_enabled=false (expected true for --moveit)"
         }
+    }
+}
+
+$OptionalFiles = @("camera_1_wrist.mp4", "camera_2_external.mp4")
+foreach ($f in $OptionalFiles) {
+    $p = Join-Path $EpisodeDir $f
+    if (Test-Path $p) {
+        $size = (Get-Item $p).Length
+        Write-Host "[Smoke] OK $f ($size bytes)"
+    } else {
+        Write-Host "[Smoke] INFO $f not found (optional)"
     }
 }
 

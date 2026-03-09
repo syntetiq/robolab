@@ -34,7 +34,7 @@ _MOVEIT_JOINTS = frozenset([
     "arm_left_1_joint", "arm_left_2_joint", "arm_left_3_joint", "arm_left_4_joint",
     "arm_left_5_joint", "arm_left_6_joint", "arm_left_7_joint",
     "head_1_joint", "head_2_joint",
-    "gripper_left_left_finger_joint", "gripper_right_left_finger_joint",
+    "gripper_right_left_finger_joint", "gripper_right_right_finger_joint",
 ])
 
 

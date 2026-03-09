@@ -15,6 +15,8 @@ import sys
 import time as _time
 from pathlib import Path
 
+import math
+
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -27,11 +29,14 @@ from moveit_msgs.msg import (
     JointConstraint,
     MotionPlanRequest,
     PlanningOptions,
+    RobotState,
 )
+from moveit_msgs.srv import GetPositionIK
 from control_msgs.action import FollowJointTrajectory
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from builtin_interfaces.msg import Time, Duration
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, PoseStamped, Pose, Point, Quaternion
+from sensor_msgs.msg import JointState
 
 
 # Panda arm "ready" pose (radians)
@@ -374,7 +379,7 @@ TIAGO_POUR_UPRIGHT_JOINTS = {
 # Gripper positions (finger joint values).
 GRIPPER_OPEN = 0.04
 GRIPPER_CLOSED = 0.0
-GRIPPER_JOINTS = ["gripper_left_left_finger_joint", "gripper_right_left_finger_joint"]
+GRIPPER_JOINTS = ["gripper_right_left_finger_joint", "gripper_right_right_finger_joint"]
 
 # Fridge door interaction poses.
 TIAGO_FRIDGE_APPROACH_JOINTS = {
@@ -462,7 +467,7 @@ def build_joint_goal_constraint(joint_values: dict, tolerance: float = 0.001) ->
 def build_motion_plan_request(
     group_name: str,
     joint_goal: dict,
-    frame_id: str = "panda_link0",
+    frame_id: str = "base_footprint",
     plan_only: bool = False,
     planning_time: float = 20.0,
     num_attempts: int = 30,
@@ -502,7 +507,7 @@ JOINT_LIMITS = {
 
 REFERENCE_OBJECT_XYZ = (1.0, -0.56, 0.85)
 
-_GRIPPER_GAP_EMPTY = 0.002
+_GRIPPER_GAP_EMPTY = 0.0001
 
 
 def clamp_joints(joints: dict) -> dict:
@@ -579,8 +584,8 @@ class MoveItIntentBridge(Node):
         intent_topic: str,
         move_action_name: str,
         planning_group: str,
-        frame_id: str = "panda_link0",
-        robot: str = "panda",
+        frame_id: str = "base_footprint",
+        robot: str = "tiago",
         plan_only: bool = False,
         gripper_action: str = "/gripper_controller/follow_joint_trajectory",
     ):
@@ -591,6 +596,7 @@ class MoveItIntentBridge(Node):
         self.plan_only = plan_only
         self._action_client = ActionClient(self, MoveGroup, move_action_name)
         self._gripper_client = ActionClient(self, FollowJointTrajectory, gripper_action)
+        self._ik_client = self.create_client(GetPositionIK, "/compute_ik")
         self._cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self._sub = self.create_subscription(
             String,
@@ -599,6 +605,11 @@ class MoveItIntentBridge(Node):
             10,
         )
         self._executing = False
+        self._ik_available = self._ik_client.wait_for_service(timeout_sec=3.0)
+        if self._ik_available:
+            self.get_logger().info("IK service /compute_ik available — will use IK-based grasping")
+        else:
+            self.get_logger().warn("IK service /compute_ik NOT available — falling back to fixed poses")
         self.get_logger().info(
             f"Bridge: subscribe {intent_topic} -> action {move_action_name} + gripper {gripper_action} + /cmd_vel"
         )
@@ -620,6 +631,95 @@ class MoveItIntentBridge(Node):
             ).start()
         else:
             self.get_logger().warn(f"Unknown intent: {data}")
+
+    # Top-down gripper orientation: 180° around Y so tool Z points down (-Z world).
+    _TOP_DOWN_QUAT = Quaternion(x=0.0, y=1.0, z=0.0, w=0.0)
+    # Alternative: angled approach (45° from vertical, useful for table edges).
+    _ANGLED_QUAT = Quaternion(x=0.0, y=0.9239, z=0.0, w=0.3827)
+
+    def _compute_ik(self, target_position, target_orientation=None, seed_joints=None):
+        """Call MoveIt IK service for a Cartesian target pose.
+        Returns joint dict on success, None on failure."""
+        if not self._ik_available:
+            return None
+
+        req = GetPositionIK.Request()
+        req.ik_request.group_name = self.planning_group
+        req.ik_request.avoid_collisions = True
+
+        pose = PoseStamped()
+        pose.header.frame_id = self.frame_id
+        pose.pose.position = Point(
+            x=float(target_position[0]),
+            y=float(target_position[1]),
+            z=float(target_position[2]),
+        )
+        pose.pose.orientation = target_orientation or self._TOP_DOWN_QUAT
+        req.ik_request.pose_stamped = pose
+
+        if seed_joints:
+            rs = RobotState()
+            rs.joint_state = JointState()
+            rs.joint_state.name = list(seed_joints.keys())
+            rs.joint_state.position = [float(v) for v in seed_joints.values()]
+            req.ik_request.robot_state = rs
+
+        try:
+            future = self._ik_client.call_async(req)
+            rclpy.spin_until_future_complete(self, future, timeout_sec=5.0)
+            if not future.done():
+                self.get_logger().warn("IK service call timed out")
+                return None
+            response = future.result()
+            if response.error_code.val != 1:
+                self.get_logger().warn(f"IK failed with code {response.error_code.val}")
+                return None
+            js = response.solution.joint_state
+            result = {}
+            for name, pos in zip(js.name, js.position):
+                if name in JOINT_LIMITS or name == "torso_lift_joint":
+                    result[name] = float(pos)
+            if result:
+                self.get_logger().info(f"IK solution found ({len(result)} joints)")
+                return clamp_joints(result)
+        except Exception as e:
+            self.get_logger().warn(f"IK service error: {e}")
+        return None
+
+    def _get_ik_grasp_sequence(self, object_xyz, destination_joints, base_pre=None, base_grasp=None):
+        """Build a full grasp sequence using IK for the given object position.
+        Falls back to adaptive poses if IK is unavailable."""
+        pre_grasp_pos = (object_xyz[0], object_xyz[1], object_xyz[2] + 0.12)
+        grasp_pos = (object_xyz[0], object_xyz[1], object_xyz[2] + 0.02)
+
+        seed = base_pre or TIAGO_PRE_GRASP_JOINTS
+        pre_ik = self._compute_ik(pre_grasp_pos, seed_joints=seed)
+        grasp_ik = self._compute_ik(grasp_pos, seed_joints=pre_ik or seed)
+
+        if not (pre_ik and grasp_ik):
+            self.get_logger().info("Top-down IK failed, trying angled approach")
+            pre_ik = self._compute_ik(pre_grasp_pos, target_orientation=self._ANGLED_QUAT, seed_joints=seed)
+            grasp_ik = self._compute_ik(grasp_pos, target_orientation=self._ANGLED_QUAT, seed_joints=pre_ik or seed)
+
+        if pre_ik and grasp_ik:
+            self.get_logger().info(
+                f"Using IK grasp at ({object_xyz[0]:.2f}, {object_xyz[1]:.2f}, {object_xyz[2]:.2f})")
+            lift_joints = dict(grasp_ik)
+            if "torso_lift_joint" in lift_joints:
+                lift_joints["torso_lift_joint"] = min(
+                    lift_joints["torso_lift_joint"] + 0.10, 0.35)
+            lift_joints = clamp_joints(lift_joints)
+            return [
+                ("gripper", GRIPPER_OPEN),
+                ("move", pre_ik),
+                ("move", grasp_ik),
+                ("gripper", GRIPPER_CLOSED),
+                ("move", lift_joints),
+                ("move", destination_joints),
+                ("gripper", GRIPPER_OPEN),
+                ("move", TIAGO_READY_JOINTS),
+            ]
+        return None
 
     def _get_adaptive_grasp_poses(self, base_pre: dict, base_grasp: dict):
         """Query object pose from sim and return adapted (pre_grasp, grasp) joint dicts."""
@@ -650,8 +750,18 @@ class MoveItIntentBridge(Node):
             return [("move", TIAGO_APPROACH_WORKZONE_JOINTS)]
 
         elif intent in ("plan_pick", "plan_pick_sink"):
-            pre, grasp = self._get_adaptive_grasp_poses(
-                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+            obj_pos, obj_class = query_object_pose(timeout=2.0)
+            if obj_pos is not None:
+                self.get_logger().info(f"Pick target: '{obj_class}' at {[round(v,3) for v in obj_pos]}")
+                ik_seq = self._get_ik_grasp_sequence(
+                    obj_pos, TIAGO_PICK_SINK_JOINTS,
+                    TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+                if ik_seq:
+                    return ik_seq
+                pre = adapt_grasp_pose(TIAGO_PRE_GRASP_JOINTS, obj_pos)
+                grasp = adapt_grasp_pose(TIAGO_GRASP_JOINTS, obj_pos)
+            else:
+                pre, grasp = TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS
             return [
                 ("gripper", GRIPPER_OPEN),
                 ("move", pre),
@@ -663,8 +773,18 @@ class MoveItIntentBridge(Node):
                 ("move", TIAGO_READY_JOINTS),
             ]
         elif intent == "plan_pick_fridge":
-            pre, grasp = self._get_adaptive_grasp_poses(
-                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+            obj_pos, obj_class = query_object_pose(timeout=2.0)
+            if obj_pos is not None:
+                self.get_logger().info(f"Pick target: '{obj_class}' at {[round(v,3) for v in obj_pos]}")
+                ik_seq = self._get_ik_grasp_sequence(
+                    obj_pos, TIAGO_PICK_FRIDGE_JOINTS,
+                    TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+                if ik_seq:
+                    return ik_seq
+                pre = adapt_grasp_pose(TIAGO_PRE_GRASP_JOINTS, obj_pos)
+                grasp = adapt_grasp_pose(TIAGO_GRASP_JOINTS, obj_pos)
+            else:
+                pre, grasp = TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS
             return [
                 ("gripper", GRIPPER_OPEN),
                 ("move", pre),
@@ -676,8 +796,18 @@ class MoveItIntentBridge(Node):
                 ("move", TIAGO_READY_JOINTS),
             ]
         elif intent == "plan_pick_dishwasher":
-            pre, grasp = self._get_adaptive_grasp_poses(
-                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+            obj_pos, obj_class = query_object_pose(timeout=2.0)
+            if obj_pos is not None:
+                self.get_logger().info(f"Pick target: '{obj_class}' at {[round(v,3) for v in obj_pos]}")
+                ik_seq = self._get_ik_grasp_sequence(
+                    obj_pos, TIAGO_PICK_DISHWASHER_JOINTS,
+                    TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+                if ik_seq:
+                    return ik_seq
+                pre = adapt_grasp_pose(TIAGO_PRE_GRASP_JOINTS, obj_pos)
+                grasp = adapt_grasp_pose(TIAGO_GRASP_JOINTS, obj_pos)
+            else:
+                pre, grasp = TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS
             return [
                 ("gripper", GRIPPER_OPEN),
                 ("move", pre),
@@ -696,8 +826,17 @@ class MoveItIntentBridge(Node):
             ]
 
         elif intent == "plan_pick_table":
-            pre, grasp = self._get_adaptive_grasp_poses(
-                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+            obj_pos, obj_class = query_object_pose(timeout=2.0)
+            if obj_pos is not None:
+                ik_seq = self._get_ik_grasp_sequence(
+                    obj_pos, TIAGO_PLACE_TABLE_JOINTS,
+                    TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+                if ik_seq:
+                    return ik_seq
+                pre = adapt_grasp_pose(TIAGO_PRE_GRASP_JOINTS, obj_pos)
+                grasp = adapt_grasp_pose(TIAGO_GRASP_JOINTS, obj_pos)
+            else:
+                pre, grasp = TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS
             return [
                 ("gripper", GRIPPER_OPEN),
                 ("move", pre),
@@ -710,8 +849,24 @@ class MoveItIntentBridge(Node):
             ]
 
         elif intent == "stack_objects":
-            pre, grasp = self._get_adaptive_grasp_poses(
-                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+            obj_pos, obj_class = query_object_pose(timeout=2.0)
+            if obj_pos is not None:
+                ik_seq = self._get_ik_grasp_sequence(
+                    obj_pos, TIAGO_STACK_HOVER_JOINTS,
+                    TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+                if ik_seq:
+                    ik_seq.pop()
+                    ik_seq.extend([
+                        ("move", TIAGO_STACK_LOWER_JOINTS),
+                        ("gripper", GRIPPER_OPEN),
+                        ("move", TIAGO_LIFT_JOINTS),
+                        ("move", TIAGO_READY_JOINTS),
+                    ])
+                    return ik_seq
+                pre = adapt_grasp_pose(TIAGO_PRE_GRASP_JOINTS, obj_pos)
+                grasp = adapt_grasp_pose(TIAGO_GRASP_JOINTS, obj_pos)
+            else:
+                pre, grasp = TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS
             return [
                 ("gripper", GRIPPER_OPEN),
                 ("move", pre),
@@ -726,8 +881,25 @@ class MoveItIntentBridge(Node):
             ]
 
         elif intent == "pour":
-            pre, grasp = self._get_adaptive_grasp_poses(
-                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+            obj_pos, obj_class = query_object_pose(timeout=2.0)
+            if obj_pos is not None:
+                ik_seq = self._get_ik_grasp_sequence(
+                    obj_pos, TIAGO_POUR_TILT_JOINTS,
+                    TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+                if ik_seq:
+                    ik_seq.pop()
+                    ik_seq.extend([
+                        ("wait", 2.0),
+                        ("move", TIAGO_POUR_UPRIGHT_JOINTS),
+                        ("move", TIAGO_PLACE_TABLE_JOINTS),
+                        ("gripper", GRIPPER_OPEN),
+                        ("move", TIAGO_READY_JOINTS),
+                    ])
+                    return ik_seq
+                pre = adapt_grasp_pose(TIAGO_PRE_GRASP_JOINTS, obj_pos)
+                grasp = adapt_grasp_pose(TIAGO_GRASP_JOINTS, obj_pos)
+            else:
+                pre, grasp = TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS
             return [
                 ("gripper", GRIPPER_OPEN),
                 ("move", pre),
@@ -845,8 +1017,12 @@ class MoveItIntentBridge(Node):
 
         # Combined navigation + manipulation
         elif intent == "nav_pick_place_table_to_sink":
-            pre, grasp = self._get_adaptive_grasp_poses(
-                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
+            obj_pos, obj_class = query_object_pose(timeout=2.0)
+            if obj_pos is not None:
+                pre = adapt_grasp_pose(TIAGO_PRE_GRASP_JOINTS, obj_pos)
+                grasp = adapt_grasp_pose(TIAGO_GRASP_JOINTS, obj_pos)
+            else:
+                pre, grasp = TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS
             return [
                 ("nav", (0.3, 0.0, 0.0, 2.0)),
                 ("gripper", GRIPPER_OPEN),
@@ -885,19 +1061,30 @@ class MoveItIntentBridge(Node):
     _GRASP_RETRY_DZ = -0.02
 
     def _verify_grasp(self) -> bool:
-        """Check whether the gripper is holding an object via IPC."""
-        _time.sleep(0.5)
+        """Check whether the gripper is holding an object via IPC.
+        Uses contact forces, object-in-gripper detection, and gripper gap."""
+        _time.sleep(0.8)
         result = read_grasp_result()
         if result is None:
             self.get_logger().warn("Grasp result IPC unavailable, assuming success")
             return True
+
         gap = result.get("gripper_gap")
         obj = result.get("object_in_gripper")
+        contact_left = result.get("left_finger_contact", False)
+        contact_right = result.get("right_finger_contact", False)
+        contact_force = result.get("contact_forces", 0.0)
+
         if obj:
-            self.get_logger().info(f"Grasp verified: holding '{obj}' (gap={gap})")
+            self.get_logger().info(
+                f"Grasp verified: holding '{obj}' (gap={gap}, contacts=L:{contact_left}/R:{contact_right})")
+            return True
+        if contact_left and contact_right:
+            self.get_logger().info(
+                f"Grasp likely: both fingers in contact (force={contact_force:.2f}, gap={gap})")
             return True
         if gap is not None and gap < _GRIPPER_GAP_EMPTY:
-            self.get_logger().warn(f"Empty grasp detected (gap={gap:.4f})")
+            self.get_logger().warn(f"Empty grasp detected (gap={gap:.4f}, no contact)")
             return False
         self.get_logger().info(f"Grasp check inconclusive (gap={gap}), assuming success")
         return True
@@ -932,17 +1119,24 @@ class MoveItIntentBridge(Node):
                     if value == GRIPPER_CLOSED and _last_grasp_move is not None:
                         if not self._verify_grasp():
                             retried = False
+                            _offsets = [
+                                {"torso_lift_joint": -0.02},
+                                {"torso_lift_joint": -0.04, "arm_2_joint": 0.05},
+                                {"torso_lift_joint": -0.02, "arm_1_joint": -0.05},
+                            ]
                             for attempt in range(1, self._MAX_GRASP_RETRIES + 1):
+                                off = _offsets[min(attempt - 1, len(_offsets) - 1)]
                                 self.get_logger().info(
-                                    f"  Retry {attempt}/{self._MAX_GRASP_RETRIES}: "
-                                    f"offset dz={self._GRASP_RETRY_DZ * attempt:.3f}")
+                                    f"  Retry {attempt}/{self._MAX_GRASP_RETRIES}: offsets={off}")
                                 self._send_gripper_sync(GRIPPER_OPEN)
-                                _time.sleep(0.3)
+                                _time.sleep(0.5)
                                 retry_joints = dict(_last_grasp_move)
-                                if "torso_lift_joint" in retry_joints:
-                                    retry_joints["torso_lift_joint"] += self._GRASP_RETRY_DZ * attempt
+                                for jn, joff in off.items():
+                                    if jn in retry_joints:
+                                        retry_joints[jn] += joff
                                 retry_joints = clamp_joints(retry_joints)
                                 self._send_goal_sync(retry_joints, group_override=_last_grasp_group)
+                                _time.sleep(0.3)
                                 self._send_gripper_sync(GRIPPER_CLOSED)
                                 if self._verify_grasp():
                                     self.get_logger().info(f"  Retry {attempt} succeeded!")
@@ -1080,19 +1274,19 @@ def main():
     )
     parser.add_argument(
         "--planning-group",
-        default="panda_arm",
-        help="Planning group name (panda_arm for Panda, arm_torso for Tiago)",
+        default="arm_torso",
+        help="Planning group name (arm_torso for Tiago, panda_arm for Panda)",
     )
     parser.add_argument(
         "--robot",
         choices=["panda", "tiago"],
-        default="panda",
-        help="Robot type (panda or tiago)",
+        default="tiago",
+        help="Robot type (tiago or panda)",
     )
     parser.add_argument(
         "--frame-id",
         default=None,
-        help="Planning frame (default: panda_link0 for Panda, base_footprint for Tiago)",
+        help="Planning frame (default: base_footprint for Tiago, panda_link0 for Panda)",
     )
     parser.add_argument(
         "--plan-only",
