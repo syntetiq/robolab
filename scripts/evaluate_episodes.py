@@ -91,7 +91,7 @@ MIN_DURATION = 2.0          # seconds
 OBJECT_MOVE_THRESH = 0.03   # m — object considered moved
 OBJECT_LIFT_THRESH = 0.05   # m — object considered lifted
 OBJECT_FELL_THRESH = -0.1   # m — object fell below spawn height
-GRIPPER_CLOSE_THRESH = 0.01 # m — gripper closed if delta > this
+GRIPPER_CLOSE_THRESH = 0.003 # m — gripper closed if delta > this (calibrated from 50-ep analysis)
 ARM_IDLE_FRAME_THRESH = 0.001  # rad — per-frame arm movement threshold
 
 

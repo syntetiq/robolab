@@ -1666,9 +1666,9 @@ try:
 
     _GRIPPER_JOINT_NAMES = ("gripper_left_joint", "gripper_right_joint",
                             "gripper_left_left_finger_joint", "gripper_right_left_finger_joint")
-    _GRIPPER_GAP_EMPTY = 0.005
-    _GRIPPER_GAP_GRASPED = 0.035
-    _OBJECT_IN_GRIPPER_RADIUS = 0.15
+    _GRIPPER_GAP_EMPTY = 0.002
+    _GRIPPER_GAP_GRASPED = 0.025
+    _OBJECT_IN_GRIPPER_RADIUS = 0.18
 
     _graspable_prim_paths = [p for p, _ in _spawned_objects]
     _graspable_prim_classes = {p: c for p, c in _spawned_objects}

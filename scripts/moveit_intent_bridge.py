@@ -441,9 +441,9 @@ JOINT_LIMITS = {
     "arm_7_joint": (-2.07, 2.07),
 }
 
-REFERENCE_OBJECT_XYZ = (0.7, -0.7, 0.85)
+REFERENCE_OBJECT_XYZ = (1.0, -0.56, 0.85)
 
-_GRIPPER_GAP_EMPTY = 0.005
+_GRIPPER_GAP_EMPTY = 0.002
 
 
 def clamp_joints(joints: dict) -> dict:
@@ -492,14 +492,22 @@ def read_grasp_result():
 
 def adapt_grasp_pose(base_joints: dict, object_xyz: tuple,
                      reference_xyz: tuple = REFERENCE_OBJECT_XYZ) -> dict:
-    """Compute parametric joint correction based on object vs reference position."""
+    """Compute parametric joint correction based on object vs reference position.
+
+    Coefficients calibrated from 50-episode analysis:
+      - torso (dz * 0.6): conservative to stay within 0.0-0.35 range
+      - arm_1 (dy * 0.25): shoulder yaw for lateral offset, range 0.07-2.68
+      - arm_2 (dx * 0.15): shoulder pitch for forward reach, range -1.5 to 1.02
+      - arm_4 (dz * -0.3): elbow compensation for height changes
+    """
     dx = object_xyz[0] - reference_xyz[0]
     dy = object_xyz[1] - reference_xyz[1]
     dz = object_xyz[2] - reference_xyz[2]
     adapted = dict(base_joints)
-    adapted["torso_lift_joint"] = adapted.get("torso_lift_joint", 0.2) + dz * 0.8
-    adapted["arm_1_joint"] = adapted.get("arm_1_joint", 1.3) + dy * 0.3
-    adapted["arm_2_joint"] = adapted.get("arm_2_joint", 0.1) + dx * 0.2
+    adapted["torso_lift_joint"] = adapted.get("torso_lift_joint", 0.2) + dz * 0.6
+    adapted["arm_1_joint"] = adapted.get("arm_1_joint", 1.3) + dy * 0.25
+    adapted["arm_2_joint"] = adapted.get("arm_2_joint", 0.1) + dx * 0.15
+    adapted["arm_4_joint"] = adapted.get("arm_4_joint", 2.1) + dz * -0.3
     return clamp_joints(adapted)
 
 
