@@ -1654,6 +1654,65 @@ try:
     telemetry_data = []
     _sim_frame_idx = 0
     start_time = time.time()
+
+    # Grasp monitoring state.
+    _grasp_events = []
+    _prev_gripper_gap = None
+    _prev_gripper_closing = False
+    _gripped_object_path = None
+    _gripped_object_class = None
+    _grip_start_frame = -1
+    _lift_start_z = None
+
+    _GRIPPER_JOINT_NAMES = ("gripper_left_joint", "gripper_right_joint",
+                            "gripper_left_left_finger_joint", "gripper_right_left_finger_joint")
+    _GRIPPER_GAP_EMPTY = 0.005
+    _GRIPPER_GAP_GRASPED = 0.035
+    _OBJECT_IN_GRIPPER_RADIUS = 0.15
+
+    _graspable_prim_paths = [p for p, _ in _spawned_objects]
+    _graspable_prim_classes = {p: c for p, c in _spawned_objects}
+
+    def _get_gripper_center():
+        """Return approximate gripper center position from the tool link."""
+        try:
+            _tool_link = f"{tiago_prim_path}/tiago_dual_functional/arm_tool_link"
+            _tlp = stage.GetPrimAtPath(_tool_link)
+            if not _tlp.IsValid():
+                _tool_link = f"{tiago_prim_path}/tiago_dual_functional/arm_7_link"
+                _tlp = stage.GetPrimAtPath(_tool_link)
+            if _tlp.IsValid():
+                _xf = XFormPrim(_tool_link)
+                _pos, _ = _xf.get_world_pose()
+                return _pos.tolist() if _pos is not None else None
+        except Exception:
+            pass
+        return None
+
+    def _find_object_in_gripper(grip_center, gap):
+        """Check if any graspable object center is within gripper reach."""
+        if grip_center is None or gap > _GRIPPER_GAP_GRASPED:
+            return None, None
+        gx, gy, gz = grip_center
+        best_dist = _OBJECT_IN_GRIPPER_RADIUS
+        best_path = None
+        for _gp in _graspable_prim_paths:
+            try:
+                _xf = XFormPrim(_gp)
+                _op, _ = _xf.get_world_pose()
+                if _op is None:
+                    continue
+                ox, oy, oz = float(_op[0]), float(_op[1]), float(_op[2])
+                dist = ((gx - ox)**2 + (gy - oy)**2 + (gz - oz)**2)**0.5
+                if dist < best_dist:
+                    best_dist = dist
+                    best_path = _gp
+            except Exception:
+                continue
+        if best_path:
+            return best_path, _graspable_prim_classes.get(best_path, "unknown")
+        return None, None
+
     print("[RoboLab] Starting simulation loop...")
 
     while simulation_app.is_running():
@@ -1786,6 +1845,49 @@ try:
                 except Exception:
                     pass
 
+            # IPC: respond to object pose queries from intent bridge.
+            try:
+                _oq_file = FJT_PROXY_DIR / "query_object_pose.json"
+                if _oq_file.exists():
+                    _oq_file.unlink()
+                    _nearest = None
+                    _nearest_dist = float("inf")
+                    _gc = _get_gripper_center()
+                    for _sp_path, _sp_class in _spawned_objects:
+                        try:
+                            _sxf = XFormPrim(_sp_path)
+                            _sp, _ = _sxf.get_world_pose()
+                            if _sp is None:
+                                continue
+                            _spx = [float(_sp[0]), float(_sp[1]), float(_sp[2])]
+                            _d = float("inf")
+                            if _gc:
+                                _d = sum((_a - _b)**2 for _a, _b in zip(_gc, _spx))**0.5
+                            if _d < _nearest_dist:
+                                _nearest_dist = _d
+                                _nearest = {"path": _sp_path, "class": _sp_class,
+                                            "position": [round(v, 4) for v in _spx]}
+                        except Exception:
+                            continue
+                    _resp = _nearest or {"path": None, "class": None, "position": None}
+                    _resp["gripper_center"] = [round(v, 4) for v in _gc] if _gc else None
+                    _oq_resp = FJT_PROXY_DIR / "object_pose_result.json"
+                    _oq_resp.write_text(json.dumps(_resp), encoding="utf-8")
+            except Exception:
+                pass
+
+            # IPC: publish current grasp result for intent bridge verification.
+            try:
+                _gr_file = FJT_PROXY_DIR / "grasp_result.json"
+                _gr_data = {
+                    "gripper_gap": round(_prev_gripper_gap, 5) if _prev_gripper_gap is not None else None,
+                    "object_in_gripper": _gripped_object_class,
+                    "gripped_object_stable": _gripped_object_path is not None,
+                }
+                _gr_file.write_text(json.dumps(_gr_data), encoding="utf-8")
+            except Exception:
+                pass
+
         world.step(render=True)
         if _rep_subsample <= 1 or (_sim_frame_idx % _rep_subsample) == 0:
             rep.orchestrator.step(rt_subframes=1)
@@ -1879,12 +1981,92 @@ try:
             "orientation": robot_pose.get("orientation", []),
         }
 
+        # Grasp state: gripper gap, object detection, event logging.
+        _gripper_positions = []
+        for _gn in _GRIPPER_JOINT_NAMES:
+            _gj = joint_snapshot.get(_gn)
+            if _gj:
+                _gripper_positions.append(float(_gj["position"]))
+        _gripper_gap = sum(_gripper_positions) / len(_gripper_positions) if _gripper_positions else 0.0
+        _gripper_closing = (_prev_gripper_gap is not None and _gripper_gap < _prev_gripper_gap - 0.0005)
+        _gripper_opening = (_prev_gripper_gap is not None and _gripper_gap > _prev_gripper_gap + 0.0005)
+
+        _grip_center = _get_gripper_center()
+        _obj_in_grip_path, _obj_in_grip_class = _find_object_in_gripper(
+            _grip_center, _gripper_gap
+        )
+        _obj_z = None
+        if _obj_in_grip_path:
+            _owp = world_poses.get(_obj_in_grip_path, {})
+            _opos = _owp.get("position", [])
+            _obj_z = float(_opos[2]) if len(_opos) > 2 else None
+
+        _stable = False
+        if _obj_in_grip_path and _obj_z is not None and _lift_start_z is not None:
+            _stable = _obj_z >= _lift_start_z - 0.02
+
+        grasp_state = {
+            "gripper_gap": round(_gripper_gap, 5),
+            "gripper_closing": _gripper_closing,
+            "object_in_gripper": _obj_in_grip_class,
+            "object_in_gripper_path": _obj_in_grip_path,
+            "gripped_object_stable": _stable,
+        }
+        if _grip_center:
+            grasp_state["gripper_center"] = [round(c, 4) for c in _grip_center]
+
+        # Event detection.
+        if _gripper_closing and not _prev_gripper_closing:
+            _grasp_events.append({"frame": _sim_frame_idx, "time": round(elapsed, 3),
+                                  "event": "gripper_close_start"})
+        if _gripper_opening and _prev_gripper_closing:
+            _grasp_events.append({"frame": _sim_frame_idx, "time": round(elapsed, 3),
+                                  "event": "gripper_open_start"})
+
+        if _obj_in_grip_path and _gripped_object_path is None:
+            _gripped_object_path = _obj_in_grip_path
+            _gripped_object_class = _obj_in_grip_class
+            _grip_start_frame = _sim_frame_idx
+            _lift_start_z = _obj_z
+            _grasp_events.append({"frame": _sim_frame_idx, "time": round(elapsed, 3),
+                                  "event": "grasp_confirmed", "object": _obj_in_grip_class,
+                                  "gap": round(_gripper_gap, 4)})
+
+        if _gripped_object_path and _obj_z is not None and _lift_start_z is not None:
+            if _obj_z > _lift_start_z + 0.05 and not any(
+                e.get("event") == "lift_detected" and e.get("object") == _gripped_object_class
+                for e in _grasp_events
+            ):
+                _grasp_events.append({"frame": _sim_frame_idx, "time": round(elapsed, 3),
+                                      "event": "lift_detected", "object": _gripped_object_class,
+                                      "z": round(_obj_z, 3)})
+
+        if _gripped_object_path and _obj_in_grip_path is None:
+            if _obj_z is None:
+                _dropped_z = None
+                _dwp = world_poses.get(_gripped_object_path, {})
+                _dp = _dwp.get("position", [])
+                if len(_dp) > 2:
+                    _dropped_z = round(float(_dp[2]), 3)
+            else:
+                _dropped_z = round(_obj_z, 3)
+            _grasp_events.append({"frame": _sim_frame_idx, "time": round(elapsed, 3),
+                                  "event": "object_released", "object": _gripped_object_class,
+                                  "z": _dropped_z})
+            _gripped_object_path = None
+            _gripped_object_class = None
+            _lift_start_z = None
+
+        _prev_gripper_gap = _gripper_gap
+        _prev_gripper_closing = _gripper_closing
+
         frame_record = {
             "timestamp": elapsed,
             "map_frame": "map",
             "robot_pose": robot_pose,
             "robot_joints": joint_snapshot,
             "world_poses": world_poses,
+            "grasp_state": grasp_state,
         }
         dataset["frames"].append(frame_record)
         dataset["joint_trajectories"].append({
@@ -1911,6 +2093,11 @@ try:
     telemetry_path = os.path.join(args.output_dir, "telemetry.json")
     with open(telemetry_path, "w", encoding="utf-8") as f:
         json.dump({"episode_duration": args.duration, "trajectory": telemetry_data}, f, indent=2)
+
+    grasp_events_path = os.path.join(args.output_dir, "grasp_events.json")
+    with open(grasp_events_path, "w", encoding="utf-8") as f:
+        json.dump(_grasp_events, f, indent=2)
+    print(f"[RoboLab] Grasp events saved: {grasp_events_path} ({len(_grasp_events)} events)")
 
     video_path = os.path.join(args.output_dir, "camera_0.mp4")
     encode_video_from_rgb(replicator_dir, video_path)

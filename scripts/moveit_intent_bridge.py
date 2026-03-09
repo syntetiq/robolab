@@ -9,8 +9,11 @@ Run alongside move_group.
 """
 
 import argparse
+import json
+import os
 import sys
 import time as _time
+from pathlib import Path
 
 import rclpy
 from rclpy.action import ActionClient
@@ -425,6 +428,81 @@ def build_planning_options(plan_only: bool) -> PlanningOptions:
     return opt
 
 
+FJT_PROXY_DIR = Path(os.environ.get("FJT_PROXY_DIR", r"C:\RoboLab_Data\fjt_proxy"))
+
+JOINT_LIMITS = {
+    "torso_lift_joint": (0.0, 0.35),
+    "arm_1_joint": (0.07, 2.68),
+    "arm_2_joint": (-1.50, 1.02),
+    "arm_3_joint": (-3.46, 1.57),
+    "arm_4_joint": (0.0, 2.29),
+    "arm_5_joint": (-2.07, 2.07),
+    "arm_6_joint": (-1.39, 1.39),
+    "arm_7_joint": (-2.07, 2.07),
+}
+
+REFERENCE_OBJECT_XYZ = (0.7, -0.7, 0.85)
+
+_GRIPPER_GAP_EMPTY = 0.005
+
+
+def clamp_joints(joints: dict) -> dict:
+    """Clamp joint values to their mechanical limits."""
+    clamped = {}
+    for name, val in joints.items():
+        lo, hi = JOINT_LIMITS.get(name, (-3.14, 3.14))
+        clamped[name] = max(lo, min(hi, val))
+    return clamped
+
+
+def query_object_pose(timeout: float = 2.0):
+    """Request the nearest graspable object pose from Isaac Sim via IPC."""
+    try:
+        FJT_PROXY_DIR.mkdir(parents=True, exist_ok=True)
+        query_file = FJT_PROXY_DIR / "query_object_pose.json"
+        result_file = FJT_PROXY_DIR / "object_pose_result.json"
+        if result_file.exists():
+            result_file.unlink()
+        query_file.write_text("{}", encoding="utf-8")
+
+        deadline = _time.time() + timeout
+        while _time.time() < deadline:
+            if result_file.exists():
+                data = json.loads(result_file.read_text(encoding="utf-8"))
+                if data.get("position"):
+                    return tuple(data["position"]), data.get("class", "unknown")
+                return None, None
+            _time.sleep(0.1)
+    except Exception:
+        pass
+    return None, None
+
+
+def read_grasp_result():
+    """Read the current grasp result from Isaac Sim IPC."""
+    try:
+        gr_file = FJT_PROXY_DIR / "grasp_result.json"
+        if gr_file.exists():
+            data = json.loads(gr_file.read_text(encoding="utf-8"))
+            return data
+    except Exception:
+        pass
+    return None
+
+
+def adapt_grasp_pose(base_joints: dict, object_xyz: tuple,
+                     reference_xyz: tuple = REFERENCE_OBJECT_XYZ) -> dict:
+    """Compute parametric joint correction based on object vs reference position."""
+    dx = object_xyz[0] - reference_xyz[0]
+    dy = object_xyz[1] - reference_xyz[1]
+    dz = object_xyz[2] - reference_xyz[2]
+    adapted = dict(base_joints)
+    adapted["torso_lift_joint"] = adapted.get("torso_lift_joint", 0.2) + dz * 0.8
+    adapted["arm_1_joint"] = adapted.get("arm_1_joint", 1.3) + dy * 0.3
+    adapted["arm_2_joint"] = adapted.get("arm_2_joint", 0.1) + dx * 0.2
+    return clamp_joints(adapted)
+
+
 class MoveItIntentBridge(Node):
     """Subscribes to intent topic and executes multi-step sequences via MoveGroup
     and gripper FollowJointTrajectory actions."""
@@ -476,6 +554,19 @@ class MoveItIntentBridge(Node):
         else:
             self.get_logger().warn(f"Unknown intent: {data}")
 
+    def _get_adaptive_grasp_poses(self, base_pre: dict, base_grasp: dict):
+        """Query object pose from sim and return adapted (pre_grasp, grasp) joint dicts."""
+        obj_pos, obj_class = query_object_pose(timeout=2.0)
+        if obj_pos is not None:
+            self.get_logger().info(
+                f"Object '{obj_class}' at {[round(v,3) for v in obj_pos]}, adapting grasp pose"
+            )
+            adapted_pre = adapt_grasp_pose(base_pre, obj_pos)
+            adapted_grasp = adapt_grasp_pose(base_grasp, obj_pos)
+            return adapted_pre, adapted_grasp
+        self.get_logger().info("No object pose available, using default grasp pose")
+        return base_pre, base_grasp
+
     def _resolve_intent_sequence(self, intent: str):
         """Map intent to a sequence of steps. Each step is either:
         - ("move", joint_dict)   -- send MoveGroup goal
@@ -492,10 +583,12 @@ class MoveItIntentBridge(Node):
             return [("move", TIAGO_APPROACH_WORKZONE_JOINTS)]
 
         elif intent in ("plan_pick", "plan_pick_sink"):
+            pre, grasp = self._get_adaptive_grasp_poses(
+                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
             return [
                 ("gripper", GRIPPER_OPEN),
-                ("move", TIAGO_PRE_GRASP_JOINTS),
-                ("move", TIAGO_GRASP_JOINTS),
+                ("move", pre),
+                ("move", grasp),
                 ("gripper", GRIPPER_CLOSED),
                 ("move", TIAGO_LIFT_JOINTS),
                 ("move", TIAGO_PICK_SINK_JOINTS),
@@ -503,10 +596,12 @@ class MoveItIntentBridge(Node):
                 ("move", TIAGO_READY_JOINTS),
             ]
         elif intent == "plan_pick_fridge":
+            pre, grasp = self._get_adaptive_grasp_poses(
+                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
             return [
                 ("gripper", GRIPPER_OPEN),
-                ("move", TIAGO_PRE_GRASP_JOINTS),
-                ("move", TIAGO_GRASP_JOINTS),
+                ("move", pre),
+                ("move", grasp),
                 ("gripper", GRIPPER_CLOSED),
                 ("move", TIAGO_LIFT_JOINTS),
                 ("move", TIAGO_PICK_FRIDGE_JOINTS),
@@ -514,10 +609,12 @@ class MoveItIntentBridge(Node):
                 ("move", TIAGO_READY_JOINTS),
             ]
         elif intent == "plan_pick_dishwasher":
+            pre, grasp = self._get_adaptive_grasp_poses(
+                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
             return [
                 ("gripper", GRIPPER_OPEN),
-                ("move", TIAGO_PRE_GRASP_JOINTS),
-                ("move", TIAGO_GRASP_JOINTS),
+                ("move", pre),
+                ("move", grasp),
                 ("gripper", GRIPPER_CLOSED),
                 ("move", TIAGO_LIFT_JOINTS),
                 ("move", TIAGO_PICK_DISHWASHER_JOINTS),
@@ -564,10 +661,12 @@ class MoveItIntentBridge(Node):
         elif intent == "left_approach_workzone":
             return [("move_left", TIAGO_LEFT_APPROACH_WORKZONE_JOINTS)]
         elif intent == "left_plan_pick_sink":
+            pre, grasp = self._get_adaptive_grasp_poses(
+                TIAGO_LEFT_PRE_GRASP_JOINTS, TIAGO_LEFT_GRASP_JOINTS)
             return [
                 ("gripper", GRIPPER_OPEN),
-                ("move_left", TIAGO_LEFT_PRE_GRASP_JOINTS),
-                ("move_left", TIAGO_LEFT_GRASP_JOINTS),
+                ("move_left", pre),
+                ("move_left", grasp),
                 ("gripper", GRIPPER_CLOSED),
                 ("move_left", TIAGO_LEFT_LIFT_JOINTS),
                 ("move_left", TIAGO_LEFT_PICK_SINK_JOINTS),
@@ -583,11 +682,13 @@ class MoveItIntentBridge(Node):
 
         # Bimanual: right arm picks, left arm assists
         elif intent == "bimanual_pick_sink":
+            pre, grasp = self._get_adaptive_grasp_poses(
+                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
             return [
                 ("gripper", GRIPPER_OPEN),
                 ("move_left", TIAGO_LEFT_APPROACH_WORKZONE_JOINTS),
-                ("move", TIAGO_PRE_GRASP_JOINTS),
-                ("move", TIAGO_GRASP_JOINTS),
+                ("move", pre),
+                ("move", grasp),
                 ("gripper", GRIPPER_CLOSED),
                 ("move", TIAGO_LIFT_JOINTS),
                 ("move_left", TIAGO_LEFT_PRE_GRASP_JOINTS),
@@ -630,11 +731,13 @@ class MoveItIntentBridge(Node):
 
         # Combined navigation + manipulation
         elif intent == "nav_pick_place_table_to_sink":
+            pre, grasp = self._get_adaptive_grasp_poses(
+                TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
             return [
                 ("nav", (0.3, 0.0, 0.0, 2.0)),
                 ("gripper", GRIPPER_OPEN),
-                ("move", TIAGO_PRE_GRASP_JOINTS),
-                ("move", TIAGO_GRASP_JOINTS),
+                ("move", pre),
+                ("move", grasp),
                 ("gripper", GRIPPER_CLOSED),
                 ("move", TIAGO_LIFT_JOINTS),
                 ("move", TIAGO_READY_JOINTS),
@@ -661,9 +764,32 @@ class MoveItIntentBridge(Node):
         }
         return intent_map.get(intent)
 
+    _MAX_GRASP_RETRIES = 2
+    _GRASP_RETRY_DZ = -0.02
+
+    def _verify_grasp(self) -> bool:
+        """Check whether the gripper is holding an object via IPC."""
+        _time.sleep(0.5)
+        result = read_grasp_result()
+        if result is None:
+            self.get_logger().warn("Grasp result IPC unavailable, assuming success")
+            return True
+        gap = result.get("gripper_gap")
+        obj = result.get("object_in_gripper")
+        if obj:
+            self.get_logger().info(f"Grasp verified: holding '{obj}' (gap={gap})")
+            return True
+        if gap is not None and gap < _GRIPPER_GAP_EMPTY:
+            self.get_logger().warn(f"Empty grasp detected (gap={gap:.4f})")
+            return False
+        self.get_logger().info(f"Grasp check inconclusive (gap={gap}), assuming success")
+        return True
+
     def _execute_sequence(self, intent_name: str, steps: list):
         """Execute a multi-step sequence synchronously in a background thread."""
         self.get_logger().info(f"Starting sequence for '{intent_name}' ({len(steps)} steps)")
+        _last_grasp_move = None
+        _last_grasp_group = None
         try:
             for i, (action_type, value) in enumerate(steps):
                 self.get_logger().info(f"  Step {i+1}/{len(steps)}: {action_type}")
@@ -672,15 +798,41 @@ class MoveItIntentBridge(Node):
                     if not ok:
                         self.get_logger().error(f"  Step {i+1} failed, aborting sequence")
                         break
+                    _last_grasp_move = value
+                    _last_grasp_group = None
                 elif action_type == "move_left":
                     ok = self._send_goal_sync(value, group_override="arm_left_torso")
                     if not ok:
                         self.get_logger().error(f"  Step {i+1} (left arm) failed, aborting sequence")
                         break
+                    _last_grasp_move = value
+                    _last_grasp_group = "arm_left_torso"
                 elif action_type == "gripper":
                     ok = self._send_gripper_sync(value)
                     if not ok:
                         self.get_logger().warn(f"  Gripper step {i+1} failed, continuing")
+
+                    if value == GRIPPER_CLOSED and _last_grasp_move is not None:
+                        if not self._verify_grasp():
+                            retried = False
+                            for attempt in range(1, self._MAX_GRASP_RETRIES + 1):
+                                self.get_logger().info(
+                                    f"  Retry {attempt}/{self._MAX_GRASP_RETRIES}: "
+                                    f"offset dz={self._GRASP_RETRY_DZ * attempt:.3f}")
+                                self._send_gripper_sync(GRIPPER_OPEN)
+                                _time.sleep(0.3)
+                                retry_joints = dict(_last_grasp_move)
+                                if "torso_lift_joint" in retry_joints:
+                                    retry_joints["torso_lift_joint"] += self._GRASP_RETRY_DZ * attempt
+                                retry_joints = clamp_joints(retry_joints)
+                                self._send_goal_sync(retry_joints, group_override=_last_grasp_group)
+                                self._send_gripper_sync(GRIPPER_CLOSED)
+                                if self._verify_grasp():
+                                    self.get_logger().info(f"  Retry {attempt} succeeded!")
+                                    retried = True
+                                    break
+                            if not retried:
+                                self.get_logger().warn("  All grasp retries failed, continuing sequence")
                 elif action_type == "nav":
                     self._send_nav_sync(value)
                 _time.sleep(0.5)
