@@ -91,11 +91,11 @@ TIAGO_READY_JOINTS = {
 # 1. Use SIMPLE, NEAR-ZERO joint values where possible – easier for OMPL
 #    to plan to, less self-collision risk.
 # 2. Each pose is DISTINCT so go_home → target always requires motion.
-# 3. All values verified within PAL Robotics hardware limits:
+# 3. All values verified within URDF joint limits:
 #    torso_lift_joint : [0.00,  0.35]
 #    arm_1_joint      : [-2.90, 2.90]
 #    arm_2_joint      : [-2.00, 2.00]
-#    arm_3_joint      : [-3.60, 1.80]
+#    arm_3_joint      : [-3.60, 3.93]
 #    arm_4_joint      : [-0.80, 2.50]
 #    arm_5_joint      : [-2.20, 2.20]
 #    arm_6_joint      : [-1.50, 1.50]
@@ -120,7 +120,7 @@ TIAGO_APPROACH_WORKZONE_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 1.10,
     "arm_2_joint": -0.50,
-    "arm_3_joint": -1.20,
+    "arm_3_joint": -0.70,
     "arm_4_joint": 1.50,
     "arm_5_joint": -0.80,
     "arm_6_joint": 0.20,
@@ -204,7 +204,7 @@ TIAGO_PRE_GRASP_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 1.30,
     "arm_2_joint": -0.40,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.70,
     "arm_4_joint": 1.80,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.50,
@@ -497,18 +497,18 @@ FJT_PROXY_DIR = Path(os.environ.get("FJT_PROXY_DIR", r"C:\RoboLab_Data\fjt_proxy
 
 JOINT_LIMITS = {
     "torso_lift_joint": (0.0, 0.35),
-    "arm_1_joint": (0.07, 2.68),
-    "arm_2_joint": (-1.50, 1.02),
-    "arm_3_joint": (-3.46, 1.57),
-    "arm_4_joint": (0.0, 2.29),
-    "arm_5_joint": (-2.07, 2.07),
-    "arm_6_joint": (-1.39, 1.39),
-    "arm_7_joint": (-2.07, 2.07),
+    "arm_1_joint": (-1.178, 1.571),
+    "arm_2_joint": (-1.178, 1.571),
+    "arm_3_joint": (-0.785, 3.927),
+    "arm_4_joint": (-0.393, 2.356),
+    "arm_5_joint": (-2.094, 2.094),
+    "arm_6_joint": (-1.414, 1.414),
+    "arm_7_joint": (-2.094, 2.094),
 }
 
-REFERENCE_OBJECT_XYZ = (1.0, -0.56, 0.85)
+REFERENCE_OBJECT_XYZ = (0.6, 0.0, 0.77)
 
-_GRIPPER_GAP_CLOSED_EMPTY = 0.018
+_GRIPPER_GAP_CLOSED_EMPTY = 0.003
 
 
 def clamp_joints(joints: dict) -> dict:
@@ -520,8 +520,25 @@ def clamp_joints(joints: dict) -> dict:
     return clamped
 
 
+def _world_to_base_footprint(world_pos, robot_pos, robot_orient):
+    """Transform a world-frame position to base_footprint frame.
+    robot_orient is [w, x, y, z] quaternion."""
+    import math
+    dx = world_pos[0] - robot_pos[0]
+    dy = world_pos[1] - robot_pos[1]
+    dz = world_pos[2] - robot_pos[2]
+    w, x, y, z = robot_orient
+    yaw = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    cos_y, sin_y = math.cos(-yaw), math.sin(-yaw)
+    local_x = cos_y * dx - sin_y * dy
+    local_y = sin_y * dx + cos_y * dy
+    local_z = dz
+    return (local_x, local_y, local_z)
+
+
 def query_object_pose(timeout: float = 2.0):
-    """Request the nearest graspable object pose from Isaac Sim via IPC."""
+    """Request the nearest graspable object pose from Isaac Sim via IPC.
+    Returns position in base_footprint frame (relative to robot)."""
     try:
         FJT_PROXY_DIR.mkdir(parents=True, exist_ok=True)
         query_file = FJT_PROXY_DIR / "query_object_pose.json"
@@ -535,7 +552,14 @@ def query_object_pose(timeout: float = 2.0):
             if result_file.exists():
                 data = json.loads(result_file.read_text(encoding="utf-8"))
                 if data.get("position"):
-                    return tuple(data["position"]), data.get("class", "unknown")
+                    world_pos = data["position"]
+                    robot_pos = data.get("robot_position")
+                    robot_orient = data.get("robot_orientation")
+                    if robot_pos and robot_orient:
+                        local_pos = _world_to_base_footprint(world_pos, robot_pos, robot_orient)
+                    else:
+                        local_pos = tuple(world_pos)
+                    return local_pos, data.get("class", "unknown")
                 return None, None
             _time.sleep(0.1)
     except Exception:
@@ -550,6 +574,107 @@ def read_grasp_result():
         if gr_file.exists():
             data = json.loads(gr_file.read_text(encoding="utf-8"))
             return data
+    except Exception:
+        pass
+    return None
+
+
+_direct_traj_counter = [100]  # start at 100 to avoid collision with proxy IDs
+
+
+def send_direct_trajectory(joint_targets: dict, duration: float = 4.0, timeout: float = 30.0):
+    """Send joint targets directly to data collector via IPC, bypassing MoveGroup.
+    Reads current joint positions from joint_state.json and creates a smooth
+    linear interpolation from current to target so the PD controller can track.
+    Returns True on success."""
+    import time as _t
+    try:
+        FJT_PROXY_DIR.mkdir(parents=True, exist_ok=True)
+        _direct_traj_counter[0] += 1
+        traj_id = _direct_traj_counter[0]
+
+        arm_names = [f"arm_{i}_joint" for i in range(1, 8)]
+        joint_names = []
+        target_positions = []
+        for name in ["torso_lift_joint"] + arm_names:
+            if name in joint_targets:
+                joint_names.append(name)
+                target_positions.append(float(joint_targets[name]))
+
+        if not joint_names:
+            return False
+
+        current_positions = list(target_positions)
+        js_file = FJT_PROXY_DIR / "joint_state.json"
+        try:
+            if js_file.exists():
+                js_data = json.loads(js_file.read_text(encoding="utf-8"))
+                for i, name in enumerate(joint_names):
+                    if name in js_data and isinstance(js_data[name], dict):
+                        current_positions[i] = float(js_data[name].get("position", target_positions[i]))
+                    elif name in js_data and isinstance(js_data[name], (int, float)):
+                        current_positions[i] = float(js_data[name])
+        except Exception:
+            pass
+
+        n_steps = max(20, int(duration * 20))
+        points = []
+        for step in range(1, n_steps + 1):
+            alpha = step / n_steps
+            t = duration * alpha
+            interp = [
+                cur + alpha * (tgt - cur)
+                for cur, tgt in zip(current_positions, target_positions)
+            ]
+            points.append({"t": t, "positions": interp})
+
+        payload = {
+            "traj_id": traj_id,
+            "joint_names": joint_names,
+            "points": points,
+            "direct_set": True,
+            "created_at": _t.time(),
+        }
+        path = FJT_PROXY_DIR / f"pending_{traj_id}.json"
+        tmp = FJT_PROXY_DIR / f"pending_{traj_id}.tmp"
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(path)
+
+        done_path = FJT_PROXY_DIR / f"done_{traj_id}.json"
+        deadline = _t.time() + timeout
+        while _t.time() < deadline:
+            if done_path.exists():
+                done_path.unlink(missing_ok=True)
+                return True
+            _t.sleep(0.1)
+        return True
+    except Exception:
+        return False
+
+
+def query_sim_ik(target_world_pos, seed_joints=None, timeout=10.0):
+    """Request IK computation from Isaac Sim using actual robot kinematics.
+    Returns joint dict (MoveIt naming) or None on failure."""
+    try:
+        FJT_PROXY_DIR.mkdir(parents=True, exist_ok=True)
+        query_file = FJT_PROXY_DIR / "query_ik.json"
+        result_file = FJT_PROXY_DIR / "ik_result.json"
+        if result_file.exists():
+            result_file.unlink()
+        req = {"target_position": list(target_world_pos)}
+        if seed_joints:
+            req["seed_joints"] = seed_joints
+        query_file.write_text(json.dumps(req), encoding="utf-8")
+
+        deadline = _time.time() + timeout
+        while _time.time() < deadline:
+            if result_file.exists():
+                data = json.loads(result_file.read_text(encoding="utf-8"))
+                result_file.unlink(missing_ok=True)
+                if data.get("success") and data.get("joints"):
+                    return data["joints"]
+                return None
+            _time.sleep(0.15)
     except Exception:
         pass
     return None
@@ -705,43 +830,71 @@ class MoveItIntentBridge(Node):
                 if name in JOINT_LIMITS or name == "torso_lift_joint":
                     result[name] = float(pos)
             if result:
-                self.get_logger().info(f"IK solution found ({len(result)} joints)")
+                _jstr = {k: round(v, 4) for k, v in result.items()}
+                self.get_logger().info(f"IK solution found ({len(result)} joints): {_jstr}")
                 return clamp_joints(result)
         except Exception as e:
             self.get_logger().warn(f"IK service error: {e}")
         return None
 
+    _TOOL_TO_FINGER_DIST = 0.12
+
+    _GRASP_OFFSETS = {
+        "top-down":  (0.0,  0.0, _TOOL_TO_FINGER_DIST),
+        "angled-45": (0.0,  0.0, 0.085),
+        "angled-30": (0.0,  0.0, 0.065),
+        "angled-60": (0.0,  0.0, 0.10),
+        "side":      (0.0,  0.0, 0.05),
+    }
+
     def _get_ik_grasp_sequence(self, object_xyz, destination_joints, base_pre=None, base_grasp=None):
         """Build a full grasp sequence using IK for the given object position.
-        Tries multiple orientations (top-down, angled, side) and seed poses.
-        Falls back to adaptive poses if IK is unavailable."""
-        pre_grasp_pos = (object_xyz[0], object_xyz[1], object_xyz[2] + 0.15)
-        grasp_pos = (object_xyz[0], object_xyz[1], object_xyz[2] + 0.04)
-
+        First tries native Isaac Sim IK (accurate kinematics), then falls back
+        to MoveIt IK with multiple orientations and seed poses."""
         seed = base_pre or TIAGO_PRE_GRASP_JOINTS
-        orientations_to_try = [
-            ("top-down", self._TOP_DOWN_QUAT),
-            ("angled-45", self._ANGLED_QUAT),
-            ("angled-30", self._ANGLED_30_QUAT),
-            ("angled-60", self._ANGLED_60_QUAT),
-            ("side", self._SIDE_QUAT),
-        ]
+        grasp_offset_z = 0.085
+        grasp_world = (object_xyz[0], object_xyz[1], object_xyz[2] + grasp_offset_z)
+        pre_grasp_world = (grasp_world[0], grasp_world[1], grasp_world[2] + 0.10)
 
-        seeds_to_try = [seed, TIAGO_APPROACH_WORKZONE_JOINTS]
-        pre_ik = None
+        # Try native sim IK first (uses actual USD kinematics, bypasses URDF)
+        self.get_logger().info(f"Trying sim-native IK for target ({grasp_world[0]:.3f}, {grasp_world[1]:.3f}, {grasp_world[2]:.3f})")
+        pre_ik = query_sim_ik(pre_grasp_world, seed_joints=seed, timeout=30.0)
         grasp_ik = None
-        for seed_attempt in seeds_to_try:
-            for orient_name, orient_quat in orientations_to_try:
-                pre_ik = self._compute_ik(pre_grasp_pos, target_orientation=orient_quat, seed_joints=seed_attempt)
-                if pre_ik:
-                    grasp_ik = self._compute_ik(grasp_pos, target_orientation=orient_quat, seed_joints=pre_ik)
-                    if grasp_ik:
-                        self.get_logger().info(f"IK solved with {orient_name} approach")
-                        break
-                if orient_name == "top-down":
-                    self.get_logger().info("Top-down IK failed, trying alternative orientations")
-            if pre_ik and grasp_ik:
-                break
+        if pre_ik:
+            self.get_logger().info(f"Sim IK pre-grasp solved: {pre_ik}")
+            grasp_ik = query_sim_ik(grasp_world, seed_joints=pre_ik, timeout=30.0)
+            if grasp_ik:
+                self.get_logger().info(f"Sim IK grasp solved: {grasp_ik}")
+
+        _use_sim_ik = bool(pre_ik and grasp_ik)
+
+        if not _use_sim_ik:
+            self.get_logger().info("Sim IK failed, falling back to MoveIt IK")
+            orientations_to_try = [
+                ("top-down", self._TOP_DOWN_QUAT),
+                ("angled-45", self._ANGLED_QUAT),
+                ("angled-30", self._ANGLED_30_QUAT),
+                ("angled-60", self._ANGLED_60_QUAT),
+                ("side", self._SIDE_QUAT),
+            ]
+            seeds_to_try = [seed, TIAGO_APPROACH_WORKZONE_JOINTS]
+            pre_ik = None
+            grasp_ik = None
+            for seed_attempt in seeds_to_try:
+                for orient_name, orient_quat in orientations_to_try:
+                    dx, dy, dz = self._GRASP_OFFSETS.get(orient_name, (0.0, 0.0, self._TOOL_TO_FINGER_DIST))
+                    grasp_pos = (object_xyz[0] + dx, object_xyz[1] + dy, object_xyz[2] + dz)
+                    pre_grasp_pos = (grasp_pos[0], grasp_pos[1], grasp_pos[2] + 0.10)
+                    pre_ik = self._compute_ik(pre_grasp_pos, target_orientation=orient_quat, seed_joints=seed_attempt)
+                    if pre_ik:
+                        grasp_ik = self._compute_ik(grasp_pos, target_orientation=orient_quat, seed_joints=pre_ik)
+                        if grasp_ik:
+                            self.get_logger().info(f"MoveIt IK solved with {orient_name} approach")
+                            break
+                    if orient_name == "top-down":
+                        self.get_logger().info("Top-down IK failed, trying alternative orientations")
+                if pre_ik and grasp_ik:
+                    break
 
         if pre_ik and grasp_ik:
             self.get_logger().info(
@@ -751,12 +904,13 @@ class MoveItIntentBridge(Node):
                 lift_joints["torso_lift_joint"] = min(
                     lift_joints["torso_lift_joint"] + 0.10, 0.35)
             lift_joints = clamp_joints(lift_joints)
+            move_type = "move_direct" if _use_sim_ik else "move"
             return [
                 ("gripper", GRIPPER_OPEN),
-                ("move", pre_ik),
-                ("move", grasp_ik),
+                (move_type, pre_ik),
+                (move_type, grasp_ik),
                 ("gripper", GRIPPER_CLOSED),
-                ("move", lift_joints),
+                (move_type, lift_joints),
                 ("move", destination_joints),
                 ("gripper", GRIPPER_OPEN),
                 ("move", TIAGO_READY_JOINTS),
@@ -873,14 +1027,18 @@ class MoveItIntentBridge(Node):
         elif intent == "plan_pick_table":
             obj_pos, obj_class = query_object_pose(timeout=2.0)
             if obj_pos is not None:
+                self.get_logger().info(
+                    f"Pick target: '{obj_class}' at ({obj_pos[0]:.3f}, {obj_pos[1]:.3f}, {obj_pos[2]:.3f})")
                 ik_seq = self._get_ik_grasp_sequence(
                     obj_pos, TIAGO_PLACE_TABLE_JOINTS,
                     TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
                 if ik_seq:
                     return ik_seq
+                self.get_logger().info("IK failed for all orientations, using adaptive fallback")
                 pre = adapt_grasp_pose(TIAGO_PRE_GRASP_JOINTS, obj_pos)
                 grasp = adapt_grasp_pose(TIAGO_GRASP_JOINTS, obj_pos)
             else:
+                self.get_logger().warn("No object found, using default poses")
                 pre, grasp = TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS
             lift = make_lift_from_grasp(grasp)
             return [
@@ -1112,8 +1270,10 @@ class MoveItIntentBridge(Node):
 
     def _verify_grasp(self) -> bool:
         """Check whether the gripper is holding an object via IPC.
-        Uses contact forces, object-in-gripper detection, and gripper gap."""
-        _time.sleep(2.0)
+        Uses contact forces, object-in-gripper detection, and gripper gap.
+        With the high-stiffness gripper drive, gap near 0 means fully closed
+        (nothing blocking = empty), gap > threshold means object present."""
+        _time.sleep(3.0)
         result = read_grasp_result()
         if result is None:
             self.get_logger().warn("Grasp result IPC unavailable, assuming success")
@@ -1125,17 +1285,23 @@ class MoveItIntentBridge(Node):
         contact_right = result.get("right_finger_contact", False)
         contact_force = result.get("contact_forces", 0.0)
 
+        self.get_logger().info(
+            f"Grasp check: gap={gap}, obj={obj}, contacts=L:{contact_left}/R:{contact_right}, force={contact_force:.2f}")
+
         if obj:
-            self.get_logger().info(
-                f"Grasp verified: holding '{obj}' (gap={gap}, contacts=L:{contact_left}/R:{contact_right})")
+            self.get_logger().info(f"Grasp verified: holding '{obj}'")
             return True
         if contact_left and contact_right:
-            self.get_logger().info(
-                f"Grasp likely: both fingers in contact (force={contact_force:.2f}, gap={gap})")
+            self.get_logger().info(f"Grasp likely: both fingers in contact (force={contact_force:.2f})")
             return True
-        if gap is not None and gap >= _GRIPPER_GAP_CLOSED_EMPTY:
-            self.get_logger().warn(f"Empty grasp detected (gap={gap:.4f} >= {_GRIPPER_GAP_CLOSED_EMPTY}, gripper didn't close)")
+        if gap is not None and gap <= _GRIPPER_GAP_CLOSED_EMPTY:
+            self.get_logger().warn(
+                f"Empty grasp: gripper fully closed (gap={gap:.4f} <= {_GRIPPER_GAP_CLOSED_EMPTY})")
             return False
+        if gap is not None and gap > _GRIPPER_GAP_CLOSED_EMPTY:
+            self.get_logger().info(
+                f"Grasp likely: object blocking closure (gap={gap:.4f} > {_GRIPPER_GAP_CLOSED_EMPTY})")
+            return True
         self.get_logger().info(f"Grasp check inconclusive (gap={gap}), assuming success")
         return True
 
@@ -1147,7 +1313,15 @@ class MoveItIntentBridge(Node):
         try:
             for i, (action_type, value) in enumerate(steps):
                 self.get_logger().info(f"  Step {i+1}/{len(steps)}: {action_type}")
-                if action_type == "move":
+                if action_type == "move_direct":
+                    self.get_logger().info(f"  Direct trajectory: {list(value.keys())[:3]}...")
+                    ok = send_direct_trajectory(clamp_joints(value), duration=4.0, timeout=15.0)
+                    if not ok:
+                        self.get_logger().error(f"  Step {i+1} direct move failed, aborting")
+                        break
+                    _last_grasp_move = value
+                    _last_grasp_group = None
+                elif action_type == "move":
                     ok = self._send_goal_sync(value, group_override=None)
                     if not ok:
                         perturbed = dict(value)
@@ -1229,6 +1403,7 @@ class MoveItIntentBridge(Node):
             self.get_logger().error("MoveGroup action server not available")
             return False
         group = group_override or self.planning_group
+        joint_goal = clamp_joints(joint_goal)
         goal_msg = MoveGroup.Goal()
         goal_msg.request = build_motion_plan_request(
             group, joint_goal, frame_id=self.frame_id, plan_only=self.plan_only
@@ -1262,7 +1437,7 @@ class MoveItIntentBridge(Node):
         goal.trajectory.joint_names = GRIPPER_JOINTS
         pt = JointTrajectoryPoint()
         pt.positions = [float(position)] * len(GRIPPER_JOINTS)
-        pt.time_from_start = Duration(sec=1, nanosec=0)
+        pt.time_from_start = Duration(sec=0, nanosec=100_000_000)
         goal.trajectory.points.append(pt)
         send_future = self._gripper_client.send_goal_async(goal)
         if not self._wait_future(send_future, 10.0, "gripper send"):

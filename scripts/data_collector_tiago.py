@@ -109,13 +109,13 @@ def parse_args():
     parser.add_argument(
         "--external-camera-pos",
         type=str,
-        default="2.5,-2.0,2.0",
-        help="External camera position as x,y,z (default: 2.5,-2.0,2.0).",
+        default="0.8,1.8,1.6",
+        help="External camera position as x,y,z (default: 0.8,1.8,1.6).",
     )
     parser.add_argument(
         "--external-camera-target",
         type=str,
-        default="0.0,0.0,0.8",
+        default="1.1,0.0,0.8",
         help="External camera look-at target as x,y,z (default: 0.0,0.0,0.8).",
     )
     parser.add_argument(
@@ -778,12 +778,12 @@ try:
     # Each zone is (x_min, x_max, y_min, y_max). Objects are scattered
     # within these bounds and raycasted downward to find the table surface.
     _SCENE_SPAWN_ZONES = {
-        "Kitchen":        [(0.4, 1.2, -1.0, -0.4)],
-        "L_Kitchen":      [(0.4, 1.2, -1.0, -0.4)],
-        "Modern_Kitchen": [(0.4, 1.2, -1.0, -0.4)],
-        "Small_House":    [(0.3, 1.0, -1.2, -0.5)],
+        "Kitchen":        [(1.1, 1.5, -0.2, 0.2)],
+        "L_Kitchen":      [(1.1, 1.5, -0.2, 0.2)],
+        "Modern_Kitchen": [(1.1, 1.5, -0.2, 0.2)],
+        "Small_House":    [(1.1, 1.5, -0.2, 0.2)],
     }
-    _DEFAULT_SPAWN_ZONE = [(0.4, 1.2, -1.0, -0.4)]
+    _DEFAULT_SPAWN_ZONE = [(1.1, 1.5, -0.2, 0.2)]
 
     def _get_spawn_zones():
         """Pick spawn zones based on the scene USD path."""
@@ -891,7 +891,7 @@ try:
     # Stabilize known problematic Tiago rigid-body mass/inertia values that can
     # cause immediate toppling in PhysX.
     mass_overrides = {
-        f"{tiago_prim_path}/tiago_dual_functional/base_footprint": (45.0, Gf.Vec3f(2.5, 2.5, 2.5)),
+        f"{tiago_prim_path}/tiago_dual_functional/base_footprint": (200.0, Gf.Vec3f(5.0, 5.0, 2.0)),
         f"{tiago_prim_path}/tiago_dual_functional/gemini2_link": (0.5, Gf.Vec3f(0.01, 0.01, 0.01)),
         f"{tiago_prim_path}/tiago_dual_functional/wheel_front_left_link/mecanum_wheel_fl/wheel_link": (
             1.0,
@@ -989,7 +989,7 @@ try:
         camera_parent_prim = head_link
         print(f"[RoboLab] VR head camera mounted at {head_link}")
     elif camera_parent_prim == tiago_prim_path:
-        head_camera = rep.create.camera(position=(3.0, -3.0, 2.0), look_at=(0.0, 0.0, 1.0))
+        head_camera = rep.create.camera(position=(2.5, -1.5, 2.0), look_at=(1.1, 0.0, 0.8))
         camera_parent_prim = "/World"
     else:
         head_camera = rep.create.camera(position=(0, 0, 1.35), look_at=(1, 0, 1.15), parent=camera_parent_prim)
@@ -1126,27 +1126,27 @@ try:
     # Pin the articulation root BEFORE world.reset(). If --mobile-base is set,
     # the base is left unfixed so the robot can navigate.
     _use_fixed_base = not getattr(args, "mobile_base", False)
-    try:
+    if _use_fixed_base:
         from pxr import Sdf
         _art_prim = stage.GetPrimAtPath(tiago_articulation_path)
         if _art_prim.IsValid():
-            _fb_attr = _art_prim.GetAttribute("physxArticulation:fixedBase")
-            if _fb_attr and _fb_attr.IsValid():
-                _fb_attr.Set(_use_fixed_base)
-            else:
-                _art_prim.CreateAttribute("physxArticulation:fixedBase", Sdf.ValueTypeNames.Bool).Set(_use_fixed_base)
-            print(f"[RoboLab] Set articulation fixedBase={_use_fixed_base} at {tiago_articulation_path}")
-    except Exception as err:
-        print(f"[RoboLab] WARN: failed to set fixedBase: {err}")
+            _art_prim.CreateAttribute(
+                "physxArticulation:fixedBase", Sdf.ValueTypeNames.Bool).Set(True)
+            print(f"[RoboLab] Set physxArticulation:fixedBase=True at {tiago_articulation_path}")
+            _art_prim.CreateAttribute(
+                "physxArticulation:enabledSelfCollisions", Sdf.ValueTypeNames.Bool).Set(False)
+            print(f"[RoboLab] Disabled self-collisions on articulation")
 
     # Force a stable startup pose BEFORE world.reset().
+    # Position robot next to the table, facing it. Table in Small_House is at ~(1.5, 0.0).
+    # Robot at (0.7, 0.0) faces +X, so it's 0.8m from the table — within arm reach.
     try:
         tiago_xform = XFormPrim(prim_path=tiago_prim_path, name="tiago_root_pose")
         tiago_xform.set_world_pose(
-            position=np.array([1.0, -1.0, 0.08], dtype=np.float32),
+            position=np.array([0.8, 0.0, 0.08], dtype=np.float32),
             orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
         )
-        print("[RoboLab] Applied startup pose: pos=(1.0, -1.0, 0.08) orientation=identity")
+        print("[RoboLab] Applied startup pose: pos=(0.8, 0.0, 0.08) facing +X toward table")
     except Exception as err:
         print(f"[RoboLab] WARN: failed to apply startup pose stabilization: {err}")
 
@@ -1154,10 +1154,23 @@ try:
     simulation_app.update()
 
     # Set initial joint position targets via ArticulationAction before warm-up.
-    # This makes PD drives actively hold the robot in its startup configuration.
+    # Both arms go to a neutral "arms down" pose to avoid the default tucked/ear-scratch pose.
+    _NEUTRAL_ARM_POSE = {
+        "arm_right_1_joint": 0.20, "arm_right_2_joint": -0.35,
+        "arm_right_3_joint": -0.20, "arm_right_4_joint": 1.90,
+        "arm_right_5_joint": -1.57, "arm_right_6_joint": 1.37,
+        "arm_right_7_joint": 0.0,
+        "arm_left_1_joint": 0.20, "arm_left_2_joint": -0.35,
+        "arm_left_3_joint": -0.20, "arm_left_4_joint": 1.90,
+        "arm_left_5_joint": -1.57, "arm_left_6_joint": 1.37,
+        "arm_left_7_joint": 0.0,
+        "torso_lift_joint": 0.15,
+        "head_1_joint": 0.0, "head_2_joint": -0.3,
+    }
     if tiago_articulation:
         try:
             from omni.isaac.core.utils.types import ArticulationAction
+            _dof_names_init = resolve_dof_names(tiago_articulation)
             _get_pos = getattr(tiago_articulation, "get_joint_positions", None) or getattr(
                 tiago_articulation, "get_dof_positions", None
             )
@@ -1165,11 +1178,14 @@ try:
                 tiago_articulation, "set_dof_velocities", None
             )
             _cur_pos = _as_list(_get_pos()) if _get_pos else []
-            if _cur_pos:
+            if _cur_pos and _dof_names_init:
+                for _jn, _jv in _NEUTRAL_ARM_POSE.items():
+                    if _jn in _dof_names_init:
+                        _cur_pos[_dof_names_init.index(_jn)] = _jv
                 tiago_articulation.apply_action(
                     ArticulationAction(joint_positions=np.array(_cur_pos, dtype=np.float32))
                 )
-                print(f"[RoboLab] Set {len(_cur_pos)} initial joint position targets")
+                print(f"[RoboLab] Set {len(_cur_pos)} initial joint targets (both arms neutral)")
             if _set_vel and _cur_pos:
                 _set_vel([0.0] * len(_cur_pos))
                 print(f"[RoboLab] Zeroed {len(_cur_pos)} initial joint velocities")
@@ -1244,36 +1260,36 @@ try:
     # to prevent oscillation and overshooting during trajectory playback.
     if tiago_articulation:
         _DRIVE_CONFIG = {
-            "torso_lift_joint": (5000.0, 1000.0),
-            "arm_1_joint": (2000.0, 400.0),
-            "arm_2_joint": (2000.0, 400.0),
-            "arm_3_joint": (2000.0, 400.0),
-            "arm_4_joint": (2000.0, 400.0),
-            "arm_5_joint": (1000.0, 200.0),
-            "arm_6_joint": (1000.0, 200.0),
-            "arm_7_joint": (1000.0, 200.0),
-            "arm_right_1_joint": (2000.0, 400.0),
-            "arm_right_2_joint": (2000.0, 400.0),
-            "arm_right_3_joint": (2000.0, 400.0),
-            "arm_right_4_joint": (2000.0, 400.0),
-            "arm_right_5_joint": (1000.0, 200.0),
-            "arm_right_6_joint": (1000.0, 200.0),
-            "arm_right_7_joint": (1000.0, 200.0),
-            "arm_left_1_joint": (2000.0, 400.0),
-            "arm_left_2_joint": (2000.0, 400.0),
-            "arm_left_3_joint": (2000.0, 400.0),
-            "arm_left_4_joint": (2000.0, 400.0),
-            "arm_left_5_joint": (1000.0, 200.0),
-            "arm_left_6_joint": (1000.0, 200.0),
-            "arm_left_7_joint": (1000.0, 200.0),
-            "head_1_joint": (500.0, 100.0),
-            "head_2_joint": (500.0, 100.0),
-            "gripper_right_left_finger_joint": (5000.0, 800.0),
-            "gripper_right_right_finger_joint": (5000.0, 800.0),
-            "gripper_left_left_finger_joint": (5000.0, 800.0),
-            "gripper_left_right_finger_joint": (5000.0, 800.0),
+            "torso_lift_joint": (2000.0, 500.0),
+            "arm_1_joint": (800.0, 80.0),
+            "arm_2_joint": (800.0, 80.0),
+            "arm_3_joint": (800.0, 80.0),
+            "arm_4_joint": (800.0, 80.0),
+            "arm_5_joint": (500.0, 60.0),
+            "arm_6_joint": (500.0, 60.0),
+            "arm_7_joint": (500.0, 60.0),
+            "arm_right_1_joint": (800.0, 80.0),
+            "arm_right_2_joint": (800.0, 80.0),
+            "arm_right_3_joint": (800.0, 80.0),
+            "arm_right_4_joint": (800.0, 80.0),
+            "arm_right_5_joint": (500.0, 60.0),
+            "arm_right_6_joint": (500.0, 60.0),
+            "arm_right_7_joint": (500.0, 60.0),
+            "arm_left_1_joint": (800.0, 80.0),
+            "arm_left_2_joint": (800.0, 80.0),
+            "arm_left_3_joint": (800.0, 80.0),
+            "arm_left_4_joint": (800.0, 80.0),
+            "arm_left_5_joint": (500.0, 60.0),
+            "arm_left_6_joint": (500.0, 60.0),
+            "arm_left_7_joint": (500.0, 60.0),
+            "head_1_joint": (300.0, 80.0),
+            "head_2_joint": (300.0, 80.0),
+            "gripper_right_left_finger_joint": (10000.0, 100.0),
+            "gripper_right_right_finger_joint": (10000.0, 100.0),
+            "gripper_left_left_finger_joint": (10000.0, 100.0),
+            "gripper_left_right_finger_joint": (10000.0, 100.0),
         }
-        _DEFAULT_DRIVE = (1000.0, 200.0)
+        _DEFAULT_DRIVE = (500.0, 150.0)
         _drive_count = 0
         _stage_d = stage_utils.get_current_stage()
         for _jp in _stage_d.Traverse():
@@ -1287,10 +1303,13 @@ try:
             _stiff, _damp = _DRIVE_CONFIG.get(_jname, _DEFAULT_DRIVE)
             _drive_type = "angular" if _rev else "linear"
             _drive_api = UsdPhysics.DriveAPI.Apply(_jp, _drive_type)
-            _drive_api.CreateTypeAttr("force")
+            _is_gripper = "gripper" in _jname
+            _is_arm = "arm" in _jname and not _is_gripper
+            _drive_api.CreateTypeAttr("acceleration")
             _drive_api.CreateStiffnessAttr().Set(_stiff)
             _drive_api.CreateDampingAttr().Set(_damp)
-            _drive_api.CreateMaxForceAttr().Set(1000.0)
+            _max_f = 5000.0 if _is_arm else (500.0 if _is_gripper else 500.0)
+            _drive_api.CreateMaxForceAttr().Set(_max_f)
             _drive_count += 1
         print(f"[RoboLab] Configured drives on {_drive_count} joints (stiffness+damping+maxForce)")
 
@@ -1369,6 +1388,41 @@ try:
         except Exception as _re:
             print(f"[RoboLab] WARN: raycast placement failed: {_re}")
 
+    # Post-warmup object position fix: ensure objects are on the table, not floating or on the floor.
+    # Run multiple check-fix-settle cycles to handle objects that roll off.
+    if _spawned_objects:
+        _total_fixed = 0
+        for _fix_round in range(3):
+            _fixed_count = 0
+            for _obj_path, _obj_class in _spawned_objects:
+                try:
+                    _oxf = XFormPrim(_obj_path)
+                    _opos, _ = _oxf.get_world_pose()
+                    if _opos is None:
+                        continue
+                    _oz = float(_opos[2])
+                    if _oz < 0.5 or _oz > 1.2:
+                        _zones = _get_spawn_zones()
+                        _zone = _zones[0]
+                        _cx = (_zone[0] + _zone[1]) / 2.0
+                        _cy = (_zone[2] + _zone[3]) / 2.0
+                        _oxf.set_world_pose(
+                            position=np.array([_cx + _rng.uniform(-0.1, 0.1),
+                                               _cy + _rng.uniform(-0.1, 0.1), 0.85],
+                                              dtype=np.float32),
+                            orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32))
+                        _fixed_count += 1
+                except Exception:
+                    pass
+            _total_fixed += _fixed_count
+            if _fixed_count:
+                for _ in range(80):
+                    world.step(render=False)
+            else:
+                break
+        if _total_fixed:
+            print(f"[RoboLab] Fixed {_total_fixed} objects with bad Z over {_fix_round+1} rounds")
+
     # Gripper startup diagnostic: verify the gripper responds to position commands.
     _diag_dof_names = resolve_dof_names(tiago_articulation) if tiago_articulation else []
     if tiago_articulation and _diag_dof_names:
@@ -1415,8 +1469,8 @@ try:
     _contact_sensor_left = None
     _contact_sensor_right = None
     _contact_sensor_interface = None
-    _gripper_left_prim_path = None
-    _gripper_right_prim_path = None
+    _gripper_finger_left_path = None
+    _gripper_finger_right_path = None
     if tiago_articulation:
         try:
             from pxr import PhysxSchema
@@ -1437,16 +1491,16 @@ try:
                         return _pn, _p
                 return None, None
 
-            _gripper_left_prim_path, _gl_prim = _find_gripper_link("gripper_left_link")
-            _gripper_right_prim_path, _gr_prim = _find_gripper_link("gripper_right_link")
+            _gripper_finger_left_path, _gfl_prim = _find_gripper_link("gripper_right_left_finger_link")
+            _gripper_finger_right_path, _gfr_prim = _find_gripper_link("gripper_right_right_finger_link")
 
-            if _gripper_left_prim_path:
-                print(f"[RoboLab] Found gripper_left_link: {_gripper_left_prim_path}")
-            if _gripper_right_prim_path:
-                print(f"[RoboLab] Found gripper_right_link: {_gripper_right_prim_path}")
+            if _gripper_finger_left_path:
+                print(f"[RoboLab] Found right-arm left finger: {_gripper_finger_left_path}")
+            if _gripper_finger_right_path:
+                print(f"[RoboLab] Found right-arm right finger: {_gripper_finger_right_path}")
 
-            if _gl_prim is not None and _gr_prim is not None:
-                for _fp, _fn in [(_gripper_left_prim_path, "left"), (_gripper_right_prim_path, "right")]:
+            if _gfl_prim is not None and _gfr_prim is not None:
+                for _fp, _fn in [(_gripper_finger_left_path, "left_finger"), (_gripper_finger_right_path, "right_finger")]:
                     _fp_prim = stage.GetPrimAtPath(_fp)
                     if not _fp_prim.HasAPI(PhysxSchema.PhysxContactReportAPI):
                         PhysxSchema.PhysxContactReportAPI.Apply(_fp_prim)
@@ -1458,7 +1512,7 @@ try:
                 omni.kit.commands.execute(
                     "IsaacSensorCreateContactSensor",
                     path="Contact_Sensor",
-                    parent=_gripper_left_prim_path,
+                    parent=_gripper_finger_left_path,
                     sensor_period=0,
                     min_threshold=0.0,
                     max_threshold=100000.0,
@@ -1467,23 +1521,23 @@ try:
                 omni.kit.commands.execute(
                     "IsaacSensorCreateContactSensor",
                     path="Contact_Sensor",
-                    parent=_gripper_right_prim_path,
+                    parent=_gripper_finger_right_path,
                     sensor_period=0,
                     min_threshold=0.0,
                     max_threshold=100000.0,
                     translation=Gf.Vec3d(0, 0, 0),
                 )
 
-                _contact_sensor_left = f"{_gripper_left_prim_path}/Contact_Sensor"
-                _contact_sensor_right = f"{_gripper_right_prim_path}/Contact_Sensor"
+                _contact_sensor_left = f"{_gripper_finger_left_path}/Contact_Sensor"
+                _contact_sensor_right = f"{_gripper_finger_right_path}/Contact_Sensor"
 
                 from isaacsim.sensors.physics import _sensor
                 _contact_sensor_interface = _sensor.acquire_contact_sensor_interface()
 
-                print(f"[RoboLab] Contact sensors created on gripper fingers: "
+                print(f"[RoboLab] Contact sensors created on right-arm finger links: "
                       f"{_contact_sensor_left}, {_contact_sensor_right}")
             else:
-                print("[RoboLab] WARN: gripper finger links not found, contact sensors disabled")
+                print("[RoboLab] WARN: right-arm finger links not found, contact sensors disabled")
         except Exception as err:
             print(f"[RoboLab] WARN: failed to create contact sensors: {err}")
 
@@ -1537,13 +1591,13 @@ try:
     moveit_state_joint_names = fallback_moveit_joint_names + ["head_1_joint", "head_2_joint"]
     moveit_joint_limits = {
         "torso_lift_joint": (0.0, 0.35),
-        "arm_1_joint": (-2.9, 2.9),
-        "arm_2_joint": (-2.0, 2.0),
-        "arm_3_joint": (-3.6, 1.8),
-        "arm_4_joint": (-0.8, 2.5),
-        "arm_5_joint": (-2.2, 2.2),
-        "arm_6_joint": (-1.5, 1.5),
-        "arm_7_joint": (-2.2, 2.2),
+        "arm_1_joint": (-1.178, 1.571),
+        "arm_2_joint": (-1.178, 1.571),
+        "arm_3_joint": (-0.785, 3.927),
+        "arm_4_joint": (-0.393, 2.356),
+        "arm_5_joint": (-2.094, 2.094),
+        "arm_6_joint": (-1.414, 1.414),
+        "arm_7_joint": (-2.094, 2.094),
         "head_1_joint": (-1.4, 1.4),
         "head_2_joint": (-1.2, 0.9),
     }
@@ -1672,9 +1726,10 @@ try:
     def _apply_joint_positions(joint_values: dict) -> bool:
         """Apply joint targets via ArticulationAction (PD position drive).
 
-        This sets drive targets instead of teleporting joints, so the physics
-        engine smoothly tracks the desired configuration without creating
-        reaction forces that destabilise the base.
+        Only sets drive targets for joints in joint_values; other joints
+        are left as NaN so Isaac Sim keeps their existing drive targets.
+        This prevents re-setting all joint targets every frame, which
+        was causing the gripper PD controller to fight itself.
         """
         if not tiago_articulation or not joint_values:
             return False
@@ -1683,15 +1738,8 @@ try:
         except ImportError:
             pass
         try:
-            get_pos = getattr(tiago_articulation, "get_joint_positions", None) or getattr(
-                tiago_articulation, "get_dof_positions", None
-            )
-            if not get_pos:
-                return False
-            current = _as_list(get_pos())
-            if not current:
-                return False
-            targets = list(current)
+            n_dofs = len(dof_names)
+            targets = [float('nan')] * n_dofs
             index_map = {n: i for i, n in enumerate(dof_names)}
             updated_any = False
             _resolved_joints = []
@@ -1699,7 +1747,7 @@ try:
             for name, value in joint_values.items():
                 resolved_name = _resolve_joint_name(name)
                 idx = index_map.get(resolved_name)
-                if idx is None or idx >= len(targets):
+                if idx is None or idx >= n_dofs:
                     _skipped_joints.append(f"{name}->{resolved_name}")
                     continue
                 normalized = _normalize_joint_target(resolved_name, float(value))
@@ -1717,10 +1765,6 @@ try:
                     _apply_logged_once.add("no_update")
                     print(f"[RoboLab] WARN: _apply_joint_positions updated NO joints from {list(joint_values.keys())}")
                 return False
-            for i, joint_name in enumerate(dof_names):
-                if i >= len(targets):
-                    continue
-                targets[i] = _normalize_joint_target(joint_name, float(targets[i]))
             action = ArticulationAction(joint_positions=np.array(targets, dtype=np.float32))
             tiago_articulation.apply_action(action)
             return True
@@ -1728,7 +1772,58 @@ try:
             print(f"[RoboLab] WARN: _apply_joint_positions failed: {exc}")
             return False
 
-    _persistent_targets: dict = {}
+    _persistent_targets: dict = {
+        "arm_left_1_joint": 0.20, "arm_left_2_joint": -0.35,
+        "arm_left_3_joint": -0.20, "arm_left_4_joint": 1.90,
+        "arm_left_5_joint": -1.57, "arm_left_6_joint": 1.37,
+        "arm_left_7_joint": 0.0,
+        "arm_right_1_joint": 0.20, "arm_right_2_joint": -0.35,
+        "arm_right_3_joint": -0.20, "arm_right_4_joint": 1.90,
+        "arm_right_5_joint": -1.57, "arm_right_6_joint": 1.37,
+        "arm_right_7_joint": 0.0,
+        "torso_lift_joint": 0.15,
+        "head_1_joint": 0.0, "head_2_joint": -0.3,
+        "gripper_right_left_finger_joint": 0.0,
+        "gripper_right_right_finger_joint": 0.0,
+        "gripper_left_left_finger_joint": 0.0,
+        "gripper_left_right_finger_joint": 0.0,
+    }
+
+    def _set_joint_positions_direct(joint_targets: dict) -> bool:
+        """Directly set joint positions by modifying the position array, bypassing PD controller.
+        Used for direct_set trajectories where we need exact position control."""
+        if not tiago_articulation:
+            return False
+        try:
+            cur_pos = tiago_articulation.get_joint_positions()
+            if cur_pos is None:
+                return False
+            new_pos = np.array(cur_pos, dtype=np.float64)
+            index_map = {n: i for i, n in enumerate(dof_names)}
+            changed = False
+            for name, value in joint_targets.items():
+                resolved = _resolve_joint_name(name)
+                idx = index_map.get(resolved)
+                if idx is not None:
+                    normalized = _normalize_joint_target(resolved, float(value))
+                    new_pos[idx] = normalized
+                    changed = True
+            if not changed:
+                return False
+            tiago_articulation.set_joint_positions(new_pos.astype(np.float32))
+            from omni.isaac.core.utils.types import ArticulationAction
+            targets = [float('nan')] * len(dof_names)
+            for name, value in joint_targets.items():
+                resolved = _resolve_joint_name(name)
+                idx = index_map.get(resolved)
+                if idx is not None:
+                    targets[idx] = _normalize_joint_target(resolved, float(value))
+            tiago_articulation.apply_action(ArticulationAction(
+                joint_positions=np.array(targets, dtype=np.float32)))
+            return True
+        except Exception as exc:
+            print(f"[RoboLab] WARN: _set_joint_positions_direct failed: {exc}")
+            return False
 
     def _process_trajectory_dispatcher() -> None:
         now = time.time()
@@ -1743,6 +1838,8 @@ try:
 
             done_goals = []
             merged_targets = {}
+            direct_set_targets = {}
+            has_direct_set = False
             for goal in active_trajectory_goals:
                 points = goal["points"]
                 next_idx = goal["next_point_idx"]
@@ -1755,17 +1852,44 @@ try:
                     next_idx += 1
 
                 if latest_targets:
-                    merged_targets.update(latest_targets)
+                    if goal.get("direct_set"):
+                        direct_set_targets.update(latest_targets)
+                        has_direct_set = True
+                    else:
+                        merged_targets.update(latest_targets)
 
                 goal["next_point_idx"] = next_idx
                 if next_idx >= len(points):
                     goal["status"] = "succeeded"
                     done_goals.append(goal)
 
+            if direct_set_targets:
+                _persistent_targets.update(direct_set_targets)
+                for _mk, _mv in direct_set_targets.items():
+                    _resolved = _resolve_joint_name(_mk)
+                    if _resolved != _mk and _resolved in _persistent_targets:
+                        _persistent_targets[_resolved] = _mv
+                _arm_merged = {k: round(v, 4) for k, v in direct_set_targets.items()
+                               if "arm" in k and "left" not in k and "gripper" not in k}
+                if _arm_merged:
+                    print(f"[RoboLab] DIRECT_SET merged={_arm_merged}", flush=True)
+                _set_joint_positions_direct(direct_set_targets)
+
             if merged_targets:
                 _persistent_targets.update(merged_targets)
+                for _mk, _mv in merged_targets.items():
+                    _resolved = _resolve_joint_name(_mk)
+                    if _resolved != _mk and _resolved in _persistent_targets:
+                        _persistent_targets[_resolved] = _mv
+                _arm_merged = {k: round(v, 4) for k, v in merged_targets.items()
+                               if "arm" in k and "left" not in k and "gripper" not in k}
+                if _arm_merged:
+                    _arm_persist = {k: round(v, 4) for k, v in _persistent_targets.items()
+                                    if ("arm_right" in k or (k.startswith("arm_") and k[4].isdigit()))
+                                    and "left" not in k and "gripper" not in k}
+                    print(f"[RoboLab] TRAJ_ARM merged={_arm_merged} persist={_arm_persist}", flush=True)
 
-            if _persistent_targets:
+            if _persistent_targets and not has_direct_set:
                 ok = _apply_joint_positions(_persistent_targets)
                 if not ok and merged_targets:
                     for goal in active_trajectory_goals:
@@ -2016,21 +2140,21 @@ try:
     _GRIPPER_JOINT_NAMES = (
         "gripper_right_left_finger_joint", "gripper_right_right_finger_joint",
     )
-    _GRIPPER_GAP_EMPTY = 0.015
-    _GRIPPER_GAP_GRASPED = 0.012
+    _GRIPPER_GAP_EMPTY = 0.035
+    _GRIPPER_GAP_GRASPED = 0.030
     _OBJECT_IN_GRIPPER_RADIUS = 0.25
 
     _graspable_prim_paths = [p for p, _ in _spawned_objects]
     _graspable_prim_classes = {p: c for p, c in _spawned_objects}
 
-    _gripper_center_paths = [None, None]  # [left_link, right_link] or [tool_link, None]
+    _gripper_center_paths = [None, None]  # [left_finger, right_finger] or [tool_link, None]
 
     def _init_gripper_center_paths():
         """Find gripper link paths for computing gripper center."""
-        if _gripper_left_prim_path and _gripper_right_prim_path:
-            _gripper_center_paths[0] = _gripper_left_prim_path
-            _gripper_center_paths[1] = _gripper_right_prim_path
-            print(f"[RoboLab] Gripper center: midpoint of finger links")
+        if _gripper_finger_left_path and _gripper_finger_right_path:
+            _gripper_center_paths[0] = _gripper_finger_left_path
+            _gripper_center_paths[1] = _gripper_finger_right_path
+            print(f"[RoboLab] Gripper center: midpoint of right-arm finger links")
             return
 
         _candidates = [
@@ -2072,6 +2196,275 @@ try:
 
     _init_gripper_center_paths()
 
+    # --- Native IK solver using analytical FK from USD kinematic chain ---
+    _ik_arm_joint_names = [f"arm_right_{i}_joint" for i in range(1, 8)]
+    _ik_all_names = ["torso_lift_joint"] + _ik_arm_joint_names
+    _ik_all_indices = []
+    for _jn in _ik_all_names:
+        if _jn in dof_names:
+            _ik_all_indices.append(dof_names.index(_jn))
+        else:
+            print(f"[RoboLab] IK WARNING: joint {_jn} not found in DOF list")
+    _ik_moveit_names = ["torso_lift_joint"] + [f"arm_{i}_joint" for i in range(1, 8)]
+    _ik_limits_lo = np.array([moveit_joint_limits.get(n, (-3.14, 3.14))[0] for n in _ik_moveit_names])
+    _ik_limits_hi = np.array([moveit_joint_limits.get(n, (-3.14, 3.14))[1] for n in _ik_moveit_names])
+
+    def _quat_to_mat(w, x, y, z):
+        """Quaternion (w,x,y,z) to 3x3 rotation matrix."""
+        return np.array([
+            [1 - 2*(y*y + z*z), 2*(x*y - w*z), 2*(x*z + w*y)],
+            [2*(x*y + w*z), 1 - 2*(x*x + z*z), 2*(y*z - w*x)],
+            [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x*x + y*y)],
+        ])
+
+    def _rotx(angle):
+        """Rotation matrix around X axis."""
+        c, s = np.cos(angle), np.sin(angle)
+        return np.array([[1, 0, 0], [0, c, -s], [0, s, c]])
+
+    def _make_T(R, t):
+        """Build 4x4 homogeneous transform from 3x3 rotation and 3-vector."""
+        T = np.eye(4)
+        T[:3, :3] = R
+        T[:3, 3] = t
+        return T
+
+    def _joint_frame_T(localPos0, localRot0, localPos1, localRot1):
+        """Compute the fixed part of a joint transform:
+        T = T(parent->joint_frame0) @ inv(T(child->joint_frame1))
+        In PhysX: the joint connects body0 and body1, the joint frame is
+        defined by localPos0/Rot0 in body0's frame and localPos1/Rot1 in body1's frame.
+        The child body's origin in parent frame = parent->jf0 @ inv(child->jf1).
+        """
+        R0 = _quat_to_mat(*localRot0)
+        R1 = _quat_to_mat(*localRot1)
+        T0 = _make_T(R0, np.array(localPos0))
+        T1 = _make_T(R1, np.array(localPos1))
+        T1_inv = np.eye(4)
+        T1_inv[:3, :3] = R1.T
+        T1_inv[:3, 3] = -R1.T @ np.array(localPos1)
+        return T0 @ T1_inv
+
+    # Pre-compute fixed joint frame transforms from USDA data.
+    # All quaternions are (w, x, y, z) as stored in USD.
+    _jf_torso_fixed = _joint_frame_T(
+        (-0.062, 0, 0.216), (0.70710677, 0, 0.70710677, 0),
+        (0, 0, 0), (0.70710677, 0, 0.70710677, 0))
+    _jf_torso_lift = _joint_frame_T(
+        (0, 0, 0.597), (0.70710677, 0, -0.70710677, 0),
+        (0, 0, 0), (0.70710677, 0, -0.70710677, 0))
+    _jf_arm1 = _joint_frame_T(
+        (0.02556, -0.19, -0.171), (0.49999997, -0.49999997, -0.49999997, -0.49999997),
+        (0, 0, 0), (0.70710677, 0, -0.70710677, 0))
+    _jf_arm2 = _joint_frame_T(
+        (0.125, -0.0195, -0.031), (0.49999997, -0.49999997, -0.49999997, 0.49999997),
+        (0, 0, 0), (0.70710677, 0, -0.70710677, 0))
+    _jf_arm3 = _joint_frame_T(
+        (0.0895, 0, -0.0015), (0, 0, -0.7071067, 0.7071067),
+        (0, 0, 0), (0.70710677, 0, -0.70710677, 0))
+    _jf_arm4 = _joint_frame_T(
+        (-0.02, -0.027, -0.222), (0, -0.7071067, -0.7071067, 0),
+        (0, 0, 0), (0.70710677, 0, -0.70710677, 0))
+    _jf_arm5 = _joint_frame_T(
+        (-0.162, 0.02, 0.027), (0, 0, -0.9999999, 0),
+        (0, 0, 0), (0.70710677, 0, -0.70710677, 0))
+    _jf_arm6 = _joint_frame_T(
+        (0, 0, 0.15), (0, -0.7071067, -0.7071067, 0),
+        (0, 0, 0), (0.70710677, 0, -0.70710677, 0))
+    _jf_arm7 = _joint_frame_T(
+        (0, 0, 0), (0.7071067, 0.7071067, 0, 0),
+        (0, 0, 0), (0.70710677, 0, -0.70710677, 0))
+    _jf_tool = _joint_frame_T(
+        (0, 0, 0.0573), (-0.5, 0.49999994, 0.5, 0.49999994),
+        (0, 0, 0), (1, 0, 0, 0))
+
+    _jf_revolute_frames = [_jf_arm1, _jf_arm2, _jf_arm3, _jf_arm4, _jf_arm5, _jf_arm6, _jf_arm7]
+
+    def _revolute_joint_T(joint_frame_T, angle):
+        """Apply a revolute-X joint: T_parent_child = joint_frame @ Rx(angle)."""
+        R_joint = _rotx(angle)
+        T_rot = _make_T(R_joint, np.zeros(3))
+        # PhysX joint semantics: the rotation happens in the joint frame,
+        # then the child body is positioned via the joint frames.
+        # T_parent->child_origin = T(parent->jf0) @ Rx(angle) @ inv(T(child->jf1))
+        # But we pre-computed jf = T(parent->jf0) @ inv(T(child->jf1)).
+        # For revolute: T = T(parent->jf0) @ Rx(angle) @ inv(T(child->jf1))
+        # We need to re-derive this properly.
+        return joint_frame_T  # placeholder, we'll fix below
+
+    def _fk_tool_pos(q):
+        """Compute tool link world position from joint angles.
+        q = [torso_lift, arm1..arm7] (8 values).
+        Returns 3D world position of the tool link origin.
+        """
+        # Robot root transform (spawned at (0.8, 0, 0.08))
+        T = _make_T(np.eye(3), np.array([0.8, 0.0, 0.08]))
+
+        # base_link: translate (0, 0, 0.0762), identity rotation
+        T = T @ _make_T(np.eye(3), np.array([0.0, 0.0, 0.0762]))
+
+        # torso_fixed_joint (fixed)
+        T = T @ _jf_torso_fixed
+
+        # torso_lift_joint (prismatic along X in joint frame)
+        # For prismatic: the joint frame defines how parent->child maps,
+        # with a translation along the joint axis.
+        # PhysX prismatic: T = T(p->jf0) @ translate(axis * q) @ inv(T(c->jf1))
+        # Joint axis is X. localRot0 and localRot1 are the same, so
+        # jf = T(p->jf0) @ inv(T(c->jf1)) = identity rotation with localPos0 offset.
+        # The prismatic displacement is along X in the joint frame.
+        R0_torso = _quat_to_mat(0.70710677, 0, -0.70710677, 0)
+        T = T @ _make_T(R0_torso, np.array([0, 0, 0.597]))
+        T = T @ _make_T(np.eye(3), np.array([q[0], 0, 0]))  # prismatic along X
+        R1_torso_inv = _quat_to_mat(0.70710677, 0, -0.70710677, 0).T
+        T = T @ _make_T(R1_torso_inv, np.zeros(3))
+
+        # arm_right_1..7 joints (revolute around X)
+        # For each revolute joint:
+        # T_total = T(p->jf0) @ Rx(angle) @ inv(T(c->jf1))
+        _arm_localPos0 = [
+            (0.02556, -0.19, -0.171),   # arm1
+            (0.125, -0.0195, -0.031),    # arm2
+            (0.0895, 0, -0.0015),        # arm3
+            (-0.02, -0.027, -0.222),     # arm4
+            (-0.162, 0.02, 0.027),       # arm5
+            (0, 0, 0.15),               # arm6
+            (0, 0, 0),                  # arm7
+        ]
+        _arm_localRot0 = [
+            (0.49999997, -0.49999997, -0.49999997, -0.49999997),  # arm1
+            (0.49999997, -0.49999997, -0.49999997, 0.49999997),   # arm2
+            (0, 0, -0.7071067, 0.7071067),                        # arm3
+            (0, -0.7071067, -0.7071067, 0),                       # arm4
+            (0, 0, -0.9999999, 0),                                # arm5
+            (0, -0.7071067, -0.7071067, 0),                       # arm6
+            (0.7071067, 0.7071067, 0, 0),                         # arm7
+        ]
+        _arm_localPos1 = [(0, 0, 0)] * 7
+        _arm_localRot1 = [(0.70710677, 0, -0.70710677, 0)] * 7
+
+        for j in range(7):
+            R0 = _quat_to_mat(*_arm_localRot0[j])
+            R1 = _quat_to_mat(*_arm_localRot1[j])
+            p0 = np.array(_arm_localPos0[j])
+            # T_parent_child = T(p->jf0) @ Rx(angle) @ inv(T(c->jf1))
+            T_jf0 = _make_T(R0, p0)
+            T_rot = _make_T(_rotx(q[1 + j]), np.zeros(3))
+            R1_inv = R1.T
+            T_jf1_inv = _make_T(R1_inv, np.zeros(3))
+            T = T @ T_jf0 @ T_rot @ T_jf1_inv
+
+        # arm_right_tool_joint (fixed)
+        R0_tool = _quat_to_mat(-0.5, 0.49999994, 0.5, 0.49999994)
+        T_tool = _make_T(R0_tool, np.array([0, 0, 0.0573]))
+        T = T @ T_tool
+
+        return T[:3, 3]
+
+    # Validate FK against actual sim position at startup
+    if tiago_articulation and len(_ik_all_indices) == 8:
+        _cur_q = np.array(tiago_articulation.get_joint_positions(), dtype=np.float64)
+        _ik_seed = _cur_q[_ik_all_indices]
+        _fk_pos = _fk_tool_pos(_ik_seed)
+        _tool_xf = XFormPrim(tiago_prim_path + "/tiago_dual_functional/arm_right_tool_link")
+        _sim_pos, _ = _tool_xf.get_world_pose()
+        if _sim_pos is not None:
+            _err = np.linalg.norm(_fk_pos - np.array([float(_sim_pos[0]), float(_sim_pos[1]), float(_sim_pos[2])]))
+            print(f"[RoboLab] FK validation: analytic=({_fk_pos[0]:.4f},{_fk_pos[1]:.4f},{_fk_pos[2]:.4f}) "
+                  f"sim=({float(_sim_pos[0]):.4f},{float(_sim_pos[1]):.4f},{float(_sim_pos[2]):.4f}) err={_err:.4f}m", flush=True)
+
+    def _solve_ik_sim(target_world_pos, seed_joints=None, max_iter=80, tol=0.012):
+        """Compute IK using analytical FK with runtime calibration and numerical Jacobian.
+        Calibrates FK offset by comparing analytical FK with actual sim position
+        at the current joint configuration before solving.
+        Returns dict with 'success', 'joints' (MoveIt names), 'error_m'."""
+        if not tiago_articulation or len(_ik_all_indices) != 8:
+            return {"success": False, "error": "articulation not ready"}
+
+        cur_positions = np.array(tiago_articulation.get_joint_positions(), dtype=np.float64)
+        cur_ik_q = cur_positions[_ik_all_indices].copy()
+
+        # Runtime FK calibration: compare analytical FK with actual sim position
+        fk_offset = np.zeros(3)
+        try:
+            tool_xf = XFormPrim(tiago_prim_path + "/tiago_dual_functional/arm_right_tool_link")
+            sim_pos, _ = tool_xf.get_world_pose()
+            if sim_pos is not None:
+                analytic_pos = _fk_tool_pos(cur_ik_q)
+                sim_arr = np.array([float(sim_pos[0]), float(sim_pos[1]), float(sim_pos[2])])
+                fk_offset = sim_arr - analytic_pos
+                print(f"[RoboLab] IK calibration: offset=({fk_offset[0]:.4f},{fk_offset[1]:.4f},{fk_offset[2]:.4f})", flush=True)
+        except Exception:
+            pass
+
+        def _fk_calibrated(q):
+            return _fk_tool_pos(q) + fk_offset
+
+        ik_q = cur_ik_q.copy()
+        if seed_joints:
+            name_to_idx = {}
+            for i, mname in enumerate(_ik_moveit_names):
+                name_to_idx[mname] = i
+                sim_name = _ik_all_names[i]
+                name_to_idx[sim_name] = i
+            for name, val in seed_joints.items():
+                idx = name_to_idx.get(name)
+                if idx is not None:
+                    ik_q[idx] = float(val)
+
+        ik_q = np.clip(ik_q, _ik_limits_lo, _ik_limits_hi)
+
+        target = np.array(target_world_pos, dtype=np.float64)
+        best_error = float("inf")
+        best_q = ik_q.copy()
+        delta = 0.001
+
+        for iteration in range(max_iter):
+            current = _fk_calibrated(ik_q)
+            err_vec = target - current
+            err_norm = float(np.linalg.norm(err_vec))
+
+            if err_norm < best_error:
+                best_error = err_norm
+                best_q = ik_q.copy()
+
+            if err_norm < tol:
+                break
+
+            J = np.zeros((3, 8))
+            for col in range(8):
+                perturbed = ik_q.copy()
+                perturbed[col] += delta
+                new_pos = _fk_calibrated(perturbed)
+                J[:, col] = (new_pos - current) / delta
+
+            j_norm = np.linalg.norm(J)
+            if j_norm < 1e-8:
+                print(f"[RoboLab] IK iter {iteration}: Jacobian near-zero ({j_norm:.8f}), aborting", flush=True)
+                break
+
+            lam = 0.01
+            JT = J.T
+            delta_q = JT @ np.linalg.solve(J @ JT + lam * np.eye(3), err_vec)
+
+            max_step = 0.15
+            step_norm = float(np.max(np.abs(delta_q)))
+            if step_norm > max_step:
+                delta_q *= max_step / step_norm
+
+            ik_q = ik_q + delta_q
+            ik_q = np.clip(ik_q, _ik_limits_lo, _ik_limits_hi)
+
+        result_joints = {}
+        for i, name in enumerate(_ik_moveit_names):
+            result_joints[name] = round(float(best_q[i]), 4)
+
+        fk_final = _fk_calibrated(best_q)
+        print(f"[RoboLab] IK solved: err={best_error:.4f}m iter={iteration+1} "
+              f"target=({target[0]:.3f},{target[1]:.3f},{target[2]:.3f}) "
+              f"fk=({fk_final[0]:.3f},{fk_final[1]:.3f},{fk_final[2]:.3f})", flush=True)
+        return {"success": best_error < 0.025, "joints": result_joints, "error_m": round(best_error, 4)}
+
     def _get_gripper_center():
         """Return approximate gripper center position."""
         if _gripper_center_paths[0] is None:
@@ -2092,6 +2485,8 @@ try:
             pass
         return None
 
+    _grip_debug_counter = [0]
+
     def _find_object_in_gripper(grip_center, gap):
         """Check if any graspable object center is within gripper reach."""
         if grip_center is None or gap > _GRIPPER_GAP_GRASPED:
@@ -2099,6 +2494,8 @@ try:
         gx, gy, gz = grip_center
         best_dist = _OBJECT_IN_GRIPPER_RADIUS
         best_path = None
+        _grip_debug_counter[0] += 1
+        _do_log = (_grip_debug_counter[0] % 30 == 1)
         for _gp in _graspable_prim_paths:
             try:
                 _xf = XFormPrim(_gp)
@@ -2107,6 +2504,10 @@ try:
                     continue
                 ox, oy, oz = float(_op[0]), float(_op[1]), float(_op[2])
                 dist = ((gx - ox)**2 + (gy - oy)**2 + (gz - oz)**2)**0.5
+                if _do_log:
+                    _cls = _graspable_prim_classes.get(_gp, "?")
+                    print(f"[RoboLab] grip_center=({gx:.3f},{gy:.3f},{gz:.3f}) "
+                          f"obj={_cls}@({ox:.3f},{oy:.3f},{oz:.3f}) dist={dist:.3f} gap={gap:.4f}")
                 if dist < best_dist:
                     best_dist = dist
                     best_path = _gp
@@ -2128,6 +2529,25 @@ try:
 
         # Apply queued trajectory points from action callbacks in simulation thread.
         _process_trajectory_dispatcher()
+
+        # Lock robot base position every frame if fixedBase mode.
+        # Forcefully reset position and zero velocity if the base drifts.
+        if _use_fixed_base:
+            try:
+                _base_xf = XFormPrim(prim_path=tiago_prim_path)
+                _base_pos, _base_rot = _base_xf.get_world_pose()
+                if _base_pos is not None:
+                    _bx = float(_base_pos[0])
+                    _by = float(_base_pos[1])
+                    _bz = float(_base_pos[2])
+                    _bw = float(_base_rot[0]) if _base_rot is not None else 1.0
+                    _drift = abs(_bx - 0.8) + abs(_by) + abs(_bz - 0.08)
+                    if _drift > 0.15 or abs(_bw) < 0.95:
+                        _base_xf.set_world_pose(
+                            position=np.array([0.8, 0.0, 0.08], dtype=np.float32),
+                            orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32))
+            except Exception:
+                pass
 
         # IPC with ros2_fjt_proxy: poll for new pending trajectories from proxy,
         # write joint state snapshot, and write done markers after completion.
@@ -2177,6 +2597,7 @@ try:
                             "error": "",
                             "done_event": threading.Event(),
                             "traj_id": _traj_id,
+                            "direct_set": _payload.get("direct_set", False),
                         }
                         with trajectory_state_lock:
                             pending_trajectory_goals.append(_goal_state)
@@ -2277,6 +2698,13 @@ try:
                             continue
                     _resp = _nearest or {"path": None, "class": None, "position": None}
                     _resp["gripper_center"] = [round(v, 4) for v in _gc] if _gc else None
+                    try:
+                        _robot_xf = XFormPrim(prim_path=tiago_prim_path)
+                        _rpos, _rorient = _robot_xf.get_world_pose()
+                        _resp["robot_position"] = [round(float(v), 4) for v in _rpos]
+                        _resp["robot_orientation"] = [round(float(v), 4) for v in _rorient]
+                    except Exception:
+                        pass
                     _oq_resp = FJT_PROXY_DIR / "object_pose_result.json"
                     _oq_resp.write_text(json.dumps(_resp), encoding="utf-8")
             except Exception:
@@ -2298,6 +2726,41 @@ try:
                 _gr_file.write_text(json.dumps(_gr_data), encoding="utf-8")
             except Exception:
                 pass
+
+            # IPC: respond to IK queries from intent bridge using actual sim kinematics.
+            try:
+                _ik_query_file = FJT_PROXY_DIR / "query_ik.json"
+                _ik_result_file = FJT_PROXY_DIR / "ik_result.json"
+                if _ik_query_file.exists() and tiago_articulation:
+                    _ik_req = json.loads(_ik_query_file.read_text(encoding="utf-8"))
+                    _ik_query_file.unlink()
+                    _ik_target_local = _ik_req.get("target_position")
+                    if _ik_target_local and len(_ik_target_local) == 3:
+                        # Target is in base_footprint frame; convert to world.
+                        # Read robot root world position for conversion.
+                        try:
+                            _robot_xf = XFormPrim(prim_path=tiago_prim_path)
+                            _rp, _ro = _robot_xf.get_world_pose()
+                            _rx, _ry, _rz = float(_rp[0]), float(_rp[1]), float(_rp[2])
+                        except Exception:
+                            _rx, _ry, _rz = 0.8, 0.0, 0.08
+                        _ik_target_world = np.array([
+                            _ik_target_local[0] + _rx,
+                            _ik_target_local[1] + _ry,
+                            _ik_target_local[2] + _rz,
+                        ], dtype=np.float64)
+                        print(f"[RoboLab] IK query: local=({_ik_target_local[0]:.3f},{_ik_target_local[1]:.3f},{_ik_target_local[2]:.3f}) "
+                              f"world=({_ik_target_world[0]:.3f},{_ik_target_world[1]:.3f},{_ik_target_world[2]:.3f}) "
+                              f"robot=({_rx:.3f},{_ry:.3f},{_rz:.3f})", flush=True)
+                        _ik_result = _solve_ik_sim(
+                            _ik_target_world,
+                            _ik_req.get("seed_joints"),
+                        )
+                        _ik_result_file.write_text(json.dumps(_ik_result), encoding="utf-8")
+                    else:
+                        _ik_result_file.write_text(json.dumps({"success": False, "error": "invalid target"}), encoding="utf-8")
+            except Exception as _ik_exc:
+                print(f"[RoboLab] IK query error: {_ik_exc}", flush=True)
 
         world.step(render=True)
         if _rep_subsample <= 1 or (_sim_frame_idx % _rep_subsample) == 0:
@@ -2404,6 +2867,33 @@ try:
         _gripper_opening = _gap_delta > 0.00002
 
         _grip_center = _get_gripper_center()
+        if _sim_frame_idx % 60 == 1:
+            try:
+                _tool_xf = XFormPrim(f"{tiago_prim_path}/tiago_dual_functional/arm_right_tool_link")
+                _tool_pos, _ = _tool_xf.get_world_pose()
+                _arm_joints_dbg = {}
+                if tiago_articulation and dof_names:
+                    _jpos = tiago_articulation.get_joint_positions()
+                    if _jpos is not None:
+                        for _ji, _jn in enumerate(dof_names):
+                            if "arm_right" in _jn or _jn == "torso_lift_joint":
+                                _arm_joints_dbg[_jn] = round(float(_jpos[_ji]), 4)
+                _tp = _tool_pos.tolist() if _tool_pos is not None else None
+                _base_pos_dbg = None
+                try:
+                    _base_xf = XFormPrim(prim_path=tiago_prim_path)
+                    _bp, _ = _base_xf.get_world_pose()
+                    _base_pos_dbg = _bp.tolist() if _bp is not None else None
+                except Exception:
+                    pass
+                if _tp:
+                    _base_str = ""
+                    if _base_pos_dbg:
+                        _base_str = f" base=({_base_pos_dbg[0]:.3f},{_base_pos_dbg[1]:.3f},{_base_pos_dbg[2]:.3f})"
+                    print(f"[RoboLab] TOOL_LINK world=({_tp[0]:.3f},{_tp[1]:.3f},{_tp[2]:.3f}){_base_str} "
+                          f"joints={_arm_joints_dbg}", flush=True)
+            except Exception as _e:
+                pass
         _obj_in_grip_path, _obj_in_grip_class = _find_object_in_gripper(
             _grip_center, _gripper_gap
         )
