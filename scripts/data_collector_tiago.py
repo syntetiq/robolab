@@ -1083,9 +1083,9 @@ try:
             "arm_2_joint":                      (1500.0, 300.0, 5000.0),
             "arm_3_joint":                      (1200.0, 240.0, 3000.0),
             "arm_4_joint":                      (1200.0, 240.0, 3000.0),
-            "arm_5_joint":                      (800.0,  160.0, 1000.0),
-            "arm_6_joint":                      (800.0,  160.0, 1000.0),
-            "arm_7_joint":                      (800.0,  160.0, 1000.0),
+            "arm_5_joint":                      (1200.0, 240.0, 2000.0),
+            "arm_6_joint":                      (1200.0, 240.0, 2000.0),
+            "arm_7_joint":                      (1200.0, 240.0, 2000.0),
             "head_1_joint":                     (400.0,  80.0,  200.0),
             "head_2_joint":                     (400.0,  80.0,  200.0),
             "gripper_right_left_finger_joint":  (2000.0, 400.0, 500.0),
@@ -1884,7 +1884,7 @@ try:
                         goal["_settle_targets"] = points[-1]["targets"] if points else {}
                     _settle_elapsed = now - goal["_settle_start"]
                     _settle_ok = False
-                    _settle_timeout = 15.0
+                    _settle_timeout = 25.0
                     _max_arm_err = 0.0
                     if goal["_settle_targets"] and tiago_articulation:
                         try:
@@ -1917,7 +1917,12 @@ try:
                             except Exception:
                                 pass
                             print(f"[RoboLab] SETTLE timeout goal={goal.get('traj_id','?')} max_arm_err={_max_arm_err:.4f}, per-joint: {_per_joint_err}", flush=True)
-                        goal["status"] = "succeeded"
+                        if _settle_ok or _max_arm_err <= 0.30:
+                            goal["status"] = "succeeded"
+                        else:
+                            goal["status"] = "failed"
+                            goal["error"] = f"Settle timeout: max_arm_err={_max_arm_err:.4f} exceeds 0.30 rad"
+                            print(f"[RoboLab] SETTLE FAILED goal={goal.get('traj_id','?')} — arm error too large for success", flush=True)
                         done_goals.append(goal)
 
             if merged_targets:

@@ -486,13 +486,13 @@ _ENABLE_RETRIES = os.environ.get("ROBOLAB_ENABLE_RETRIES", "0").lower() in ("1",
 
 JOINT_LIMITS = {
     "torso_lift_joint": (0.0, 0.35),
-    "arm_1_joint": (-2.90, 2.90),
-    "arm_2_joint": (-2.00, 2.00),
-    "arm_3_joint": (-3.60, 3.93),
-    "arm_4_joint": (-0.80, 2.90),
-    "arm_5_joint": (-2.20, 2.20),
-    "arm_6_joint": (-1.50, 1.50),
-    "arm_7_joint": (-2.20, 2.20),
+    "arm_1_joint": (-1.18, 1.57),
+    "arm_2_joint": (-1.18, 1.57),
+    "arm_3_joint": (-0.785, 3.927),
+    "arm_4_joint": (-0.393, 2.356),
+    "arm_5_joint": (-2.094, 2.094),
+    "arm_6_joint": (0.0, 1.414),
+    "arm_7_joint": (-2.094, 2.094),
 }
 
 REFERENCE_OBJECT_XYZ = (0.6, 0.0, 0.77)
@@ -510,12 +510,13 @@ _GRASP_VERIFY_MIN_STABLE_SAMPLES = 3
 _GRASP_VERIFY_MIN_CONTACT_SAMPLES = 3
 
 
-def clamp_joints(joints: dict) -> dict:
-    """Clamp joint values to their mechanical limits."""
+def clamp_joints(joints: dict, margin: float = 0.03) -> dict:
+    """Clamp joint values to their mechanical limits with a safety margin
+    so PD controllers don't fight against hard stops."""
     clamped = {}
     for name, val in joints.items():
         lo, hi = JOINT_LIMITS.get(name, (-3.14, 3.14))
-        clamped[name] = max(lo, min(hi, val))
+        clamped[name] = max(lo + margin, min(hi - margin, val))
     return clamped
 
 
@@ -1090,9 +1091,19 @@ class MoveItIntentBridge(Node):
                 if name in JOINT_LIMITS or name == "torso_lift_joint":
                     result[name] = float(pos)
             if result:
-                _jstr = {k: round(v, 4) for k, v in result.items()}
-                self.get_logger().info(f"IK solution found ({len(result)} joints): {_jstr}")
-                return clamp_joints(result)
+                clamped = clamp_joints(result)
+                _max_wrist_swing = 0.0
+                for _wj in ("arm_5_joint", "arm_6_joint", "arm_7_joint"):
+                    if _wj in clamped and _wj in _seed:
+                        _swing = abs(clamped[_wj] - _seed[_wj])
+                        _max_wrist_swing = max(_max_wrist_swing, _swing)
+                if _max_wrist_swing > 2.0:
+                    self.get_logger().warn(
+                        f"IK rejected: wrist swing {_max_wrist_swing:.2f} rad exceeds 2.0 rad limit")
+                    return None
+                _jstr = {k: round(v, 4) for k, v in clamped.items()}
+                self.get_logger().info(f"IK solution found ({len(clamped)} joints): {_jstr}")
+                return clamped
         except Exception as e:
             self.get_logger().warn(f"IK service error: {e}")
         return None
