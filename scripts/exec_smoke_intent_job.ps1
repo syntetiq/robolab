@@ -13,7 +13,7 @@ param(
 )
 
 Start-Sleep -Seconds $DelaySec
-$baseEnv = 'set HOME=C:\Users\max&& set ROS_DOMAIN_ID=0&& set ROS_LOCALHOST_ONLY=0&& call ' + $RosSetupArg + ' &&'
+$baseEnv = 'set HOME=C:\Users\max&& set ROS_DOMAIN_ID=111&& set ROS_LOCALHOST_ONLY=1&& call ' + $RosSetupArg + ' &&'
 
 # Wait for joint_state.json (written by Isaac Sim, read by FJT proxy).
 # This is faster and more reliable than polling ros2 topic info inside Start-Job.
@@ -36,31 +36,48 @@ function Wait-ForBridgeResultFromOffset {
     param(
         [string]$BridgePath,
         [int]$Offset,
+        [string]$IntentName,
         [int]$TimeoutSec
     )
     $off = [Math]::Max(0, $Offset)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
+    $lastProgressSec = 0.0
+    $hardTimeoutSec = [Math]::Max($TimeoutSec * 6, 240)
+    $lastMoveGroupCode = $null
+    $escapedIntent = [Regex]::Escape($IntentName)
+    $completePattern = "Sequence '" + $escapedIntent + "' complete"
+    while ($sw.Elapsed.TotalSeconds -lt $hardTimeoutSec) {
         if (Test-Path $BridgePath) {
             $lines = Get-Content -Path $BridgePath -ErrorAction SilentlyContinue
             if ($lines -and $lines.Count -gt $off) {
                 for ($idx = $off; $idx -lt $lines.Count; $idx++) {
                     $ln = $lines[$idx]
-                    if ($ln -match "MoveGroup goal succeeded") {
-                        return @{ Success = $true; Code = 1; Offset = $idx + 1; Message = "MoveGroup goal succeeded" }
+                    $lastProgressSec = $sw.Elapsed.TotalSeconds
+                    if ($ln -match $completePattern) {
+                        return @{ Success = $true; Code = 1; Offset = $idx + 1; Message = "Sequence '$IntentName' complete" }
                     }
                     if ($ln -match "MoveGroup goal finished with code") {
                         $parts = $ln -split "code "
-                        $c = if ($parts.Count -gt 1) { [int]($parts[1].Trim().Split()[0]) } else { -99 }
-                        return @{ Success = $false; Code = $c; Offset = $idx + 1; Message = "MoveGroup goal finished with code $c" }
+                        $lastMoveGroupCode = if ($parts.Count -gt 1) { [int]($parts[1].Trim().Split()[0]) } else { -99 }
                     }
                 }
                 $off = $lines.Count
             }
         }
+        if (($sw.Elapsed.TotalSeconds - $lastProgressSec) -ge $TimeoutSec) {
+            break
+        }
         Start-Sleep -Milliseconds 300
     }
-    return @{ Success = $false; Code = 0; Offset = $off; Message = "Timeout waiting for MoveGroup result in bridge log" }
+    if ($null -ne $lastMoveGroupCode) {
+        return @{
+            Success = $false
+            Code = $lastMoveGroupCode
+            Offset = $off
+            Message = "Timeout waiting for bridge sequence completion after MoveGroup code $lastMoveGroupCode"
+        }
+    }
+    return @{ Success = $false; Code = 0; Offset = $off; Message = "Timeout waiting for bridge sequence progress/completion in bridge log" }
 }
 
 function Wait-ForBridgeIntentAckFromOffset {
@@ -115,7 +132,7 @@ if ($WarmupGoHomeArg -and $sequence.Count -gt 0 -and $sequence[0] -ne "go_home")
     $warmupSucceeded = $false
     for ($warmAttempt = 1; $warmAttempt -le 2; $warmAttempt++) {
         cmd /d /s /c "$baseEnv $PyExeArg $PubScriptArg /tiago_test/moveit/intent go_home" | Out-Null
-        $warmRes = Wait-ForBridgeResultFromOffset -BridgePath $BridgeErrPathArg -Offset 0 -TimeoutSec $ResultTimeoutArg
+        $warmRes = Wait-ForBridgeResultFromOffset -BridgePath $BridgeErrPathArg -Offset 0 -IntentName "go_home" -TimeoutSec $ResultTimeoutArg
         if ($warmRes.Success) {
             Write-Output "[ExecSmokeJob] Warm-up result: $($warmRes.Message)"
             $warmupSucceeded = $true
@@ -160,7 +177,7 @@ foreach ($intent in $sequence) {
                 continue
             }
         }
-        $res = Wait-ForBridgeResultFromOffset -BridgePath $BridgeErrPathArg -Offset $offset -TimeoutSec $ResultTimeoutArg
+        $res = Wait-ForBridgeResultFromOffset -BridgePath $BridgeErrPathArg -Offset $offset -IntentName $intent -TimeoutSec $ResultTimeoutArg
         $offset = $res.Offset
         if ($res.Success) {
             Write-Output "[ExecSmokeJob] Result: $($res.Message)"

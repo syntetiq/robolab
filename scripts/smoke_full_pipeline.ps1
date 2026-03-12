@@ -11,12 +11,13 @@ param(
     [string]$OutputBase = "C:\RoboLab_Data",
     [string]$IsaacPython = "C:\Users\max\Documents\IsaacSim\python.bat",
     [string]$EnvUsd = "C:\RoboLab_Data\scenes\Small_House_Interactive.usd",
-    [string]$TiagoUsd = "C:\RoboLab_Data\data\tiago_isaac\tiago_dual_functional.usd",
+    [string]$TiagoUsd = "C:\RoboLab_Data\data\tiago_isaac\tiago_dual_functional_light.usd",
     # ros2_humble conda paths – Library/bin has the DLLs, Lib/site-packages has Python packages.
     [string]$Ros2DllDir      = "C:\Users\max\Mambaforge\envs\ros2_humble\Library\bin",
     [string]$Ros2SitePackages = "C:\Users\max\Mambaforge\envs\ros2_humble\Lib\site-packages",
     [switch]$RequireRealTiago,
     [switch]$SpawnObjects,
+    [switch]$SingleObject,
     [string]$ObjectsDir = "C:\RoboLab_Data\data\object_sets",
     [switch]$UseApi,
     [string]$ApiBase = "http://localhost:3000",
@@ -96,8 +97,8 @@ if ($UseApi) {
     $env:HOME = "C:\Users\max"
     $env:ROS_DISTRO = "humble"
     $env:RMW_IMPLEMENTATION = "rmw_fastrtps_cpp"
-    $env:ROS_DOMAIN_ID = "0"
-    $env:ROS_LOCALHOST_ONLY = "0"
+    $env:ROS_DOMAIN_ID = "111"
+    $env:ROS_LOCALHOST_ONLY = "1"
     $env:PYTHONUNBUFFERED = "1"
     $env:ROBOLAB_ROS2_BRIDGE_ORDER = "skip"
     # Tell data_collector to use proxy IPC instead of rclpy inside Isaac Sim.
@@ -121,6 +122,9 @@ if ($UseApi) {
     }
     if ($SpawnObjects) {
         $collectorArgs += @("--spawn-objects", "--objects-dir", $ObjectsDir)
+        if ($SingleObject) {
+            $collectorArgs += "--single-object"
+        }
         Write-Host "[Smoke] Object spawning enabled from: $ObjectsDir"
     }
     & $IsaacPython @collectorArgs

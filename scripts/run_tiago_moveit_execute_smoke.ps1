@@ -2,11 +2,12 @@ param(
     [int]$Duration = 40,
     [string]$Intent = "plan_pick_sink",
     [string]$IntentSequence = "",
-    [string]$TiagoUsd = "C:\RoboLab_Data\data\tiago_isaac\tiago_dual_functional.usd",
+    [string]$TiagoUsd = "C:\RoboLab_Data\data\tiago_isaac\tiago_dual_functional_light.usd",
     [string]$EnvUsd = "C:\RoboLab_Data\scenes\Small_House_Interactive.usd",
     [switch]$UseFakeControllers,
     [switch]$RequireRealTiago,
     [switch]$SpawnObjects,
+    [switch]$SingleObject,
     [string]$ObjectsDir = "C:\RoboLab_Data\data\object_sets",
     [int]$IntentDelaySec = 0,
     [int]$IntentResultTimeoutSec = 35,
@@ -172,6 +173,18 @@ if ($IntentSequence -and $IntentSequence.Trim().Length -gt 0) {
 if (-not $intentList -or $intentList.Count -eq 0) {
     $intentList = @($Intent.Trim().ToLower())
 }
+
+$singlePickSmoke = (
+    $intentList.Count -eq 1 `
+    -and $intentList[0] -eq "plan_pick_table" `
+    -and $SingleObject
+)
+if ($singlePickSmoke) {
+    $PreGoHomeBetweenStages = $false
+    $WarmupGoHome = $false
+    Write-Host "$pfx Single-object pick smoke: disabling go_home warmup/pre-stage"
+}
+
 $effectiveIntentCount = $intentList.Count
 if ($PreGoHomeBetweenStages) {
     $effectiveIntentCount += ($intentList | Where-Object { $_ -ne "go_home" }).Count
@@ -186,7 +199,7 @@ Write-Host "$pfx Intent sequence: $($intentList -join ', ')"
 Write-Host "$pfx Pre-go-home: $PreGoHomeBetweenStages | Retry(-4): $RetryOnCodeMinus4 | Max retries: $MaxRetriesPerIntent"
 Write-Host "$pfx Logs dir: $RunLogDir"
 
-$CommonEnv = "set PYTHONUNBUFFERED=1&& set HOME=C:\Users\max&& set ROS_DOMAIN_ID=0&& set ROS_LOCALHOST_ONLY=0&& call $RosSetup &&"
+$CommonEnv = "set PYTHONUNBUFFERED=1&& set HOME=C:\Users\max&& set ROS_DOMAIN_ID=111&& set ROS_LOCALHOST_ONLY=1&& call $RosSetup &&"
 
 try {
     Stop-ProcessesByPattern -Pattern "moveit_intent_bridge\.py" -Name "moveit bridge"
@@ -269,6 +282,9 @@ try {
     }
     if ($SpawnObjects) {
         $smokeArgs += @("-SpawnObjects", "-ObjectsDir", $ObjectsDir)
+        if ($SingleObject) {
+            $smokeArgs += "-SingleObject"
+        }
     }
     $started.smoke = Start-Process -FilePath "powershell.exe" -ArgumentList $smokeArgs -PassThru -RedirectStandardOutput $smokeOut -RedirectStandardError $smokeErr
     Write-Host "$pfx Started smoke pid=$($started.smoke.Id)"
