@@ -116,7 +116,7 @@ TIAGO_PICK_SINK_JOINTS = {
     "torso_lift_joint": 0.25,
     "arm_1_joint": 1.50,
     "arm_2_joint": -0.30,
-    "arm_3_joint": -1.80,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.80,
     "arm_5_joint": -1.00,
     "arm_6_joint": 0.50,
@@ -128,7 +128,7 @@ TIAGO_PICK_FRIDGE_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 1.20,
     "arm_2_joint": -0.60,
-    "arm_3_joint": -1.50,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.60,
     "arm_5_joint": -0.50,
     "arm_6_joint": 0.30,
@@ -140,7 +140,7 @@ TIAGO_PICK_DISHWASHER_JOINTS = {
     "torso_lift_joint": 0.10,
     "arm_1_joint": 1.30,
     "arm_2_joint": 0.10,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 2.00,
     "arm_5_joint": -0.80,
     "arm_6_joint": 0.50,
@@ -152,7 +152,7 @@ TIAGO_PLACE_JOINTS = {
     "torso_lift_joint": 0.25,
     "arm_1_joint": 0.80,
     "arm_2_joint": -0.20,
-    "arm_3_joint": -1.40,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.90,
     "arm_5_joint": -1.20,
     "arm_6_joint": 0.60,
@@ -164,7 +164,7 @@ TIAGO_OPEN_CLOSE_FRIDGE_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 1.00,
     "arm_2_joint": -0.80,
-    "arm_3_joint": -1.30,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.50,
     "arm_5_joint": -0.70,
     "arm_6_joint": 0.40,
@@ -176,7 +176,7 @@ TIAGO_OPEN_CLOSE_DISHWASHER_JOINTS = {
     "torso_lift_joint": 0.10,
     "arm_1_joint": 1.20,
     "arm_2_joint": 0.20,
-    "arm_3_joint": -1.50,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 2.00,
     "arm_5_joint": -0.90,
     "arm_6_joint": 0.30,
@@ -200,7 +200,7 @@ TIAGO_GRASP_JOINTS = {
     "torso_lift_joint": 0.20,
     "arm_1_joint": 1.30,
     "arm_2_joint": 0.10,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 2.10,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.80,
@@ -212,7 +212,7 @@ TIAGO_LIFT_JOINTS = {
     "torso_lift_joint": 0.35,
     "arm_1_joint": 1.30,
     "arm_2_joint": -0.80,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.40,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.30,
@@ -302,15 +302,15 @@ TIAGO_LEFT_PLACE_JOINTS = {
     "arm_left_7_joint": 0.30,
 }
 
-# Place back on table: same height as grasp but offset laterally.
+# Place back on table: lower from lift pose.
 TIAGO_PLACE_TABLE_JOINTS = {
     "torso_lift_joint": 0.20,
-    "arm_1_joint": 0.90,
-    "arm_2_joint": 0.10,
-    "arm_3_joint": -1.60,
-    "arm_4_joint": 2.10,
+    "arm_1_joint": 1.20,
+    "arm_2_joint": -0.30,
+    "arm_3_joint": -0.75,
+    "arm_4_joint": 1.80,
     "arm_5_joint": -0.80,
-    "arm_6_joint": -0.80,
+    "arm_6_joint": -0.50,
     "arm_7_joint": 0.0,
 }
 
@@ -319,7 +319,7 @@ TIAGO_STACK_HOVER_JOINTS = {
     "torso_lift_joint": 0.35,
     "arm_1_joint": 0.90,
     "arm_2_joint": -0.20,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.70,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.50,
@@ -330,7 +330,7 @@ TIAGO_STACK_LOWER_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 0.90,
     "arm_2_joint": 0.0,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.90,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.70,
@@ -342,7 +342,7 @@ TIAGO_POUR_TILT_JOINTS = {
     "torso_lift_joint": 0.35,
     "arm_1_joint": 1.30,
     "arm_2_joint": -0.80,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.40,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.30,
@@ -354,7 +354,7 @@ TIAGO_POUR_UPRIGHT_JOINTS = {
     "torso_lift_joint": 0.35,
     "arm_1_joint": 1.30,
     "arm_2_joint": -0.80,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.40,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.30,
@@ -371,7 +371,7 @@ TIAGO_FRIDGE_APPROACH_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 0.90,
     "arm_2_joint": -0.70,
-    "arm_3_joint": -1.20,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.40,
     "arm_5_joint": -0.60,
     "arm_6_joint": 0.30,
@@ -382,7 +382,7 @@ TIAGO_FRIDGE_HANDLE_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 1.30,
     "arm_2_joint": -0.60,
-    "arm_3_joint": -1.50,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.70,
     "arm_5_joint": -0.50,
     "arm_6_joint": 0.20,
@@ -393,7 +393,7 @@ TIAGO_FRIDGE_PULL_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 0.60,
     "arm_2_joint": -0.90,
-    "arm_3_joint": -0.80,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.20,
     "arm_5_joint": -0.70,
     "arm_6_joint": 0.40,
@@ -405,7 +405,7 @@ TIAGO_DW_APPROACH_JOINTS = {
     "torso_lift_joint": 0.10,
     "arm_1_joint": 1.10,
     "arm_2_joint": 0.10,
-    "arm_3_joint": -1.40,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.80,
     "arm_5_joint": -0.80,
     "arm_6_joint": 0.30,
@@ -416,7 +416,7 @@ TIAGO_DW_HANDLE_JOINTS = {
     "torso_lift_joint": 0.10,
     "arm_1_joint": 1.40,
     "arm_2_joint": 0.30,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 2.10,
     "arm_5_joint": -0.70,
     "arm_6_joint": 0.20,
@@ -427,7 +427,7 @@ TIAGO_DW_PULL_JOINTS = {
     "torso_lift_joint": 0.10,
     "arm_1_joint": 0.70,
     "arm_2_joint": -0.20,
-    "arm_3_joint": -1.00,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.40,
     "arm_5_joint": -0.90,
     "arm_6_joint": 0.50,
@@ -486,13 +486,13 @@ _ENABLE_RETRIES = os.environ.get("ROBOLAB_ENABLE_RETRIES", "0").lower() in ("1",
 
 JOINT_LIMITS = {
     "torso_lift_joint": (0.0, 0.35),
-    "arm_1_joint": (-1.18, 1.57),
-    "arm_2_joint": (-1.18, 1.57),
-    "arm_3_joint": (-0.785, 3.927),
-    "arm_4_joint": (-0.393, 2.356),
-    "arm_5_joint": (-2.094, 2.094),
-    "arm_6_joint": (0.0, 1.414),
-    "arm_7_joint": (-2.094, 2.094),
+    "arm_1_joint": (0.0, 1.57),
+    "arm_2_joint": (-1.18, 1.02),
+    "arm_3_joint": (-0.785, 1.57),
+    "arm_4_joint": (-0.32, 2.27),
+    "arm_5_joint": (-2.07, 2.07),
+    "arm_6_joint": (-1.39, 1.39),
+    "arm_7_joint": (-2.07, 2.07),
 }
 
 REFERENCE_OBJECT_XYZ = (0.6, 0.0, 0.77)
@@ -1118,12 +1118,13 @@ class MoveItIntentBridge(Node):
         "side":      (0.0,  0.0, 0.05),
     }
 
-    # Empirical FK offset: MoveIt IK solutions place the gripper ~6cm short
-    # in X and ~10cm too high in Z compared to Isaac Sim PhysX FK.
-    # Compensate by shifting the IK target in the opposite direction.
-    _FK_COMP_X = 0.12
-    _FK_COMP_Y = -0.02
-    _FK_COMP_Z = -0.28
+    # Empirical FK offset between MoveIt IK and Isaac Sim PhysX FK.
+    # Set to zero after base stability fix (2026-03-12) — the previous
+    # large offsets were compensating for backward tilt during torso lift.
+    # With a stable base, MoveIt FK and Isaac Sim FK should agree.
+    _FK_COMP_X = 0.0
+    _FK_COMP_Y = 0.0
+    _FK_COMP_Z = 0.0
 
     def _get_ik_grasp_sequence(self, object_xyz, destination_joints, base_pre=None, base_grasp=None):
         """Build a full grasp sequence using IK for the given object position.
@@ -1757,6 +1758,15 @@ class MoveItIntentBridge(Node):
                 ("move", TIAGO_PICK_SINK_JOINTS),
                 ("gripper", GRIPPER_OPEN),
                 ("move", TIAGO_READY_JOINTS),
+            ]
+
+        elif intent == "torso_test":
+            _TORSO_LOW = dict(TIAGO_READY_JOINTS, torso_lift_joint=0.0)
+            _TORSO_HIGH = dict(TIAGO_READY_JOINTS, torso_lift_joint=0.35)
+            return [
+                ("move_direct", _TORSO_LOW),
+                ("move", _TORSO_HIGH),
+                ("move", _TORSO_LOW),
             ]
 
         return None

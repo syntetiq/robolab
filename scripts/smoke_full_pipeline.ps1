@@ -21,7 +21,8 @@ param(
     [string]$ObjectsDir = "C:\RoboLab_Data\data\object_sets",
     [switch]$UseApi,
     [string]$ApiBase = "http://localhost:3000",
-    [string]$TaskLabel = "pick_from_table"
+    [string]$TaskLabel = "pick_from_table",
+    [double]$RobotStartX = 0.8
 )
 
 $ErrorActionPreference = "Stop"
@@ -115,7 +116,9 @@ if ($UseApi) {
         "--ros2-site-packages", $Ros2SitePackages,
         "--wrist-camera",
         "--external-camera",
-        "--task-label", $TaskLabel
+        "--task-label", $TaskLabel,
+        "--trajectory-time-scale", "2.0",
+        "--robot-start-x", $RobotStartX
     )
     if ($RequireRealTiago) {
         $collectorArgs += "--require-real-tiago"

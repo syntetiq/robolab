@@ -120,20 +120,26 @@ def parse_args():
     parser.add_argument(
         "--external-camera-pos",
         type=str,
-        default="0.8,1.8,1.6",
-        help="External camera position as x,y,z (default: 0.8,1.8,1.6).",
+        default="auto",
+        help="External camera position as x,y,z or 'auto' to follow robot.",
     )
     parser.add_argument(
         "--external-camera-target",
         type=str,
-        default="1.1,0.0,0.8",
-        help="External camera look-at target as x,y,z (default: 0.0,0.0,0.8).",
+        default="auto",
+        help="External camera look-at target as x,y,z or 'auto' to follow robot.",
     )
     parser.add_argument(
         "--task-label",
         type=str,
         default="",
         help="Task label/intent name for this episode (e.g. pick_from_table).",
+    )
+    parser.add_argument(
+        "--robot-start-x",
+        type=float,
+        default=0.8,
+        help="Robot start X position in world frame (default: 0.8).",
     )
     return parser.parse_known_args()[0]
 
@@ -503,7 +509,8 @@ try:
         "column", "pillar", "frame", "curtain", "blind", "vent",
         "pipe", "wire", "switch", "outlet", "socket", "knob",
     )
-    if args.single_object and _env_root and _env_root.IsValid():
+    _hide_scene_clutter = True
+    if _hide_scene_clutter and _env_root and _env_root.IsValid():
         _hidden_count = 0
         _hide_stack = list(_env_root.GetChildren())
         while _hide_stack:
@@ -519,7 +526,53 @@ try:
                 _hidden_count += 1
             else:
                 _hide_stack.extend(_hp.GetChildren())
-        print(f"[RoboLab] Single-object mode: hid {_hidden_count} scene-native small objects")
+        print(f"[RoboLab] Hid {_hidden_count} scene-native small objects (clutter removal)")
+
+    # Dump all environment prims for diagnostics (find fences, walls, barriers).
+    if _env_root and _env_root.IsValid():
+        _diag_stack = list(_env_root.GetChildren())
+        _diag_names = []
+        while _diag_stack:
+            _dp = _diag_stack.pop()
+            _dn = _dp.GetPath().pathString
+            _diag_names.append(_dn)
+            _children = _dp.GetChildren()
+            if len(_children) < 50:
+                _diag_stack.extend(_children)
+        _diag_names.sort()
+        print(f"[RoboLab] Environment prims ({len(_diag_names)}):")
+        for _dn in _diag_names:
+            print(f"  {_dn}")
+
+    # Also dump top-level /World prims
+    _world_prim = _cur_stage.GetPrimAtPath("/World")
+    if _world_prim and _world_prim.IsValid():
+        _world_children = [c.GetPath().pathString for c in _world_prim.GetChildren()]
+        print(f"[RoboLab] /World top-level prims: {_world_children}")
+
+    # Remove fences, railings, and barriers that obstruct robot workspace.
+    _OBSTACLE_KEYWORDS = ("fence", "railing", "balustrade", "barrier", "guardrail", "banister", "handrail")
+    _obstacle_removed = 0
+    if _env_root and _env_root.IsValid():
+        _obs_stack = list(_env_root.GetChildren())
+        while _obs_stack:
+            _op = _obs_stack.pop()
+            _op_name = _op.GetName().lower()
+            _op_path = _op.GetPath().pathString.lower()
+            if any(kw in _op_name or kw in _op_path for kw in _OBSTACLE_KEYWORDS):
+                _img = UsdGeom.Imageable(_op)
+                if _img:
+                    _img.MakeInvisible()
+                if _op.HasAPI(UsdPhysics.CollisionAPI):
+                    _op.RemoveAPI(UsdPhysics.CollisionAPI)
+                if _op.HasAPI(UsdPhysics.RigidBodyAPI):
+                    UsdPhysics.RigidBodyAPI(_op).CreateKinematicEnabledAttr(True)
+                _obstacle_removed += 1
+                print(f"[RoboLab] Removed obstacle: {_op.GetPath().pathString}")
+            else:
+                _obs_stack.extend(_op.GetChildren())
+    if _obstacle_removed:
+        print(f"[RoboLab] Removed {_obstacle_removed} obstacle(s) from scene")
 
     # Per-scene spawn zones: table bounding boxes in world coordinates.
     # Each zone is (x_min, x_max, y_min, y_max). Objects are scattered
@@ -702,7 +755,12 @@ try:
         raise RuntimeError(f"Tiago prim not found after load: {tiago_prim_path}")
     add_update_semantics(tiago_prim, "tiago")
 
-    _TIAGO_SEARCH_MIDS = ["/tiago_dual_functional_light", "/tiago_dual_functional", ""]
+    _TIAGO_SEARCH_MIDS = [
+        "/tiago_dual_functional_light",
+        "/tiago_dual_functional/tiago_dual_functional",
+        "/tiago_dual_functional",
+        "",
+    ]
 
     def _join_tiago_path(base_path, subtree_mid, leaf_name):
         if subtree_mid:
@@ -712,12 +770,13 @@ try:
     # Stabilize known problematic Tiago rigid-body mass/inertia values that can
     # cause immediate toppling in PhysX.
     _mass_override_suffixes = {
-        "base_footprint": (200.0, Gf.Vec3f(5.0, 5.0, 2.0)),
+        "base_footprint": (500.0, Gf.Vec3f(15.0, 15.0, 6.0)),
+        "base_link": (45.0, Gf.Vec3f(3.0, 3.0, 1.5)),
         "gemini2_link": (0.5, Gf.Vec3f(0.01, 0.01, 0.01)),
-        "wheel_front_left_link/mecanum_wheel_fl/wheel_link": (1.0, Gf.Vec3f(0.01, 0.01, 0.01)),
-        "wheel_front_right_link/mecanum_wheel_fr/wheel_link": (1.0, Gf.Vec3f(0.01, 0.01, 0.01)),
-        "wheel_rear_left_link/mecanum_wheel_rl/wheel_link": (1.0, Gf.Vec3f(0.01, 0.01, 0.01)),
-        "wheel_rear_right_link/mecanum_wheel_rr/wheel_link": (1.0, Gf.Vec3f(0.01, 0.01, 0.01)),
+        "wheel_front_left_link/mecanum_wheel_fl/wheel_link": (1.5, Gf.Vec3f(0.02, 0.02, 0.02)),
+        "wheel_front_right_link/mecanum_wheel_fr/wheel_link": (1.5, Gf.Vec3f(0.02, 0.02, 0.02)),
+        "wheel_rear_left_link/mecanum_wheel_rl/wheel_link": (1.5, Gf.Vec3f(0.02, 0.02, 0.02)),
+        "wheel_rear_right_link/mecanum_wheel_rr/wheel_link": (1.5, Gf.Vec3f(0.02, 0.02, 0.02)),
     }
     mass_overrides = {}
     for _mid in _TIAGO_SEARCH_MIDS:
@@ -808,7 +867,7 @@ try:
         camera_parent_prim = head_link
         print(f"[RoboLab] VR head camera mounted at {head_link}")
     elif camera_parent_prim == tiago_prim_path:
-        head_camera = rep.create.camera(position=(2.5, -1.5, 2.0), look_at=(1.1, 0.0, 0.8))
+        head_camera = rep.create.camera(position=(_robot_start_x + 1.7, -1.5, 2.0), look_at=(_robot_start_x + 0.3, 0.0, 0.8))
         camera_parent_prim = "/World"
     else:
         head_camera = rep.create.camera(position=(0, 0, 1.35), look_at=(1, 0, 1.15), parent=camera_parent_prim)
@@ -881,8 +940,15 @@ try:
     _external_render_product = None
     _external_replicator_dir = None
     if getattr(args, "external_camera", False):
-        _ext_pos = tuple(float(x) for x in args.external_camera_pos.split(","))
-        _ext_tgt = tuple(float(x) for x in args.external_camera_target.split(","))
+        if args.external_camera_pos == "auto":
+            _ext_pos = (_robot_start_x, 1.8, 1.6)
+        else:
+            _ext_pos = tuple(float(x) for x in args.external_camera_pos.split(","))
+        if args.external_camera_target == "auto":
+            _ext_tgt = (_robot_start_x + 0.3, 0.0, 0.8)
+        else:
+            _ext_tgt = tuple(float(x) for x in args.external_camera_target.split(","))
+        print(f"[RoboLab] External camera: pos={_ext_pos} target={_ext_tgt}")
         _external_camera = rep.create.camera(position=_ext_pos, look_at=_ext_tgt)
         _external_render_product = rep.create.render_product(
             _external_camera, (args.capture_width, args.capture_height)
@@ -974,16 +1040,14 @@ try:
         _pre_drive_count += 1
     print(f"[RoboLab] Pre-reset: configured {_pre_drive_count} joint drives (force mode, Kp=1e6)")
 
-    # Force a stable startup pose BEFORE world.reset().
-    # Position robot next to the table, facing it. Table in Small_House is at ~(1.5, 0.0).
-    # Robot at (0.7, 0.0) faces +X, so it's 0.8m from the table — within arm reach.
+    _robot_start_x = getattr(args, "robot_start_x", 0.8)
     try:
         tiago_xform = XFormPrim(prim_path=tiago_prim_path, name="tiago_root_pose")
         tiago_xform.set_world_pose(
-            position=np.array([0.8, 0.0, 0.08], dtype=np.float32),
+            position=np.array([_robot_start_x, 0.0, 0.08], dtype=np.float32),
             orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
         )
-        print("[RoboLab] Applied startup pose: pos=(0.8, 0.0, 0.08) facing +X toward table")
+        print(f"[RoboLab] Applied startup pose: pos=({_robot_start_x}, 0.0, 0.08) facing +X toward table")
     except Exception as err:
         print(f"[RoboLab] WARN: failed to apply startup pose stabilization: {err}")
 
@@ -997,22 +1061,34 @@ try:
         except Exception as err:
             print(f"[RoboLab] WARN: articulation initialize failed: {err}", flush=True)
 
-    # Anchor the articulation physics body at the same position as /World/Tiago.
-    # Without this, PhysX base_footprint drifts away from the visual XForm,
-    # causing FK/IK coordinate transforms to be wrong.
+    # Anchor the articulation physics body at the desired start position.
+    # Retry set_world_pose until PhysX actually places the robot there.
     if tiago_articulation and _use_fixed_base:
-        _INIT_POS = np.array([0.8, 0.0, 0.08], dtype=np.float32)
+        _INIT_POS = np.array([_robot_start_x, 0.0, 0.08], dtype=np.float32)
         _INIT_ORI = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-        try:
-            tiago_articulation.set_world_pose(position=_INIT_POS, orientation=_INIT_ORI)
-            for _ in range(10):
-                world.step(render=False)
-            _art_pos, _ = tiago_articulation.get_world_pose()
-            if _art_pos is not None:
-                _anchor_drift = abs(float(_art_pos[0]) - 0.8) + abs(float(_art_pos[1])) + abs(float(_art_pos[2]) - 0.08)
-                print(f"[RoboLab] Articulation anchored at ({_art_pos[0]:.4f},{_art_pos[1]:.4f},{_art_pos[2]:.4f}) drift={_anchor_drift:.4f}", flush=True)
-        except Exception as err:
-            print(f"[RoboLab] WARN: articulation anchor failed: {err}", flush=True)
+        _anchor_ok = False
+        for _anchor_attempt in range(5):
+            try:
+                tiago_articulation.set_world_pose(position=_INIT_POS, orientation=_INIT_ORI)
+                _zero_vel = np.zeros(len(resolve_dof_names(tiago_articulation)), dtype=np.float32)
+                tiago_articulation.set_joint_velocities(_zero_vel)
+                for _ in range(20):
+                    world.step(render=False)
+                _art_pos, _art_ori = tiago_articulation.get_world_pose()
+                if _art_pos is not None:
+                    _anchor_drift = (abs(float(_art_pos[0]) - _robot_start_x) +
+                                     abs(float(_art_pos[1])) +
+                                     abs(float(_art_pos[2]) - 0.08))
+                    print(f"[RoboLab] Anchor attempt {_anchor_attempt}: "
+                          f"pos=({_art_pos[0]:.4f},{_art_pos[1]:.4f},{_art_pos[2]:.4f}) "
+                          f"drift={_anchor_drift:.4f}", flush=True)
+                    if _anchor_drift < 0.05:
+                        _anchor_ok = True
+                        break
+            except Exception as err:
+                print(f"[RoboLab] WARN: anchor attempt {_anchor_attempt} failed: {err}", flush=True)
+        if not _anchor_ok:
+            print(f"[RoboLab] WARN: could not anchor robot at ({_robot_start_x}, 0, 0.08) after 5 attempts", flush=True)
 
     # Log robot frame pose for diagnostics.
     # fixedBase=True should hold the articulation root in place.
@@ -1081,11 +1157,11 @@ try:
             "torso_lift_joint":                 (2000.0, 400.0, 20000.0),
             "arm_1_joint":                      (1500.0, 300.0, 5000.0),
             "arm_2_joint":                      (1500.0, 300.0, 5000.0),
-            "arm_3_joint":                      (1200.0, 240.0, 3000.0),
+            "arm_3_joint":                      (1500.0, 300.0, 4000.0),
             "arm_4_joint":                      (1200.0, 240.0, 3000.0),
-            "arm_5_joint":                      (1200.0, 240.0, 2000.0),
-            "arm_6_joint":                      (1200.0, 240.0, 2000.0),
-            "arm_7_joint":                      (1200.0, 240.0, 2000.0),
+            "arm_5_joint":                      (500.0, 100.0, 800.0),
+            "arm_6_joint":                      (500.0, 100.0, 800.0),
+            "arm_7_joint":                      (500.0, 100.0, 800.0),
             "head_1_joint":                     (400.0,  80.0,  200.0),
             "head_2_joint":                     (400.0,  80.0,  200.0),
             "gripper_right_left_finger_joint":  (2000.0, 400.0, 500.0),
@@ -1589,13 +1665,13 @@ try:
     moveit_state_joint_names = fallback_moveit_joint_names + ["head_1_joint", "head_2_joint"]
     _default_joint_limits = {
         "torso_lift_joint": (0.0, 0.35),
-        "arm_1_joint": (-1.178, 1.571),
-        "arm_2_joint": (-1.178, 1.571),
-        "arm_3_joint": (-0.785, 3.927),
-        "arm_4_joint": (-0.393, 2.356),
-        "arm_5_joint": (-2.094, 2.094),
-        "arm_6_joint": (-1.414, 1.414),
-        "arm_7_joint": (-2.094, 2.094),
+        "arm_1_joint": (0.0, 2.68),
+        "arm_2_joint": (-1.50, 1.02),
+        "arm_3_joint": (-3.46, 1.57),
+        "arm_4_joint": (-0.32, 2.27),
+        "arm_5_joint": (-2.07, 2.07),
+        "arm_6_joint": (-1.39, 1.39),
+        "arm_7_joint": (-2.07, 2.07),
         "head_1_joint": (-1.4, 1.4),
         "head_2_joint": (-1.2, 0.9),
     }
@@ -1621,7 +1697,7 @@ try:
                         _canonical = f"arm_{parts[2]}_joint"
                 if _canonical in moveit_joint_limits:
                     _old = moveit_joint_limits[_canonical]
-                    moveit_joint_limits[_canonical] = (min(_old[0], _lo_val), max(_old[1], _hi_val))
+                    moveit_joint_limits[_canonical] = (max(_old[0], _lo_val), min(_old[1], _hi_val))
         _updated = {k: v for k, v in moveit_joint_limits.items() if v != _default_joint_limits.get(k)}
         if _updated:
             print(f"[RoboLab] Joint limits updated from USD: {_updated}")
@@ -1884,7 +1960,7 @@ try:
                         goal["_settle_targets"] = points[-1]["targets"] if points else {}
                     _settle_elapsed = now - goal["_settle_start"]
                     _settle_ok = False
-                    _settle_timeout = 25.0
+                    _settle_timeout = 30.0
                     _max_arm_err = 0.0
                     if goal["_settle_targets"] and tiago_articulation:
                         try:
@@ -2861,7 +2937,7 @@ try:
 
     _fk_tip_local_offset = np.zeros(3, dtype=np.float64)
 
-    _fk_robot_root_pos = np.array([0.8, 0.0, 0.08], dtype=np.float64)
+    _fk_robot_root_pos = np.array([_robot_start_x, 0.0, 0.08], dtype=np.float64)
     _fk_robot_root_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)  # w,x,y,z
 
     def _quat_to_rotmat(q):
@@ -3420,7 +3496,7 @@ try:
                 _base_xf = XFormPrim(prim_path=tiago_prim_path)
                 _base_pos, _base_rot = _base_xf.get_world_pose()
                 if _base_pos is not None:
-                    _drift = abs(float(_base_pos[0]) - 0.8) + abs(float(_base_pos[1])) + abs(float(_base_pos[2]) - 0.08)
+                    _drift = abs(float(_base_pos[0]) - _robot_start_x) + abs(float(_base_pos[1])) + abs(float(_base_pos[2]) - 0.08)
                     if _drift > 0.05:
                         print(f"[RoboLab] WARN: base drift={_drift:.3f}m pos=({float(_base_pos[0]):.3f},{float(_base_pos[1]):.3f},{float(_base_pos[2]):.3f})", flush=True)
                 if _base_rot is not None:
@@ -3854,7 +3930,7 @@ try:
                             _rw_q = float(_ro[0])
                             _rx_q, _ry_q, _rz_q = float(_ro[1]), float(_ro[2]), float(_ro[3])
                         except Exception:
-                            _rx, _ry, _rz = 0.8, 0.0, 0.08
+                            _rx, _ry, _rz = _robot_start_x, 0.0, 0.08
                             _rw_q, _rx_q, _ry_q, _rz_q = 1.0, 0.0, 0.0, 0.0
                         _lx, _ly, _lz = float(_ik_target_local[0]), float(_ik_target_local[1]), float(_ik_target_local[2])
                         _q = np.array([_rw_q, _rx_q, _ry_q, _rz_q], dtype=np.float64)

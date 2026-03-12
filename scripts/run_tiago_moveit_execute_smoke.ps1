@@ -16,7 +16,8 @@ param(
     [bool]$RetryOnCodeMinus4 = $true,
     [bool]$WarmupGoHome = $true,
     [string]$RosSetup = "C:\Users\max\Mambaforge\envs\ros2_humble\Library\local_setup.bat",
-    [string]$MoveGroupExe = "C:\Users\max\Mambaforge\envs\ros2_humble\Library\lib\moveit_ros_move_group\move_group.EXE"
+    [string]$MoveGroupExe = "C:\Users\max\Mambaforge\envs\ros2_humble\Library\lib\moveit_ros_move_group\move_group.EXE",
+    [double]$RobotStartX = 0.8
 )
 
 $ErrorActionPreference = "Stop"
@@ -275,7 +276,8 @@ try {
         "-Ros2DllDir", $condaRos2Bin,
         "-Ros2SitePackages", $condaRos2Site,
         "-EnvUsd", $EnvUsd,
-        "-TaskLabel", ($intentList -join "_")
+        "-TaskLabel", ($intentList -join "_"),
+        "-RobotStartX", $RobotStartX
     )
     if ($RequireRealTiago) {
         $smokeArgs += "-RequireRealTiago"
