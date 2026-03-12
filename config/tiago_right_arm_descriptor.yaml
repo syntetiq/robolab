@@ -1,0 +1,20 @@
+api_version: 1.0
+
+cspace:
+    - torso_lift_joint
+    - arm_right_1_joint
+    - arm_right_2_joint
+    - arm_right_3_joint
+    - arm_right_4_joint
+    - arm_right_5_joint
+    - arm_right_6_joint
+    - arm_right_7_joint
+
+root_link: base_footprint
+
+default_q: [0.15, 0.20, -1.10, -0.20, 1.90, -1.57, 1.37, 0.0]
+
+acceleration_limits: [5.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0, 15.0]
+jerk_limits: [2500.0, 7500.0, 7500.0, 7500.0, 7500.0, 7500.0, 7500.0, 7500.0]
+
+cspace_to_urdf_rules: []

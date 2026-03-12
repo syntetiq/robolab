@@ -1,0 +1,48 @@
+---
+description: Enforce physically realistic robot control — no teleport during data collection
+globs: scripts/data_collector_tiago.py,scripts/moveit_intent_bridge.py
+alwaysApply: false
+---
+
+# No Teleport — Physics-Only Robot Control
+
+## Core Principle
+
+This project collects training data for imitation learning. All robot motion
+during a task execution **must be physically realistic**. Teleporting joints
+(`set_joint_positions`) produces trajectories that are impossible on real
+hardware and therefore **useless for training**.
+
+## Rules
+
+1. **Teleport is allowed ONLY for initial scene reset** — placing the robot
+   into its start pose before a task begins. After the first `world.step()`
+   of a task episode, no teleport may occur.
+
+2. **All task motion must use PD position drives** (`ArticulationAction` with
+   `joint_positions` targets) or velocity drives. The physics engine must
+   integrate forces to move the joints.
+
+3. **Gripper closure must generate real contact forces.** The gripper PD drive
+   must squeeze the object with enough friction to lift it. If the object
+   slips, tune drive gains and friction — do not teleport.
+
+4. **Lifting must be physical.** Moving `torso_lift_joint` or arm joints
+   upward must happen via PD targets over multiple physics steps so the
+   gripper exerts upward force on the object through contact.
+
+5. **No snap/teleport fallback on settle timeout.** If a PD trajectory does
+   not converge within the timeout, log a warning and mark the episode as
+   failed — do not silently teleport to "fix" it.
+
+6. **`_set_joint_positions_direct` must not be called** during task execution
+   steps (pre-grasp, grasp, lift, place, return). It may only be used in
+   `_reset_to_start_pose()` or equivalent initialization.
+
+## What to tune instead of teleporting
+
+- `stiffness` / `damping` / `maxForce` per joint in `_DRIVE_PARAMS`
+- `staticFriction` / `dynamicFriction` on gripper fingers and objects
+- Trajectory `duration` and interpolation step count
+- Physics `solver_position_iteration_count` (currently 64)
+- `contactOffset` / `restOffset` on collision shapes
