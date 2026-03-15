@@ -17,6 +17,234 @@ import math
 import os
 import sys
 import time
+from types import SimpleNamespace
+
+import yaml
+
+
+# ---------------------------------------------------------------------------
+# Layered config system: DEFAULTS <- robot_profile.yaml <- task_config.json
+# ---------------------------------------------------------------------------
+DEFAULTS = {
+    # --- Robot physical constants ---
+    "spawn_z": 0.08,
+    "wheel_radius": 0.0985,
+    "wheel_separation_x": 0.222,
+    "wheel_separation_y": 0.222,
+    "wheel_names": [
+        "wheel_front_left_joint", "wheel_front_right_joint",
+        "wheel_rear_left_joint", "wheel_rear_right_joint",
+    ],
+    "drive_params": {
+        "torso_lift_joint":  (3000.0, 600.0, 25000.0),
+        "arm_1_joint":       (1500.0, 300.0, 5000.0),
+        "arm_2_joint":       (1500.0, 300.0, 5000.0),
+        "arm_3_joint":       (1500.0, 300.0, 4000.0),
+        "arm_4_joint":       (1000.0, 200.0, 2000.0),
+        "arm_5_joint":       (500.0, 100.0, 800.0),
+        "arm_6_joint":       (500.0, 100.0, 800.0),
+        "arm_7_joint":       (500.0, 100.0, 800.0),
+        "head_1_joint":      (400.0, 80.0, 500.0),
+        "head_2_joint":      (400.0, 80.0, 500.0),
+        "gripper_left_left_finger_joint":   (5000.0, 800.0, 2000.0),
+        "gripper_left_right_finger_joint":  (5000.0, 800.0, 2000.0),
+        "gripper_right_left_finger_joint":  (5000.0, 800.0, 2000.0),
+        "gripper_right_right_finger_joint": (5000.0, 800.0, 2000.0),
+    },
+    "default_drive": (400.0, 80.0, 500.0),
+    "roller_drive": {"stiffness": 0.0, "damping": 5.0, "max_force": 100.0},
+    "wheel_drive": {"stiffness": 0.0, "damping": 500.0, "max_force": 50000.0},
+    "torso_speed": 0.05,
+    "torso_min": 0.0,
+    "torso_max": 0.35,
+    "gripper_open": 0.045,
+    "gripper_closed": 0.0,
+    "gripper_grasp_mug": 0.02,
+    "gripper_joints": [
+        "gripper_right_left_finger_joint",
+        "gripper_right_right_finger_joint",
+    ],
+    "home_joints": {
+        "torso_lift_joint": 0.0,
+        "arm_right_1_joint": 0.07, "arm_right_2_joint": -1.0,
+        "arm_right_3_joint": -0.20, "arm_right_4_joint": 1.50,
+        "arm_right_5_joint": -1.57, "arm_right_6_joint": 0.10,
+        "arm_right_7_joint": 0.0,
+        "arm_left_1_joint": 0.07, "arm_left_2_joint": -1.0,
+        "arm_left_3_joint": -0.20, "arm_left_4_joint": 1.50,
+        "arm_left_5_joint": -1.57, "arm_left_6_joint": 0.10,
+        "arm_left_7_joint": 0.0,
+        "head_1_joint": 0.0, "head_2_joint": -0.20,
+    },
+    "arm_poses": {
+        "home":             {"R": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0], "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+        "forward":          {"R": [1.50, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],        "L": [1.50, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+        "down":             {"R": [0.0, 0.20, -0.20, 0.0, 0.0, 0.0, 0.0],      "L": [0.0, 0.20, -0.20, 0.0, 0.0, 0.0, 0.0]},
+        "Y_shape":          {"R": [0.20, -1.10, -0.20, 0.0, 0.0, 0.0, 0.0],    "L": [0.20, -1.10, -0.20, 0.0, 0.0, 0.0, 0.0]},
+        "heart":            {"R": [1.40, -0.30, 2.50, 2.20, -1.00, -1.00, 0.0], "L": [1.40, -0.30, 2.50, 2.20, 1.00, 1.00, 0.0]},
+        "pre_grasp":        {"R": [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0],      "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+        "grasp":            {"R": [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0],      "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+        "lift":             {"R": [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0],      "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+        "place_right":      {"R": [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0],      "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+        "pre_grasp_center": {"R": [1.50, 0.0, 0.0, -0.25, -1.57, 0.0, 0.0],   "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+        "grasp_center":     {"R": [1.50, 0.0, 0.0, -0.25, -1.57, 0.0, 0.0],   "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+        "pre_grasp_top":    {"R": [1.50, 0.0, 0.0, -0.35, -1.57, 0.0, 0.0],   "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+        "grasp_top":        {"R": [1.50, 0.0, 0.0, -0.35, -1.57, 0.0, 0.0],   "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+        "lift_top":         {"R": [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0],      "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+    },
+    # --- Safety ---
+    "table_south_boundary_y": 2.75,
+    "furniture_zones": [
+        {"name": "fridge",       "cx": -1.35, "cy": 3.45, "hw": 0.50, "hd": 0.50},
+        {"name": "sink_cabinet", "cx":  0.45, "cy": 3.60, "hw": 0.50, "hd": 0.40},
+        {"name": "table",        "cx":  1.35, "cy": 3.55, "hw": 0.50, "hd": 0.50},
+    ],
+    "nav_margin": 0.35,
+    # --- Control timing (steps) ---
+    "grasp_settle_steps": 360,
+    "settle_steps": 240,
+    "extend_arm_steps": 600,
+    "rotate_timeout_steps": 1200,
+    "drive_to_mug_timeout_steps": 1800,
+    "settle_at_table_steps": 240,
+    "approach_timeout_steps": 1200,
+    "descend_timeout_steps": 1500,
+    "close_gripper_step": 45,
+    "close_gripper_timeout": 270,
+    "verify_grasp_min_steps": 60,
+    "lift_interpolation_steps": 600,
+    "lift_verify_steps": 240,
+    "lift_timeout_steps": 1200,
+    "place_descent_steps": 600,
+    # --- Grasp tuning ---
+    "pre_grasp_pose": "pre_grasp_top",
+    "j4_extended": -0.35,
+    "j4_retracted": 0.30,
+    "torso_approach": 0.35,
+    "torso_settle": 0.15,
+    "top_xy_tol": 0.02,
+    "top_descend_clearance": 0.015,
+    "top_verify_xy_tol": 0.05,
+    "gripper_close_value": 0.018,
+    "gripper_hold_threshold": 0.01,
+    # --- Navigation tuning ---
+    "rotate_tolerance_deg": 5.0,
+    "rotate_speed_fast": 0.3,
+    "rotate_speed_slow": 0.15,
+    "rotate_speed_threshold_deg": 20.0,
+    "drive_speed_cap": 0.12,
+    "y_align_tolerance": 0.005,
+    "y_align_speed": 0.06,
+    "approach_speed": 0.05,
+    "x_guard_extra": 0.20,
+    "stuck_threshold": 0.002,
+    "stuck_trigger_steps": 600,
+    "stuck_phase_steps": 300,
+    "stuck_lateral_factor": 0.3,
+    "stuck_backward_factor": 0.4,
+    "velocity_norm_scale": 2.0,
+    "velocity_min_dist": 0.01,
+    # --- Placement tuning ---
+    "table_top_z": 0.80,
+    "table_cx": 1.35,
+    "table_cy": 3.45,
+    "table_half_w": 0.40,
+    "table_half_d": 0.40,
+    "bounds_margin": 0.05,
+    "abort_below_z_offset": -0.05,
+    "release_z_offset": 0.02,
+    "success_z_offset": 0.15,
+    "torso_hold": 0.35,
+    # --- Physics ---
+    "physics_dt": 1.0 / 120.0,
+    "rendering_dt": 1.0 / 60.0,
+    "log_every": 6,
+    "console_every": 60,
+    "render_every": 2,
+}
+
+
+def _deep_merge(base, override):
+    """Recursively merge override dict into base dict. Override wins for leaf values."""
+    result = dict(base)
+    for k, v in override.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
+def load_robot_profile(yaml_path):
+    """Load robot profile YAML and flatten into config-compatible dict."""
+    with open(yaml_path, "r", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    flat = {}
+    # Flatten wheel section
+    wheel = raw.get("wheel", {})
+    if "radius" in wheel:
+        flat["wheel_radius"] = wheel["radius"]
+    if "separation_x" in wheel:
+        flat["wheel_separation_x"] = wheel["separation_x"]
+    if "separation_y" in wheel:
+        flat["wheel_separation_y"] = wheel["separation_y"]
+    if "names" in wheel:
+        flat["wheel_names"] = wheel["names"]
+    # Drive params: convert lists to tuples
+    dp = raw.get("drive_params", {})
+    if dp:
+        flat["drive_params"] = {k: tuple(v) for k, v in dp.items()}
+    if "default_drive" in raw:
+        flat["default_drive"] = tuple(raw["default_drive"])
+    for key in ("roller_drive", "wheel_drive"):
+        if key in raw:
+            flat[key] = raw[key]
+    # Scalar robot params
+    for key in ("spawn_z", "torso_speed", "torso_min", "torso_max"):
+        if key in raw:
+            flat[key] = raw[key]
+    # Gripper
+    gripper = raw.get("gripper", {})
+    if "open" in gripper:
+        flat["gripper_open"] = gripper["open"]
+    if "closed" in gripper:
+        flat["gripper_closed"] = gripper["closed"]
+    if "grasp_mug" in gripper:
+        flat["gripper_grasp_mug"] = gripper["grasp_mug"]
+    if "joints" in gripper:
+        flat["gripper_joints"] = gripper["joints"]
+    # Home joints, arm poses
+    if "home_joints" in raw:
+        flat["home_joints"] = raw["home_joints"]
+    if "arm_poses" in raw:
+        flat["arm_poses"] = raw["arm_poses"]
+    return flat
+
+
+def _flatten_task_config_sections(task_cfg):
+    """Extract safety/control/grasp/navigation/placement/physics sections from task JSON into flat dict."""
+    flat = {}
+    for section_key in ("safety", "control", "grasp", "navigation", "placement", "physics"):
+        section = task_cfg.get(section_key, {})
+        for k, v in section.items():
+            flat[k] = v
+    return flat
+
+
+def build_config(defaults, robot_profile_dict=None, task_config_dict=None):
+    """Merge config layers: defaults <- robot_profile <- task_config. Returns SimpleNamespace."""
+    merged = dict(defaults)
+    if robot_profile_dict:
+        merged = _deep_merge(merged, robot_profile_dict)
+    if task_config_dict:
+        flat_task = _flatten_task_config_sections(task_config_dict)
+        merged = _deep_merge(merged, flat_task)
+    return SimpleNamespace(**merged)
+
+
+# Global config — populated after CLI parse and task config load
+cfg = SimpleNamespace(**DEFAULTS)
+
 
 # ---------------------------------------------------------------------------
 # Scene constants (needed for grasp CLI defaults)
@@ -162,33 +390,46 @@ if getattr(args, "task_config", None):
         raise FileNotFoundError(f"Task config not found: {task_config_path}")
     with open(task_config_path, "r", encoding="utf-8") as f:
         args._task_config_dict = json.load(f)
-    cfg = args._task_config_dict
+    _tcfg = args._task_config_dict
     args.grasp = True
     args.drive_base = True
-    scene = cfg.get("scene", {})
+    scene = _tcfg.get("scene", {})
     args.fridge = scene.get("fridge", True)
     args.dishwasher = scene.get("dishwasher", True)
     args.sink = scene.get("sink", True)
     args.plate_fruit = scene.get("plate_fruit", True)
-    robot_cfg = cfg.get("robot", {})
+    robot_cfg = _tcfg.get("robot", {})
     if "model" in robot_cfg:
         args.model = robot_cfg["model"]
     if "gripper_length_m" in robot_cfg:
         args.gripper_length_m = float(robot_cfg["gripper_length_m"])
-    global_cfg = cfg.get("global", {})
+    global_cfg = _tcfg.get("global", {})
     if "drive_speed_ms" in global_cfg:
         args.drive_speed = float(global_cfg["drive_speed_ms"])
     if "approach_clearance_m" in global_cfg:
         args.approach_clearance = float(global_cfg["approach_clearance_m"])
     if "torso_speed" in global_cfg:
         args.torso_speed = float(global_cfg["torso_speed"])
-    if cfg.get("kitchen_scene"):
-        args.kitchen_scene = cfg["kitchen_scene"]
+    if _tcfg.get("kitchen_scene"):
+        args.kitchen_scene = _tcfg["kitchen_scene"]
+    # Load robot profile YAML if specified, then build merged config
+    _robot_profile = {}
+    _profile_path = robot_cfg.get("robot_profile")
+    if _profile_path:
+        if not os.path.isabs(_profile_path):
+            _profile_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), _profile_path)
+        if os.path.isfile(_profile_path):
+            _robot_profile = load_robot_profile(_profile_path)
+            print(f"[Bench] Robot profile loaded: {_profile_path}")
+        else:
+            print(f"[Bench] WARNING: robot_profile not found: {_profile_path}, using defaults")
+    cfg = build_config(DEFAULTS, _robot_profile, _tcfg)
     print(f"[Bench] Task config loaded: {task_config_path}")
-    print(f"[Bench]   episode_name={cfg.get('episode_name', '')} scene: fridge={args.fridge} dishwasher={args.dishwasher} sink={args.sink} plate_fruit={args.plate_fruit}"
+    print(f"[Bench]   episode_name={_tcfg.get('episode_name', '')} scene: fridge={args.fridge} dishwasher={args.dishwasher} sink={args.sink} plate_fruit={args.plate_fruit}"
           + (f" kitchen_scene={args.kitchen_scene}" if getattr(args, "kitchen_scene", None) else ""))
 else:
     args._task_config_dict = None
+    cfg = build_config(DEFAULTS)
     args.dishwasher = getattr(args, "dishwasher", None)
     args.sink = getattr(args, "sink", None)
     args.plate_fruit = getattr(args, "plate_fruit", None)
@@ -318,14 +559,10 @@ GRASP_APPROACH_CLEARANCE = 0.90
 # GRASP_MUG_X, GRASP_MUG_Y set after parse (table center when --grasp, else near edge)
 GRASP_MUG_Z = GRASP_TABLE_HEIGHT + 0.05
 
-GRIPPER_OPEN = 0.045
-GRIPPER_CLOSED = 0.0
-# Squeeze target for mug (firm grip without over-closing; mug ~40mm → ~0.02)
-GRIPPER_GRASP_MUG = 0.02
-GRIPPER_JOINTS = [
-    "gripper_right_left_finger_joint",
-    "gripper_right_right_finger_joint",
-]
+GRIPPER_OPEN = cfg.gripper_open
+GRIPPER_CLOSED = cfg.gripper_closed
+GRIPPER_GRASP_MUG = cfg.gripper_grasp_mug
+GRIPPER_JOINTS = list(cfg.gripper_joints)
 
 
 def _create_white_tile_material(stage, mat_path):
@@ -1126,23 +1363,8 @@ def resolve_dof_names(articulation):
 # ---------------------------------------------------------------------------
 # Drive configuration
 # ---------------------------------------------------------------------------
-DRIVE_PARAMS = {
-    "torso_lift_joint":  (3000.0, 600.0, 25000.0),
-    "arm_1_joint":       (1500.0, 300.0, 5000.0),
-    "arm_2_joint":       (1500.0, 300.0, 5000.0),
-    "arm_3_joint":       (1500.0, 300.0, 4000.0),
-    "arm_4_joint":       (1000.0, 200.0, 2000.0),
-    "arm_5_joint":       (500.0, 100.0, 800.0),
-    "arm_6_joint":       (500.0, 100.0, 800.0),
-    "arm_7_joint":       (500.0, 100.0, 800.0),
-    "head_1_joint":      (400.0, 80.0, 500.0),
-    "head_2_joint":      (400.0, 80.0, 500.0),
-    "gripper_left_left_finger_joint":   (5000.0, 800.0, 2000.0),
-    "gripper_left_right_finger_joint":  (5000.0, 800.0, 2000.0),
-    "gripper_right_left_finger_joint":  (5000.0, 800.0, 2000.0),
-    "gripper_right_right_finger_joint": (5000.0, 800.0, 2000.0),
-}
-DEFAULT_DRIVE = (400.0, 80.0, 500.0)
+DRIVE_PARAMS = cfg.drive_params
+DEFAULT_DRIVE = cfg.default_drive
 
 
 def configure_drives(prim_path):
@@ -1165,9 +1387,9 @@ def configure_drives(prim_path):
             drive_type = "angular" if is_rev else "linear"
             drive_api = UsdPhysics.DriveAPI.Apply(jp, drive_type)
             drive_api.CreateTypeAttr("acceleration")
-            drive_api.CreateStiffnessAttr(0.0)
-            drive_api.CreateDampingAttr(5.0)
-            drive_api.CreateMaxForceAttr(100.0)
+            drive_api.CreateStiffnessAttr(cfg.roller_drive["stiffness"])
+            drive_api.CreateDampingAttr(cfg.roller_drive["damping"])
+            drive_api.CreateMaxForceAttr(cfg.roller_drive["max_force"])
             roller_count += 1
             count += 1
             continue
@@ -1177,9 +1399,9 @@ def configure_drives(prim_path):
             drive_type = "angular" if is_rev else "linear"
             drive_api = UsdPhysics.DriveAPI.Apply(jp, drive_type)
             drive_api.CreateTypeAttr("acceleration")
-            drive_api.CreateStiffnessAttr(0.0)
-            drive_api.CreateDampingAttr(500.0)
-            drive_api.CreateMaxForceAttr(50000.0)
+            drive_api.CreateStiffnessAttr(cfg.wheel_drive["stiffness"])
+            drive_api.CreateDampingAttr(cfg.wheel_drive["damping"])
+            drive_api.CreateMaxForceAttr(cfg.wheel_drive["max_force"])
             count += 1
             continue
 
@@ -1208,29 +1430,14 @@ def configure_drives(prim_path):
 # Arms folded close to body, torso at minimum, head centered.
 # Based on PAL standard tuck configuration for safe navigation.
 # ---------------------------------------------------------------------------
-HOME_JOINTS = {
-    "torso_lift_joint": 0.0,
-    "arm_right_1_joint": 0.07, "arm_right_2_joint": -1.0,
-    "arm_right_3_joint": -0.20, "arm_right_4_joint": 1.50,
-    "arm_right_5_joint": -1.57, "arm_right_6_joint": 0.10,
-    "arm_right_7_joint": 0.0,
-    "arm_left_1_joint": 0.07, "arm_left_2_joint": -1.0,
-    "arm_left_3_joint": -0.20, "arm_left_4_joint": 1.50,
-    "arm_left_5_joint": -1.57, "arm_left_6_joint": 0.10,
-    "arm_left_7_joint": 0.0,
-    "head_1_joint": 0.0, "head_2_joint": -0.20,
-}
+HOME_JOINTS = dict(cfg.home_joints)
 
-TORSO_SPEED = 0.05  # m/s — PAL spec max is 0.07 m/s, use safe 0.05
+TORSO_SPEED = cfg.torso_speed
 
-# TIAGo omni-base wheel parameters
-WHEEL_RADIUS = 0.0985  # meters
-WHEEL_SEPARATION_X = 0.222  # front-to-rear half-distance (meters)
-WHEEL_SEPARATION_Y = 0.222  # left-to-right half-distance (meters)
-WHEEL_NAMES = [
-    "wheel_front_left_joint", "wheel_front_right_joint",
-    "wheel_rear_left_joint", "wheel_rear_right_joint",
-]
+WHEEL_RADIUS = cfg.wheel_radius
+WHEEL_SEPARATION_X = cfg.wheel_separation_x
+WHEEL_SEPARATION_Y = cfg.wheel_separation_y
+WHEEL_NAMES = list(cfg.wheel_names)
 
 
 def omni_wheel_velocities(vx, vy, omega_z):
@@ -1252,69 +1459,7 @@ def omni_wheel_velocities(vx, vy, omega_z):
 # Limits: 1[-1.18,1.57] 2[-1.18,1.57] 3[-0.79,3.93] 4[-0.39,2.36]
 #         5[-2.09,2.09] 6[-1.41,1.41] 7[-2.09,2.09]
 # ---------------------------------------------------------------------------
-ARM_POSES = {
-    "home": {
-        "R": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0],
-        "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0],
-    },
-    "forward": {
-        "R": [1.50, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        "L": [1.50, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    },
-    "down": {
-        "R": [0.0, 0.20, -0.20, 0.0, 0.0, 0.0, 0.0],
-        "L": [0.0, 0.20, -0.20, 0.0, 0.0, 0.0, 0.0],
-    },
-    "Y_shape": {
-        "R": [0.20, -1.10, -0.20, 0.0, 0.0, 0.0, 0.0],
-        "L": [0.20, -1.10, -0.20, 0.0, 0.0, 0.0, 0.0],
-    },
-    "heart": {
-        "R": [1.40, -0.30, 2.50, 2.20, -1.00, -1.00, 0.0],
-        "L": [1.40, -0.30, 2.50, 2.20, 1.00, 1.00, 0.0],
-    },
-    # Grasp poses — all use J1=1.50 (horizontal forward), J5=-1.57 (gripper rotated).
-    # Z-height controlled by torso, NOT by J1.
-    # At torso=0.35, tool_Z≈1.03. At torso=0.15, tool_Z≈0.878. Mug top≈0.86.
-    "pre_grasp": {
-        "R": [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0],
-        "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0],
-    },
-    "grasp": {
-        "R": [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0],
-        "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0],
-    },
-    "lift": {
-        "R": [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0],
-        "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0],
-    },
-    "place_right": {
-        "R": [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0],
-        "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0],
-    },
-    # Center table: elbow slightly bent (J4=-0.25) so tool reaches lower at Y=0
-    "pre_grasp_center": {
-        "R": [1.50, 0.0, 0.0, -0.25, -1.57, 0.0, 0.0],
-        "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0],
-    },
-    "grasp_center": {
-        "R": [1.50, 0.0, 0.0, -0.25, -1.57, 0.0, 0.0],
-        "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0],
-    },
-    # Top-grasp variants: slightly more elbow flex to keep gripper above mug during overhead alignment.
-    "pre_grasp_top": {
-        "R": [1.50, 0.0, 0.0, -0.35, -1.57, 0.0, 0.0],
-        "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0],
-    },
-    "grasp_top": {
-        "R": [1.50, 0.0, 0.0, -0.35, -1.57, 0.0, 0.0],
-        "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0],
-    },
-    "lift_top": {
-        "R": [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0],
-        "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0],
-    },
-}
+ARM_POSES = dict(cfg.arm_poses)
 
 ARM_JOINT_NAMES_R = [f"arm_right_{i}_joint" for i in range(1, 8)]
 ARM_JOINT_NAMES_L = [f"arm_left_{i}_joint" for i in range(1, 8)]
@@ -1912,9 +2057,9 @@ def run_grasp_pick_only_cycle(
                 if entering:
                     _set_arm("home")
                     _set_gripper(GRIPPER_OPEN)
-                    _set_torso(0.15, torso_speed, sim_time)
+                    _set_torso(cfg.torso_settle, torso_speed, sim_time)
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
-                if steps_in_state >= 360:
+                if steps_in_state >= cfg.grasp_settle_steps:
                     obj = _get_object_pos()
                     if obj is not None:
                         init_mug_z = obj[2]
@@ -1922,9 +2067,9 @@ def run_grasp_pick_only_cycle(
 
             elif state == "extend_arm":
                 if entering:
-                    _set_arm("pre_grasp_top")
+                    _set_arm(cfg.pre_grasp_pose)
                     _set_torso(torso_approach, torso_speed, sim_time)
-                if steps_in_state >= 600:
+                if steps_in_state >= cfg.extend_arm_steps:
                     _transition("rotate_to_target")
 
             elif state == "rotate_to_target":
@@ -1942,14 +2087,14 @@ def run_grasp_pick_only_cycle(
                         while yaw_err < -180: yaw_err += 360
                         if steps_in_state % 60 == 0:
                             print(f"[Grasp] rotate_to_target t={sim_time:.1f}s: cur_yaw={cur_yaw:.1f} target_yaw={rotate_target_yaw:.1f} err={yaw_err:.1f}")
-                        if abs(yaw_err) < 5.0:
+                        if abs(yaw_err) < cfg.rotate_tolerance_deg:
                             _set_wheels(omni_wheel_velocities(0, 0, 0))
                             _transition("drive_to_mug")
                         else:
-                            rot_speed = 0.3 if abs(yaw_err) > 20 else 0.15
+                            rot_speed = cfg.rotate_speed_fast if abs(yaw_err) > cfg.rotate_speed_threshold_deg else cfg.rotate_speed_slow
                             omega = rot_speed if yaw_err > 0 else -rot_speed
                             _set_wheels(omni_wheel_velocities(0, 0, omega))
-                if steps_in_state >= 1200:
+                if steps_in_state >= cfg.rotate_timeout_steps:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
                     _transition("drive_to_mug")
 
@@ -1970,7 +2115,7 @@ def run_grasp_pick_only_cycle(
                     c, s = math.cos(yaw_rad), math.sin(yaw_rad)
                     dx_r = dx_world * c + dy_world * s
                     dy_r = -dx_world * s + dy_world * c
-                    x_guard = approach_clearance_m + 0.20
+                    x_guard = approach_clearance_m + cfg.x_guard_extra
                     if steps_in_state % 60 == 0:
                         print(f"[Grasp] drive_to_mug t={sim_time:.1f}s: "
                               f"tool=({tx:.3f},{ty:.3f},{tz:.3f}) "
@@ -1978,26 +2123,26 @@ def run_grasp_pick_only_cycle(
                     if (not drive_y_aligned) and dx_r < -x_guard:
                         _set_wheels(omni_wheel_velocities(drive_speed, 0, 0))
                     elif not drive_y_aligned:
-                        if abs(dy_r) <= 0.005:
+                        if abs(dy_r) <= cfg.y_align_tolerance:
                             drive_y_aligned = True
                             _set_wheels(omni_wheel_velocities(0, 0, 0))
                         else:
-                            vy = 0.06 * (1.0 if dy_r < 0 else -1.0)
+                            vy = cfg.y_align_speed * (1.0 if dy_r < 0 else -1.0)
                             _set_wheels(omni_wheel_velocities(0, vy, 0))
                     else:
                         if dx_r >= -approach_clearance_m:
                             _set_wheels(omni_wheel_velocities(0, 0, 0))
                             _transition("settle_at_table")
                         else:
-                            _set_wheels(omni_wheel_velocities(min(drive_speed, 0.12), 0, 0))
-                if steps_in_state >= 1800:
+                            _set_wheels(omni_wheel_velocities(min(drive_speed, cfg.drive_speed_cap), 0, 0))
+                if steps_in_state >= cfg.drive_to_mug_timeout_steps:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
                     _transition("settle_at_table")
 
             elif state == "settle_at_table":
                 if entering:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
-                if steps_in_state >= 240:
+                if steps_in_state >= cfg.settle_at_table_steps:
                     _transition("approach_overhead")
 
             elif state == "approach_overhead":
@@ -2021,10 +2166,11 @@ def run_grasp_pick_only_cycle(
                         c_oh, s_oh = math.cos(yaw_oh), math.sin(yaw_oh)
                         dx_r_oh = dx_w * c_oh + dy_w * s_oh
                         dy_r_oh = -dx_w * s_oh + dy_w * c_oh
-                        vx = -0.05 if dx_r_oh > top_xy_tol else (0.05 if dx_r_oh < -top_xy_tol else 0.0)
-                        vy = -0.05 if dy_r_oh > top_xy_tol else (0.05 if dy_r_oh < -top_xy_tol else 0.0)
+                        _aspd = cfg.approach_speed
+                        vx = -_aspd if dx_r_oh > top_xy_tol else (_aspd if dx_r_oh < -top_xy_tol else 0.0)
+                        vy = -_aspd if dy_r_oh > top_xy_tol else (_aspd if dy_r_oh < -top_xy_tol else 0.0)
                         _set_wheels(omni_wheel_velocities(vx, vy, 0))
-                if steps_in_state >= 1200:
+                if steps_in_state >= cfg.approach_timeout_steps:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
                     _transition("descend_vertical")
 
@@ -2042,7 +2188,7 @@ def run_grasp_pick_only_cycle(
                         _freeze_torso()
                         grasp_tool_z = tz
                         _transition("close_gripper_top")
-                if steps_in_state >= 1500:
+                if steps_in_state >= cfg.descend_timeout_steps:
                     _freeze_torso()
                     grasp_tool_z = tz if tz else 0.9
                     _transition("close_gripper_top")
@@ -2050,22 +2196,22 @@ def run_grasp_pick_only_cycle(
             elif state == "close_gripper_top":
                 if entering:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
-                    _set_gripper(0.018)
-                if steps_in_state == 45:
+                    _set_gripper(cfg.gripper_close_value)
+                if steps_in_state == cfg.close_gripper_step:
                     _set_gripper(GRIPPER_CLOSED)
-                if steps_in_state >= 270:
+                if steps_in_state >= cfg.close_gripper_timeout:
                     _transition("verify_grasp")
 
             elif state == "verify_grasp":
                 if entering:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
-                if steps_in_state >= 60:
+                if steps_in_state >= cfg.verify_grasp_min_steps:
                     tx, ty, tz = _get_tool_pos()
                     mx, my, mz = _get_object_pos()
                     gr_open = _get_right_gripper_opening()
                     xy_dist = math.hypot((tx or 0) - (mx or 0), (ty or 0) - (my or 0))
                     xy_ok = (tx is not None and ty is not None and mx is not None and my is not None and xy_dist <= top_verify_xy_tol)
-                    hold_ok = (gr_open is not None and gr_open >= 0.01)
+                    hold_ok = (gr_open is not None and gr_open >= cfg.gripper_hold_threshold)
                     grasp_mug_z_at_close = mz if mz is not None else None
                     print(f"[Grasp] verify_grasp: xy_ok={xy_ok} hold_ok={hold_ok} xy_dist={xy_dist:.4f} gr_open={gr_open}")
                     if not hold_ok:
@@ -2076,11 +2222,11 @@ def run_grasp_pick_only_cycle(
 
             elif state == "lift_mug":
                 if entering:
-                    _set_torso(0.35, torso_speed, sim_time)
+                    _set_torso(cfg.torso_hold, torso_speed, sim_time)
                     grasp_verified_hold_step = None
-                lift_alpha = min(1.0, steps_in_state / 600.0)
-                j4_target = 0.30
-                j4_val = -0.35 + lift_alpha * (j4_target - (-0.35))
+                lift_alpha = min(1.0, steps_in_state / float(cfg.lift_interpolation_steps))
+                j4_target = cfg.j4_retracted
+                j4_val = cfg.j4_extended + lift_alpha * (j4_target - cfg.j4_extended)
                 current_targets["arm_right_4_joint"] = j4_val
                 _apply_targets(articulation, dof_names, current_targets)
                 tx, ty, tz = _get_tool_pos()
@@ -2093,7 +2239,7 @@ def run_grasp_pick_only_cycle(
                           f"tool_z={tz:.3f} mug_z={mz:.3f} mug_dz={mug_dz:.4f} tool_dz={tool_dz:.4f} "
                           f"need_mug_dz={top_lift_test_height:.3f} need_tool_dz={lift_height_m:.3f} gr_open={gr_o}")
                 if (
-                    steps_in_state >= 240 and
+                    steps_in_state >= cfg.lift_verify_steps and
                     grasp_mug_z_at_close is not None and
                     mz is not None and
                     mz >= (grasp_mug_z_at_close + top_lift_test_height)
@@ -2104,7 +2250,7 @@ def run_grasp_pick_only_cycle(
                         lift = (tz or 0) - (grasp_tool_z or 0)
                         if lift >= lift_height_m:
                             _transition("rotate_shift")
-                if steps_in_state >= 1200:
+                if steps_in_state >= cfg.lift_timeout_steps:
                     print(f"[Grasp] lift_mug TIMEOUT -- mug not lifted, failing")
                     grasp_aborted = True
                     break
@@ -2244,8 +2390,8 @@ def run_door_open_close_cycle(
                 dy = target_base_y - by
                 if abs(dx) < 0.05 and abs(dy) < 0.05:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
-                    _set_arm("pre_grasp_top")
-                    current_targets["torso_lift_joint"] = 0.35
+                    _set_arm(cfg.pre_grasp_pose)
+                    current_targets["torso_lift_joint"] = cfg.torso_hold
                     _apply_targets(articulation, dof_names, current_targets)
                     state = "approach_and_grasp"
                     state_start_step = step
@@ -2347,13 +2493,9 @@ def run_door_open_close_cycle(
 # ---------------------------------------------------------------------------
 # Waypoint navigation: compute intermediate waypoints around furniture
 # ---------------------------------------------------------------------------
-FURNITURE_ZONES = [
-    {"name": "fridge",      "cx": -1.35, "cy": 3.45, "hw": 0.50, "hd": 0.50},
-    {"name": "sink_cabinet","cx":  0.45, "cy": 3.60, "hw": 0.50, "hd": 0.40},
-    {"name": "table",       "cx":  1.35, "cy": 3.55, "hw": 0.50, "hd": 0.50},
-]
-_NAV_MARGIN = 0.35
-TABLE_SOUTH_BOUNDARY_Y = 2.75
+FURNITURE_ZONES = list(cfg.furniture_zones)
+_NAV_MARGIN = cfg.nav_margin
+TABLE_SOUTH_BOUNDARY_Y = cfg.table_south_boundary_y
 
 def _segment_intersects_rect(x0, y0, x1, y1, cx, cy, hw, hd):
     """Check if line segment (x0,y0)-(x1,y1) intersects axis-aligned rect centered at (cx,cy) with half-sizes hw,hd."""
@@ -2564,23 +2706,23 @@ def run_task_config_episode(
                                 print(f"[Nav] Waypoint {wp_idx - 1} reached, advancing to wp {wp_idx}")
                                 continue
 
-                        if prev_dist is not None and dist >= prev_dist - 0.002:
+                        if prev_dist is not None and dist >= prev_dist - cfg.stuck_threshold:
                             stuck_counter += 1
                         else:
                             stuck_counter = max(0, stuck_counter - 5)
                         prev_dist = dist
 
-                        if stuck_counter >= 600:
-                            stuck_phase = (stuck_counter // 300) % 4
+                        if stuck_counter >= cfg.stuck_trigger_steps:
+                            stuck_phase = (stuck_counter // cfg.stuck_phase_steps) % 4
                             yaw_rad = 0.0
                             if ori is not None:
                                 _, _, yaw_deg = quat_to_euler(float(ori[0]), float(ori[1]), float(ori[2]), float(ori[3]))
                                 yaw_rad = math.radians(yaw_deg)
                             if stuck_phase < 2:
                                 lateral_sign = 1.0 if stuck_phase == 0 else -1.0
-                                vels = omni_wheel_velocities(drive_speed * 0.3, lateral_sign * drive_speed * 0.5, 0.0)
+                                vels = omni_wheel_velocities(drive_speed * cfg.stuck_lateral_factor, lateral_sign * drive_speed * 0.5, 0.0)
                             else:
-                                vels = omni_wheel_velocities(-drive_speed * 0.4, 0.0, 0.0)
+                                vels = omni_wheel_velocities(-drive_speed * cfg.stuck_backward_factor, 0.0, 0.0)
                             vel_array = np.zeros(len(dof_names), dtype=np.float32)
                             for i, wi in enumerate(wheel_dof_indices):
                                 if i < len(vels):
@@ -2596,8 +2738,8 @@ def run_task_config_episode(
                             dx_robot = dx * math.cos(yaw_rad) + dy * math.sin(yaw_rad)
                             dy_robot = -dx * math.sin(yaw_rad) + dy * math.cos(yaw_rad)
                             norm = math.sqrt(dx_robot**2 + dy_robot**2)
-                            if norm > 0.01:
-                                scale = min(drive_speed, norm * 2.0) / norm
+                            if norm > cfg.velocity_min_dist:
+                                scale = min(drive_speed, norm * cfg.velocity_norm_scale) / norm
                                 vx = dx_robot * scale
                                 vy = dy_robot * scale
                             else:
@@ -2746,8 +2888,8 @@ def run_task_config_episode(
                         dx_robot = dx * math.cos(yaw_rad) + dy * math.sin(yaw_rad)
                         dy_robot = -dx * math.sin(yaw_rad) + dy * math.cos(yaw_rad)
                         norm = math.sqrt(dx_robot**2 + dy_robot**2)
-                        if norm > 0.01:
-                            scale = min(drive_speed, norm * 2.0) / norm
+                        if norm > cfg.velocity_min_dist:
+                            scale = min(drive_speed, norm * cfg.velocity_norm_scale) / norm
                             vx = dx_robot * scale
                             vy = dy_robot * scale
                         else:
@@ -2784,11 +2926,11 @@ def run_task_config_episode(
         elif task_type == "place_object":
             release_height_m = float(task.get("release_height_m", 0.10))
             object_usd_path = (task.get("success_criteria") or {}).get("object_usd_path")
-            table_top_z = 0.80
+            table_top_z = cfg.table_top_z
             current_targets = dict(episode_targets)
-            j4_start = current_targets.get("arm_right_4_joint", 0.30)
-            j4_end = -0.35
-            descent_steps = 600
+            j4_start = current_targets.get("arm_right_4_joint", cfg.j4_retracted)
+            j4_end = cfg.j4_extended
+            descent_steps = cfg.place_descent_steps
             released = False
             place_aborted = False
 
@@ -2802,9 +2944,9 @@ def run_task_config_episode(
             try:
                 jp = articulation.get_joint_positions()
                 tidx = dof_names.index("torso_lift_joint")
-                torso_start = float(jp[tidx]) if jp is not None else current_targets.get("torso_lift_joint", 0.35)
+                torso_start = float(jp[tidx]) if jp is not None else current_targets.get("torso_lift_joint", cfg.torso_hold)
             except Exception:
-                torso_start = current_targets.get("torso_lift_joint", 0.35)
+                torso_start = current_targets.get("torso_lift_joint", cfg.torso_hold)
 
             for step in range(total_steps):
                 sim_time = step * physics_dt
@@ -2818,13 +2960,13 @@ def run_task_config_episode(
                     mug_pos = get_prim_world_position(object_usd_path) if object_usd_path else None
                     mug_z = mug_pos[2] if mug_pos else None
 
-                    if mug_z is not None and mug_z < table_top_z - 0.05:
+                    if mug_z is not None and mug_z < table_top_z + cfg.abort_below_z_offset:
                         place_aborted = True
                         for gj in GRIPPER_JOINTS:
                             current_targets[gj] = GRIPPER_OPEN
                         released = True
-                        print(f"[Bench] place_object ABORT: mug Z={mug_z:.3f} below table ({table_top_z - 0.05:.3f})")
-                    elif mug_z is not None and mug_z <= table_top_z + 0.02:
+                        print(f"[Bench] place_object ABORT: mug Z={mug_z:.3f} below table ({table_top_z + cfg.abort_below_z_offset:.3f})")
+                    elif mug_z is not None and mug_z <= table_top_z + cfg.release_z_offset:
                         for gj in GRIPPER_JOINTS:
                             current_targets[gj] = GRIPPER_OPEN
                         released = True
@@ -2848,14 +2990,14 @@ def run_task_config_episode(
             place_success = not place_aborted
             if object_usd_path:
                 final_pos = get_prim_world_position(object_usd_path)
-                if final_pos is None or final_pos[2] > table_top_z + 0.15:
+                if final_pos is None or final_pos[2] > table_top_z + cfg.success_z_offset:
                     place_success = False
                     fz = f"{final_pos[2]:.3f}" if final_pos else "None"
-                    print(f"[Bench] place_object FAILED: mug Z={fz}, threshold={table_top_z + 0.15:.3f}")
+                    print(f"[Bench] place_object FAILED: mug Z={fz}, threshold={table_top_z + cfg.success_z_offset:.3f}")
                 if place_success and final_pos is not None:
-                    table_cx, table_cy = 1.35, 3.45
-                    half_w, half_d = 0.40, 0.40
-                    margin = 0.05
+                    table_cx, table_cy = cfg.table_cx, cfg.table_cy
+                    half_w, half_d = cfg.table_half_w, cfg.table_half_d
+                    margin = cfg.bounds_margin
                     if (final_pos[0] < table_cx - half_w - margin or
                         final_pos[0] > table_cx + half_w + margin or
                         final_pos[1] < table_cy - half_d - margin or
@@ -2980,10 +3122,10 @@ def run_test(model_name, world, output_dir, record_video):
     try:
         xf = XFormPrim(prim_path=prim_path, name="robot_pose")
         xf.set_world_pose(
-            position=np.array([_start_x, _start_y, 0.08], dtype=np.float32),
+            position=np.array([_start_x, _start_y, cfg.spawn_z], dtype=np.float32),
             orientation=_start_quat,
         )
-        print(f"[Bench] Robot placed at ({_start_x:.2f}, {_start_y:.2f}, 0.08) yaw={math.degrees(_start_yaw):.1f}°")
+        print(f"[Bench] Robot placed at ({_start_x:.2f}, {_start_y:.2f}, {cfg.spawn_z}) yaw={math.degrees(_start_yaw):.1f}°")
     except Exception as e:
         print(f"[Bench] WARN: set_world_pose failed: {e}")
 
@@ -3009,7 +3151,7 @@ def run_test(model_name, world, output_dir, record_video):
     for attempt in range(5):
         try:
             articulation.set_world_pose(
-                position=np.array([_start_x, _start_y, 0.08], dtype=np.float32),
+                position=np.array([_start_x, _start_y, cfg.spawn_z], dtype=np.float32),
                 orientation=_start_quat,
             )
             zero_vel = np.zeros(len(dof_names), dtype=np.float32)
@@ -3019,7 +3161,7 @@ def run_test(model_name, world, output_dir, record_video):
             art_pos, _ = articulation.get_world_pose()
             if art_pos is not None:
                 drift_xy = abs(float(art_pos[0]) - _start_x) + abs(float(art_pos[1]) - _start_y)
-                drift_z = abs(float(art_pos[2]) - 0.08)
+                drift_z = abs(float(art_pos[2]) - cfg.spawn_z)
                 drift = drift_xy + drift_z
                 print(f"[Bench] Anchor attempt {attempt}: pos=({art_pos[0]:.4f},{art_pos[1]:.4f},{art_pos[2]:.4f}) drift_xy={drift_xy:.4f} drift_z={drift_z:.4f}")
                 if drift_xy < 0.05:
@@ -3102,10 +3244,10 @@ def run_test(model_name, world, output_dir, record_video):
     grasp_retry_count_out = 0
     start_wall = time.time()
 
-    physics_dt = 1.0 / 120.0
-    log_every = 6  # 20Hz logging
-    console_every = 60  # 0.5s console
-    render_every = 2  # 60Hz render
+    physics_dt = cfg.physics_dt
+    log_every = cfg.log_every
+    console_every = cfg.console_every
+    render_every = cfg.render_every
 
     current_targets = dict(targets)
     _torso_interp_start_time = 0.0
@@ -3260,12 +3402,11 @@ def run_test(model_name, world, output_dir, record_video):
 
         spd = args.drive_speed
         shift_rot_speed = getattr(args, "shift_rot_speed", 0.15)
-        torso_speed = getattr(args, "torso_speed", 0.05)
+        torso_speed = getattr(args, "torso_speed", cfg.torso_speed)
         torso_lower_speed = getattr(args, "torso_lower_speed", 0.02)
         top_descend_speed = getattr(args, "top_descend_speed", 0.015)
-        # Stop 10 cm before mug so we don't overreach (arm+gripper is longer than tool link).
         approach_clearance = getattr(args, "approach_clearance", 0.13)
-        torso_approach = 0.35
+        torso_approach = cfg.torso_approach
         grasp_mode_cli = getattr(args, "grasp_mode", "top")
         active_grasp_mode = "top" if grasp_mode_cli in ("top", "auto") else "side"
         top_pregrasp_height = getattr(args, "top_pregrasp_height", 0.06)

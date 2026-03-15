@@ -1,0 +1,129 @@
+# TIAGo Dual (heavy variant) — Robot Profile
+# Physical constants that define the robot hardware.
+# These do not change between experiments.
+
+model_file: tiago_dual_functional.usd
+spawn_z: 0.08
+
+# --- Wheel kinematics (mecanum omni-base) ---
+wheel:
+  radius: 0.0985
+  separation_x: 0.222       # front-to-rear half-distance (m)
+  separation_y: 0.222       # left-to-right half-distance (m)
+  names:
+    - wheel_front_left_joint
+    - wheel_front_right_joint
+    - wheel_rear_left_joint
+    - wheel_rear_right_joint
+
+# --- Joint drive gains (stiffness, damping, max_force) ---
+drive_params:
+  torso_lift_joint:                  [3000.0, 600.0, 25000.0]
+  arm_1_joint:                       [1500.0, 300.0, 5000.0]
+  arm_2_joint:                       [1500.0, 300.0, 5000.0]
+  arm_3_joint:                       [1500.0, 300.0, 4000.0]
+  arm_4_joint:                       [1000.0, 200.0, 2000.0]
+  arm_5_joint:                       [500.0,  100.0, 800.0]
+  arm_6_joint:                       [500.0,  100.0, 800.0]
+  arm_7_joint:                       [500.0,  100.0, 800.0]
+  head_1_joint:                      [400.0,  80.0,  500.0]
+  head_2_joint:                      [400.0,  80.0,  500.0]
+  gripper_left_left_finger_joint:    [5000.0, 800.0, 2000.0]
+  gripper_left_right_finger_joint:   [5000.0, 800.0, 2000.0]
+  gripper_right_left_finger_joint:   [5000.0, 800.0, 2000.0]
+  gripper_right_right_finger_joint:  [5000.0, 800.0, 2000.0]
+
+default_drive: [400.0, 80.0, 500.0]
+
+roller_drive:
+  stiffness: 0.0
+  damping: 5.0
+  max_force: 100.0
+
+wheel_drive:
+  stiffness: 0.0
+  damping: 500.0
+  max_force: 50000.0
+
+# --- Torso ---
+torso_speed: 0.05           # m/s (PAL spec max 0.07, safe 0.05)
+torso_min: 0.0
+torso_max: 0.35
+
+# --- Gripper ---
+gripper:
+  open: 0.045
+  closed: 0.0
+  grasp_mug: 0.02
+  joints:
+    - gripper_right_left_finger_joint
+    - gripper_right_right_finger_joint
+
+# --- Home/tuck pose ---
+home_joints:
+  torso_lift_joint: 0.0
+  arm_right_1_joint: 0.07
+  arm_right_2_joint: -1.0
+  arm_right_3_joint: -0.20
+  arm_right_4_joint: 1.50
+  arm_right_5_joint: -1.57
+  arm_right_6_joint: 0.10
+  arm_right_7_joint: 0.0
+  arm_left_1_joint: 0.07
+  arm_left_2_joint: -1.0
+  arm_left_3_joint: -0.20
+  arm_left_4_joint: 1.50
+  arm_left_5_joint: -1.57
+  arm_left_6_joint: 0.10
+  arm_left_7_joint: 0.0
+  head_1_joint: 0.0
+  head_2_joint: -0.20
+
+# --- Arm poses library ---
+# Joint order: J1=shoulder_lift, J2=shoulder_roll, J3=elbow_rot, J4=elbow_flex,
+#              J5=wrist_rot, J6=wrist_flex, J7=wrist_rot2
+# Limits: J1[-1.18,1.57] J2[-1.18,1.57] J3[-0.79,3.93] J4[-0.39,2.36]
+#         J5[-2.09,2.09] J6[-1.41,1.41] J7[-2.09,2.09]
+arm_poses:
+  home:
+    R: [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]
+    L: [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]
+  forward:
+    R: [1.50, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    L: [1.50, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  down:
+    R: [0.0, 0.20, -0.20, 0.0, 0.0, 0.0, 0.0]
+    L: [0.0, 0.20, -0.20, 0.0, 0.0, 0.0, 0.0]
+  Y_shape:
+    R: [0.20, -1.10, -0.20, 0.0, 0.0, 0.0, 0.0]
+    L: [0.20, -1.10, -0.20, 0.0, 0.0, 0.0, 0.0]
+  heart:
+    R: [1.40, -0.30, 2.50, 2.20, -1.00, -1.00, 0.0]
+    L: [1.40, -0.30, 2.50, 2.20, 1.00, 1.00, 0.0]
+  pre_grasp:
+    R: [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0]
+    L: [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]
+  grasp:
+    R: [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0]
+    L: [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]
+  lift:
+    R: [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0]
+    L: [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]
+  place_right:
+    R: [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0]
+    L: [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]
+  pre_grasp_center:
+    R: [1.50, 0.0, 0.0, -0.25, -1.57, 0.0, 0.0]
+    L: [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]
+  grasp_center:
+    R: [1.50, 0.0, 0.0, -0.25, -1.57, 0.0, 0.0]
+    L: [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]
+  pre_grasp_top:
+    R: [1.50, 0.0, 0.0, -0.35, -1.57, 0.0, 0.0]
+    L: [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]
+  grasp_top:
+    R: [1.50, 0.0, 0.0, -0.35, -1.57, 0.0, 0.0]
+    L: [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]
+  lift_top:
+    R: [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0]
+    L: [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]
