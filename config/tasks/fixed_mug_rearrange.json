@@ -1,0 +1,85 @@
+{
+  "episode_name": "fixed_mug_rearrange",
+  "description": "Drive to mug, pick up, lift 20cm, carry 20cm east, place down, return to start",
+  "kitchen_scene": "fixed",
+  "simulation_duration_s": 300,
+
+  "scene": {
+    "fridge":      true,
+    "dishwasher":  false,
+    "sink":        true,
+    "plate_fruit": true
+  },
+
+  "robot": {
+    "start_pose": [0.0, 0.0, 90],
+    "model": "heavy",
+    "gripper_length_m": 0.10
+  },
+
+  "global": {
+    "drive_speed_ms": 0.3,
+    "approach_clearance_m": 0.13,
+    "torso_speed": 0.05,
+    "on_task_failure": "abort"
+  },
+
+  "tasks": [
+    {
+      "id": "T1_drive_to_mug",
+      "type": "navigate_to",
+      "target_xy": [1.15, 2.50],
+      "tolerance_m": 0.25,
+      "timeout_s": 50,
+      "drive_speed_ms": 0.4,
+      "annotation": "Drive south of mug (mug at X=1.15, Y=3.30; robot stops at Y=2.50, tool ~0.80m behind mug)"
+    },
+    {
+      "id": "T2_pick_mug",
+      "type": "pick_object",
+      "object_usd_path": "/World/Kitchen/Objects/Mug",
+      "object_label": "mug",
+      "grasp_mode": "top",
+      "approach_clearance_m": 0.13,
+      "lift_height_m": 0.20,
+      "timeout_s": 90,
+      "success_criteria": {
+        "min_lift_delta_m": 0.02
+      },
+      "annotation": "Grasp mug from top, lift 20cm"
+    },
+    {
+      "id": "T3_carry_east",
+      "type": "carry_to",
+      "destination_label": "20cm_east_of_mug",
+      "destination_xy": [0.20, 0.0],
+      "relative": true,
+      "carry_height_m": 0.20,
+      "approach_clearance_m": 0.13,
+      "tolerance_m": 0.10,
+      "timeout_s": 45,
+      "annotation": "Carry mug 20cm east (relative: +0.20m X from current position)"
+    },
+    {
+      "id": "T4_place_mug",
+      "type": "place_object",
+      "destination_usd_path": "/World/Kitchen/Furniture/Table",
+      "release_height_m": 0.05,
+      "timeout_s": 15,
+      "success_criteria": {
+        "object_usd_path": "/World/Kitchen/Objects/Mug",
+        "max_xy_from_target_m": 0.30
+      },
+      "annotation": "Place mug down on table"
+    },
+    {
+      "id": "T5_return_to_start",
+      "type": "navigate_to",
+      "target_xy": [0.0, 0.0],
+      "tolerance_m": 1.50,
+      "timeout_s": 60,
+      "drive_speed_ms": 0.4,
+      "annotation": "Return towards starting position (loose tolerance, best-effort)"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "episode_name": "fixed_fridge_open_close",
+  "description": "Drive to fridge (north wall), open door to 80 degrees, wait, then close",
+  "kitchen_scene": "fixed",
+
+  "scene": {
+    "fridge":      true,
+    "dishwasher":  true,
+    "sink":        true,
+    "plate_fruit": true
+  },
+
+  "robot": {
+    "start_pose": [0.0, 0.0],
+    "model": "heavy",
+    "gripper_length_m": 0.10
+  },
+
+  "global": {
+    "drive_speed_ms": 0.3,
+    "approach_clearance_m": 0.15,
+    "torso_speed": 0.05,
+    "on_task_failure": "abort"
+  },
+
+  "tasks": [
+    {
+      "id": "T1",
+      "type": "navigate_to",
+      "target_xy": [-1.35, 2.4],
+      "tolerance_m": 0.10,
+      "timeout_s": 20,
+      "annotation": "Approach fridge from south"
+    },
+    {
+      "id": "T2",
+      "type": "open_door",
+      "target": "fridge",
+      "handle_usd_path": "/World/Kitchen/Furniture/Fridge/Door/Handle",
+      "approach_clearance_m": 0.15,
+      "target_angle_deg": -80,
+      "pull_speed_ms": 0.05,
+      "timeout_s": 25,
+      "success_criteria": {
+        "door_joint_path": "/World/Kitchen/Furniture/Fridge/DoorHinge",
+        "min_angle_deg": -60
+      }
+    },
+    {
+      "id": "T3",
+      "type": "wait",
+      "duration_s": 2.0,
+      "annotation": "door open — check clearance"
+    },
+    {
+      "id": "T4",
+      "type": "close_door",
+      "target": "fridge",
+      "handle_usd_path": "/World/Kitchen/Furniture/Fridge/Door/Handle",
+      "push_speed_ms": 0.10,
+      "timeout_s": 30,
+      "success_criteria": {
+        "door_joint_path": "/World/Kitchen/Furniture/Fridge/DoorHinge",
+        "max_angle_deg": -10
+      }
+    }
+  ]
+}

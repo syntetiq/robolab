@@ -1,0 +1,256 @@
+{
+  "episode_name": "fixed_full_kitchen",
+  "description": "Full kitchen test: open/close fridge, open/close dishwasher, mug to sink, banana wash",
+  "kitchen_scene": "fixed",
+  "simulation_duration_s": 600,
+
+  "scene": {
+    "fridge":      true,
+    "dishwasher":  true,
+    "sink":        true,
+    "plate_fruit": true
+  },
+
+  "robot": {
+    "start_pose": [0.0, 0.0],
+    "model": "heavy",
+    "gripper_length_m": 0.10
+  },
+
+  "global": {
+    "drive_speed_ms": 0.4,
+    "approach_clearance_m": 0.13,
+    "torso_speed": 0.05,
+    "on_task_failure": "continue"
+  },
+
+  "tasks": [
+    {
+      "id": "A1",
+      "type": "navigate_to",
+      "target_xy": [-1.35, 2.4],
+      "tolerance_m": 0.10,
+      "timeout_s": 20,
+      "annotation": "Move to fridge position"
+    },
+    {
+      "id": "A2",
+      "type": "open_door",
+      "target": "fridge",
+      "handle_usd_path": "/World/Kitchen/Furniture/Fridge/Door/Handle",
+      "approach_clearance_m": 0.15,
+      "target_angle_deg": 80,
+      "pull_speed_ms": 0.05,
+      "timeout_s": 25,
+      "success_criteria": {
+        "door_joint_path": "/World/Kitchen/Furniture/Fridge/DoorHinge",
+        "min_angle_deg": 60
+      }
+    },
+    {
+      "id": "A3",
+      "type": "wait",
+      "duration_s": 1.5,
+      "annotation": "fridge open pause"
+    },
+    {
+      "id": "A4",
+      "type": "close_door",
+      "target": "fridge",
+      "handle_usd_path": "/World/Kitchen/Furniture/Fridge/Door/Handle",
+      "push_speed_ms": 0.10,
+      "timeout_s": 30,
+      "success_criteria": {
+        "door_joint_path": "/World/Kitchen/Furniture/Fridge/DoorHinge",
+        "max_angle_deg": 10
+      }
+    },
+
+    {
+      "id": "B1",
+      "type": "navigate_to",
+      "target_xy": [-0.45, 2.4],
+      "tolerance_m": 0.10,
+      "timeout_s": 20,
+      "annotation": "Move to dishwasher position"
+    },
+    {
+      "id": "B2",
+      "type": "open_door",
+      "target": "dishwasher",
+      "handle_usd_path": "/World/Kitchen/Furniture/Dishwasher/Door/Handle",
+      "approach_clearance_m": 0.15,
+      "target_angle_deg": 80,
+      "pull_speed_ms": 0.05,
+      "timeout_s": 25,
+      "success_criteria": {
+        "door_joint_path": "/World/Kitchen/Furniture/Dishwasher/DoorHinge",
+        "min_angle_deg": 60
+      }
+    },
+    {
+      "id": "B3",
+      "type": "wait",
+      "duration_s": 1.5,
+      "annotation": "dishwasher open pause"
+    },
+    {
+      "id": "B4",
+      "type": "close_door",
+      "target": "dishwasher",
+      "handle_usd_path": "/World/Kitchen/Furniture/Dishwasher/Door/Handle",
+      "push_speed_ms": 0.10,
+      "timeout_s": 30,
+      "success_criteria": {
+        "door_joint_path": "/World/Kitchen/Furniture/Dishwasher/DoorHinge",
+        "max_angle_deg": 10
+      }
+    },
+
+    {
+      "id": "C1",
+      "type": "navigate_to",
+      "target_xy": [1.35, 2.4],
+      "tolerance_m": 0.15,
+      "timeout_s": 20,
+      "annotation": "Approach table from south"
+    },
+    {
+      "id": "C2",
+      "type": "pick_object",
+      "object_usd_path": "/World/Kitchen/Objects/Mug",
+      "object_label": "mug",
+      "grasp_mode": "top",
+      "approach_clearance_m": 0.13,
+      "lift_height_m": 0.20,
+      "timeout_s": 45,
+      "success_criteria": { "min_lift_delta_m": 0.02 }
+    },
+    {
+      "id": "C3",
+      "type": "carry_to",
+      "destination_label": "sink",
+      "destination_xy": [0.45, 2.6],
+      "destination_usd_path": "/World/Kitchen/Furniture/SinkCabinet/Basin",
+      "carry_height_m": 0.30,
+      "approach_clearance_m": 0.15,
+      "tolerance_m": 0.18,
+      "timeout_s": 45,
+      "success_on_timeout": true
+    },
+    {
+      "id": "C4",
+      "type": "place_object",
+      "destination_usd_path": "/World/Kitchen/Furniture/SinkCabinet/Basin",
+      "release_height_m": 0.10,
+      "timeout_s": 10
+    },
+    {
+      "id": "C5",
+      "type": "wait",
+      "duration_s": 1.0,
+      "annotation": "mug in sink"
+    },
+    {
+      "id": "C6",
+      "type": "pick_object",
+      "object_usd_path": "/World/Kitchen/Objects/Mug",
+      "object_label": "mug (return)",
+      "grasp_mode": "top",
+      "approach_clearance_m": 0.15,
+      "lift_height_m": 0.20,
+      "timeout_s": 45,
+      "success_criteria": { "min_lift_delta_m": 0.02 }
+    },
+    {
+      "id": "C7",
+      "type": "carry_to",
+      "destination_label": "table",
+      "destination_xy": [1.35, 2.6],
+      "destination_usd_path": "/World/Kitchen/Furniture/Table",
+      "carry_height_m": 0.30,
+      "approach_clearance_m": 0.13,
+      "tolerance_m": 0.18,
+      "timeout_s": 45,
+      "success_on_timeout": true
+    },
+    {
+      "id": "C8",
+      "type": "place_object",
+      "destination_usd_path": "/World/Kitchen/Furniture/Table",
+      "release_height_m": 0.05,
+      "timeout_s": 10
+    },
+
+    {
+      "id": "D1",
+      "type": "pick_object",
+      "object_usd_path": "/World/Kitchen/Objects/Banana",
+      "object_label": "banana",
+      "grasp_mode": "top",
+      "approach_clearance_m": 0.13,
+      "lift_height_m": 0.20,
+      "timeout_s": 45,
+      "success_criteria": { "min_lift_delta_m": 0.015 }
+    },
+    {
+      "id": "D2",
+      "type": "carry_to",
+      "destination_label": "sink",
+      "destination_xy": [0.45, 2.6],
+      "destination_usd_path": "/World/Kitchen/Furniture/SinkCabinet/Basin",
+      "carry_height_m": 0.30,
+      "approach_clearance_m": 0.15,
+      "tolerance_m": 0.22,
+      "timeout_s": 75,
+      "success_on_timeout": true
+    },
+    {
+      "id": "D3",
+      "type": "place_object",
+      "destination_usd_path": "/World/Kitchen/Furniture/SinkCabinet/Basin",
+      "release_height_m": 0.08,
+      "timeout_s": 10
+    },
+    {
+      "id": "D4",
+      "type": "wait",
+      "duration_s": 3.0,
+      "annotation": "simulated_washing"
+    },
+    {
+      "id": "D5",
+      "type": "pick_object",
+      "object_usd_path": "/World/Kitchen/Objects/Banana",
+      "object_label": "banana (return)",
+      "grasp_mode": "top",
+      "approach_clearance_m": 0.15,
+      "lift_height_m": 0.20,
+      "timeout_s": 45,
+      "success_criteria": { "min_lift_delta_m": 0.015 }
+    },
+    {
+      "id": "D6",
+      "type": "carry_to",
+      "destination_label": "plate",
+      "destination_xy": [1.35, 2.55],
+      "destination_usd_path": "/World/Kitchen/Objects/Plate",
+      "carry_height_m": 0.30,
+      "approach_clearance_m": 0.13,
+      "tolerance_m": 0.22,
+      "timeout_s": 75,
+      "success_on_timeout": true
+    },
+    {
+      "id": "D7",
+      "type": "place_object",
+      "destination_usd_path": "/World/Kitchen/Objects/Plate",
+      "release_height_m": 0.05,
+      "timeout_s": 10,
+      "success_criteria": {
+        "object_usd_path": "/World/Kitchen/Objects/Banana",
+        "max_xy_from_target_m": 0.15
+      }
+    }
+  ]
+}

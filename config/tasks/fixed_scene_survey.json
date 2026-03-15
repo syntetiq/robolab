@@ -1,0 +1,33 @@
+{
+  "episode_name": "fixed_scene_survey",
+  "description": "Initialize fixed 8x8 kitchen scene, record 15s video, no manipulation",
+  "kitchen_scene": "fixed",
+
+  "scene": {
+    "fridge":      true,
+    "dishwasher":  true,
+    "sink":        true,
+    "plate_fruit": true
+  },
+
+  "robot": {
+    "start_pose": [0.0, 0.0],
+    "model": "heavy",
+    "gripper_length_m": 0.10
+  },
+
+  "global": {
+    "drive_speed_ms": 0.3,
+    "approach_clearance_m": 0.13,
+    "torso_speed": 0.05
+  },
+
+  "tasks": [
+    {
+      "id": "T1",
+      "type": "scene_survey",
+      "duration_s": 15,
+      "annotation": "Verify fridge, dishwasher, sink, table, plate+fruit visible in cameras"
+    }
+  ]
+}

@@ -1,0 +1,229 @@
+# kitchen_fixed_config.yaml — Fixed kitchen scene for TIAGo manipulation
+# All dimensions in meters, angles in degrees, colors as [R, G, B] 0-1.
+
+room:
+  size_x: 8.0
+  size_y: 8.0
+  wall_height: 2.8
+  wall_thickness: 0.15
+  floor_thickness: 0.02
+
+# Furniture rear faces flush to north wall inner face:
+#   wall_inner_y = room.size_y/2 - wall_thickness = 3.85
+#   center_y = wall_inner_y - depth/2
+# Left-to-right order along X, centered on X=0.
+# Total span: 4 * 0.80 + 3 * 0.10 = 3.50 m
+# Left edge at X = -1.75, right edge at X = +1.75
+
+furniture:
+  fridge:
+    width: 0.80
+    depth: 0.80
+    height: 2.00
+    center_x: -1.35
+    center_y: 3.45
+    door_thickness: 0.03
+    door_mass_kg: 8.0
+    door_open_deg: 90.0
+    shelf_count: 4
+    handle:
+      type: vertical
+      length: 0.50
+      width: 0.06
+      depth: 0.06
+      standoff: 0.06
+      center_height: 1.10
+      graspable_section: 0.20
+    material: appliance_metal
+    door_material: appliance_door
+    handle_material: handle_metal
+
+  dishwasher:
+    width: 0.80
+    depth: 0.80
+    height: 0.80
+    center_x: -0.45
+    center_y: 3.45
+    door_thickness: 0.025
+    door_mass_kg: 5.0
+    door_open_deg: 90.0
+    rack_count: 2
+    handle:
+      type: horizontal
+      length: 0.32
+      width: 0.02
+      depth: 0.02
+      standoff: 0.04
+      center_height: 0.70
+      graspable_section: 0.12
+    material: appliance_metal
+    door_material: appliance_door
+    handle_material: handle_metal
+
+  sink_cabinet:
+    width: 0.80
+    depth: 0.80
+    height: 0.90
+    center_x: 0.45
+    center_y: 3.45
+    basin_depth: 0.18
+    basin_margin: 0.06
+    material: cabinet_wood
+    basin_material: sink_metal
+
+  table:
+    width: 0.80
+    depth: 0.80
+    height: 0.80
+    top_thickness: 0.04
+    leg_width: 0.04
+    center_x: 1.35
+    center_y: 3.45
+    material: table_wood
+
+objects:
+  plate:
+    radius: 0.15
+    height: 0.025
+    mass_kg: 0.25
+    offset_x: 0.25           # relative to table center -> east side (X=1.60)
+    offset_y: 0.0            # table center Y=3.45 (symmetric with mug)
+    material: ceramic_white
+
+  apple:
+    radius: 0.05
+    mass_kg: 0.15
+    offset_x: 0.07           # relative to plate center -> east side of plate
+    offset_y: 0.0
+    material: apple_red
+
+  banana:
+    length: 0.22
+    radius: 0.030
+    mass_kg: 0.24
+    offset_x: -0.05          # relative to plate center -> west side of plate
+    offset_y: 0.0
+    material: banana_yellow
+
+  mug:
+    radius: 0.04
+    height: 0.10
+    mass_kg: 0.30
+    offset_x: -0.20         # relative to table center -> west side (X=1.15)
+    offset_y: -0.15          # south of table center Y=3.30 (reachable from south approach)
+    material: mug_ceramic
+
+materials:
+  floor_tile:
+    diffuse: [0.85, 0.85, 0.82]
+    roughness: 0.5
+    metallic: 0.0
+    friction_static: 0.8
+    friction_dynamic: 0.6
+    restitution: 0.01
+
+  wall_paint:
+    diffuse: [0.95, 0.93, 0.90]
+    roughness: 0.9
+    metallic: 0.0
+
+  appliance_metal:
+    diffuse: [0.82, 0.82, 0.84]
+    roughness: 0.3
+    metallic: 0.6
+    friction_static: 0.8
+    friction_dynamic: 0.6
+    restitution: 0.01
+
+  appliance_door:
+    diffuse: [0.88, 0.90, 0.92]
+    roughness: 0.25
+    metallic: 0.5
+
+  handle_metal:
+    diffuse: [0.35, 0.35, 0.38]
+    roughness: 0.4
+    metallic: 0.8
+
+  cabinet_wood:
+    diffuse: [0.55, 0.40, 0.28]
+    roughness: 0.7
+    metallic: 0.0
+    friction_static: 0.9
+    friction_dynamic: 0.7
+    restitution: 0.01
+
+  sink_metal:
+    diffuse: [0.75, 0.75, 0.78]
+    roughness: 0.3
+    metallic: 0.7
+
+  faucet_metal:
+    diffuse: [0.12, 0.12, 0.14]
+    roughness: 0.35
+    metallic: 0.85
+
+  table_wood:
+    diffuse: [0.62, 0.45, 0.30]
+    roughness: 0.65
+    metallic: 0.0
+    friction_static: 0.9
+    friction_dynamic: 0.7
+    restitution: 0.01
+
+  ceramic_white:
+    diffuse: [0.95, 0.95, 0.93]
+    roughness: 0.3
+    metallic: 0.0
+
+  apple_red:
+    diffuse: [0.75, 0.12, 0.10]
+    roughness: 0.5
+    metallic: 0.0
+
+  banana_yellow:
+    diffuse: [0.92, 0.82, 0.20]
+    roughness: 0.6
+    metallic: 0.0
+
+  mug_ceramic:
+    diffuse: [0.80, 0.20, 0.15]
+    roughness: 0.35
+    metallic: 0.0
+
+  shelf_metal:
+    diffuse: [0.70, 0.70, 0.75]
+    roughness: 0.4
+    metallic: 0.3
+
+lights:
+  dome:
+    intensity: 800.0
+    texture: ""              # empty = default white dome
+  ceiling:
+    count: 4
+    intensity: 3000.0
+    width: 0.6
+    height: 0.6
+    z: 2.75
+    positions:
+      - [-1.5, 1.0]
+      - [1.5, 1.0]
+      - [-1.5, -1.5]
+      - [1.5, -1.5]
+
+cameras:
+  top:
+    position: [0.0, 0.0, 7.0]
+    target: [0.0, 3.45, 0.8]
+  front:
+    position: [0.0, -2.0, 1.5]
+    target: [0.0, 3.45, 0.8]
+  isometric:
+    position: [-3.5, -2.0, 3.5]
+    target: [0.0, 3.45, 0.8]
+
+robot:
+  start_x: 0.0
+  start_y: 0.0
+  start_z: 0.08
