@@ -41,7 +41,7 @@
     "extend_arm_steps": 300,
     "rotate_timeout_steps": 1200,
     "drive_to_mug_timeout_steps": 1800,
-    "settle_at_table_steps": 60,
+    "settle_at_table_steps": 180,
     "approach_timeout_steps": 600,
     "descend_timeout_steps": 1500,
     "close_gripper_step": 45,

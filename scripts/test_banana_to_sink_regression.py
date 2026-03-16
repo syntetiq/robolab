@@ -132,7 +132,7 @@ def main():
     control = tc.get("control", {})
     check("control.grasp_settle_steps", control.get("grasp_settle_steps"), 120)
     check("control.extend_arm_steps", control.get("extend_arm_steps"), 300)
-    check("control.settle_at_table_steps", control.get("settle_at_table_steps"), 60)
+    check("control.settle_at_table_steps", control.get("settle_at_table_steps"), 180)
     check("control.approach_timeout_steps", control.get("approach_timeout_steps"), 600)
     check("control.lift_timeout_steps", control.get("lift_timeout_steps"), 1500)
     check("control.place_descent_steps", control.get("place_descent_steps"), 600)
@@ -244,6 +244,8 @@ def main():
           "place_heading_deg" in bench_code, True)
     check("code: carry_to TABLE_SOUTH_BOUNDARY_Y bypass",
           "target_y <= TABLE_SOUTH_BOUNDARY_Y" in bench_code, True)
+    check("code: settle_at_table J4 interpolation (alpha)",
+          "_settle_j4_start" in bench_code and "alpha" in bench_code, True)
 
     # ---------------------------------------------------------------
     # 6. Derived geometry

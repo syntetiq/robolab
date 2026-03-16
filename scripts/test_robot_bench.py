@@ -2147,8 +2147,11 @@ def run_grasp_pick_only_cycle(
             elif state == "settle_at_table":
                 if entering:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
-                    if approach_arm_retracted:
-                        current_targets["arm_right_4_joint"] = cfg.j4_extended
+                    _settle_j4_start = current_targets.get("arm_right_4_joint", cfg.j4_retracted)
+                if approach_arm_retracted:
+                    alpha = min(1.0, steps_in_state / max(1, cfg.settle_at_table_steps))
+                    j4_now = _settle_j4_start + alpha * (cfg.j4_extended - _settle_j4_start)
+                    current_targets["arm_right_4_joint"] = j4_now
                 if steps_in_state >= cfg.settle_at_table_steps:
                     _transition("approach_overhead")
 
