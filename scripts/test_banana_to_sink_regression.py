@@ -93,6 +93,13 @@ def main():
     check("banana_mat.friction_static", banana_mat.get("friction_static"), 1.0)
     check("banana_mat.friction_dynamic", banana_mat.get("friction_dynamic"), 0.8)
 
+    apple = scene_cfg["objects"]["apple"]
+    check("apple.mass_kg", apple["mass_kg"], 0.20)
+
+    apple_mat = scene_cfg["materials"]["apple_red"]
+    check("apple_mat.friction_static", apple_mat.get("friction_static"), 1.2)
+    check("apple_mat.friction_dynamic", apple_mat.get("friction_dynamic"), 0.9)
+
     plate = scene_cfg["objects"]["plate"]
     check("plate.offset_x", plate["offset_x"], 0.25)
     check("plate.offset_y", plate["offset_y"], 0.0)
@@ -251,14 +258,18 @@ def main():
           "target_y <= TABLE_SOUTH_BOUNDARY_Y" in bench_code, True)
     check("code: fine_align state",
           "fine_align" in bench_code, True)
-    check("code: partial J4 extension (_j4_partial)",
-          "_j4_partial" in bench_code, True)
-    check("code: descent J4 interpolation (_j4_desc_start)",
-          "_j4_desc_start" in bench_code, True)
     check("code: XY tracking during descent (_xy_err)",
           "_xy_err" in bench_code and "_kp" in bench_code, True)
     check("code: XY convergence gate for close_gripper (_xy_ready)",
           "_xy_ready" in bench_code, True)
+    check("code: post-release arm retraction (_release_step)",
+          "_release_step" in bench_code, True)
+    check("code: post-release J4 retract (cfg.j4_retracted - j4_end)",
+          "cfg.j4_retracted - j4_end" in bench_code, True)
+    check("code: navigate_to applies arm targets (_apply_targets in navigate)",
+          "episode_targets" in bench_code and 'current_targets = dict(episode_targets)' in bench_code, True)
+    check("code: navigate_to sets j4_retracted",
+          'current_targets["arm_right_4_joint"] = cfg.j4_retracted' in bench_code, True)
 
     # ---------------------------------------------------------------
     # 6. Derived geometry

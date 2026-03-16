@@ -2155,12 +2155,11 @@ def run_grasp_pick_only_cycle(
                 if entering:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
                     if approach_arm_retracted:
-                        _j4_partial = cfg.j4_retracted + (cfg.j4_extended - cfg.j4_retracted) * 0.85
-                        current_targets["arm_right_4_joint"] = _j4_partial
+                        current_targets["arm_right_4_joint"] = cfg.j4_extended
                         _tx0s, _ty0s, _tz0s = _get_tool_pos()
                         _tz0s_s = f"{_tz0s:.3f}" if _tz0s is not None else "N/A"
                         print(f"[Grasp] settle_at_table ENTER t={sim_time:.1f}s "
-                              f"tool_z={_tz0s_s} setting j4_partial={_j4_partial:.2f}")
+                              f"tool_z={_tz0s_s} setting j4={cfg.j4_extended:.2f}")
                 if approach_arm_retracted:
                     tx_s, ty_s, tz_s = _get_tool_pos()
                     mx_s, my_s, mz_s = _get_object_pos()
@@ -2253,15 +2252,10 @@ def run_grasp_pick_only_cycle(
                 if entering:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
                     _set_torso(0.0, top_descend_speed, sim_time)
-                    if approach_arm_retracted:
-                        _j4_desc_start = cfg.j4_retracted + (cfg.j4_extended - cfg.j4_retracted) * 0.85
-                        _j4_desc_end = cfg.j4_extended
-                        _j4_desc_steps = 600
                 tx, ty, tz = _get_tool_pos()
                 mx, my, mz = _get_object_pos()
                 if approach_arm_retracted:
-                    _j4_frac = min(1.0, steps_in_state / max(1, _j4_desc_steps))
-                    current_targets["arm_right_4_joint"] = _j4_desc_start + (_j4_desc_end - _j4_desc_start) * _j4_frac
+                    current_targets["arm_right_4_joint"] = cfg.j4_extended
                     if tx is not None and mx is not None and my is not None:
                         _dxw = tx - mx
                         _dyw = (ty or 0) - my
@@ -2772,7 +2766,11 @@ def run_task_config_episode(
             else:
                 target_x, target_y = float(target_xy[0]), float(target_xy[1])
                 max_steps = int(timeout_s / physics_dt)
-                current_targets = dict(targets)
+                current_targets = dict(episode_targets)
+                current_targets["arm_right_4_joint"] = cfg.j4_retracted
+                current_targets["torso_lift_joint"] = 0.35
+                for gj in GRIPPER_JOINTS:
+                    current_targets[gj] = GRIPPER_OPEN
                 step_count = 0
                 reached = False
                 final_dist = None
@@ -2871,6 +2869,7 @@ def run_task_config_episode(
                             articulation.apply_action(ArticulationAction(joint_velocities=vel_array))
                     except Exception as e:
                         print(f"[Bench] navigate_to step {step} error: {e}")
+                    _apply_targets(articulation, dof_names, current_targets)
                     if step % log_every == 0:
                         logger.log_frame(sim_time, step, current_targets, state_name="navigate_to")
                     do_render = (step % render_every == 0)
@@ -2881,6 +2880,8 @@ def run_task_config_episode(
                     articulation.apply_action(ArticulationAction(joint_velocities=vel_array))
                 except Exception:
                     pass
+                episode_targets["arm_right_4_joint"] = cfg.j4_retracted
+                episode_targets["torso_lift_joint"] = 0.35
                 task_results.append({
                     "task_id": task_id,
                     "type": task_type,
@@ -3158,6 +3159,9 @@ def run_task_config_episode(
                 vel_arr = np.zeros(len(dof_names), dtype=np.float32)
                 articulation.apply_action(ArticulationAction(joint_velocities=vel_arr))
 
+            _release_step = None
+            _retract_steps = 360
+
             for step in range(total_steps):
                 sim_time = step * physics_dt
 
@@ -3175,25 +3179,33 @@ def run_task_config_episode(
                         for gj in GRIPPER_JOINTS:
                             current_targets[gj] = GRIPPER_OPEN
                         released = True
+                        _release_step = step
                         print(f"[Bench] place_object ABORT: obj Z={mug_z:.3f} below surface ({table_top_z + _p_abort_z:.3f})")
                     elif mug_z is not None and mug_z <= table_top_z + _p_release_z:
                         for gj in GRIPPER_JOINTS:
                             current_targets[gj] = GRIPPER_OPEN
                         released = True
+                        _release_step = step
                         print(f"[Bench] place_object: mug at Z={mug_z:.3f}, releasing at step {step}")
                     elif alpha >= 1.0:
                         for gj in GRIPPER_JOINTS:
                             current_targets[gj] = GRIPPER_OPEN
                         released = True
+                        _release_step = step
                         print(f"[Bench] place_object: arm fully extended, releasing at step {step}")
+                elif released and _release_step is not None:
+                    _ret_elapsed = step - _release_step
+                    _ret_alpha = min(1.0, _ret_elapsed / max(1, _retract_steps))
+                    current_targets["arm_right_4_joint"] = j4_end + _ret_alpha * (cfg.j4_retracted - j4_end)
+                    current_targets["torso_lift_joint"] = torso_start + _ret_alpha * (0.35 - torso_start)
 
                 _apply_targets(articulation, dof_names, current_targets)
                 if step % log_every == 0:
                     logger.log_frame(sim_time, step, current_targets, state_name="place_object")
                 world.step(render=(step % render_every == 0))
 
-            episode_targets["torso_lift_joint"] = torso_start
-            episode_targets["arm_right_4_joint"] = j4_end
+            episode_targets["torso_lift_joint"] = 0.35
+            episode_targets["arm_right_4_joint"] = cfg.j4_retracted
             for gj in GRIPPER_JOINTS:
                 episode_targets[gj] = GRIPPER_OPEN
 

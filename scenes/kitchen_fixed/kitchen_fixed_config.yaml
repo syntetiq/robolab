@@ -92,7 +92,7 @@ objects:
 
   apple:
     radius: 0.05
-    mass_kg: 0.15
+    mass_kg: 0.20
     offset_x: 0.07           # relative to plate center -> east side of plate
     offset_y: 0.0
     material: apple_red
@@ -180,6 +180,8 @@ materials:
     diffuse: [0.75, 0.12, 0.10]
     roughness: 0.5
     metallic: 0.0
+    friction_static: 1.2
+    friction_dynamic: 0.9
 
   banana_yellow:
     diffuse: [0.92, 0.82, 0.20]
