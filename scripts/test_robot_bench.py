@@ -1921,6 +1921,9 @@ def run_grasp_pick_only_cycle(
     torso_speed=0.05,
     torso_approach=0.35,
     drive_speed=0.3,
+    approach_arm_retracted=False,
+    lift_with_torso_only=False,
+    lift_interpolation_steps_override=None,
 ):
     """Run grasp state machine from settle until lift done (transition to rotate_shift). Returns (success, steps, current_targets)."""
     pos = get_prim_world_position(object_prim_path)
@@ -2068,6 +2071,8 @@ def run_grasp_pick_only_cycle(
             elif state == "extend_arm":
                 if entering:
                     _set_arm(cfg.pre_grasp_pose)
+                    if approach_arm_retracted:
+                        current_targets["arm_right_4_joint"] = cfg.j4_retracted
                     _set_torso(torso_approach, torso_speed, sim_time)
                 if steps_in_state >= cfg.extend_arm_steps:
                     _transition("rotate_to_target")
@@ -2142,6 +2147,8 @@ def run_grasp_pick_only_cycle(
             elif state == "settle_at_table":
                 if entering:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
+                    if approach_arm_retracted:
+                        current_targets["arm_right_4_joint"] = cfg.j4_extended
                 if steps_in_state >= cfg.settle_at_table_steps:
                     _transition("approach_overhead")
 
@@ -2198,7 +2205,8 @@ def run_grasp_pick_only_cycle(
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
                     _set_gripper(cfg.gripper_close_value)
                 if steps_in_state == cfg.close_gripper_step:
-                    _set_gripper(GRIPPER_CLOSED)
+                    _final_close = getattr(cfg, "gripper_final_close_value", GRIPPER_CLOSED)
+                    _set_gripper(_final_close)
                 if steps_in_state >= cfg.close_gripper_timeout:
                     _transition("verify_grasp")
 
@@ -2224,10 +2232,12 @@ def run_grasp_pick_only_cycle(
                 if entering:
                     _set_torso(cfg.torso_hold, torso_speed, sim_time)
                     grasp_verified_hold_step = None
-                lift_alpha = min(1.0, steps_in_state / float(cfg.lift_interpolation_steps))
-                j4_target = cfg.j4_retracted
-                j4_val = cfg.j4_extended + lift_alpha * (j4_target - cfg.j4_extended)
-                current_targets["arm_right_4_joint"] = j4_val
+                _lift_steps = lift_interpolation_steps_override or cfg.lift_interpolation_steps
+                if not lift_with_torso_only:
+                    lift_alpha = min(1.0, steps_in_state / float(_lift_steps))
+                    j4_target = cfg.j4_retracted
+                    j4_val = cfg.j4_extended + lift_alpha * (j4_target - cfg.j4_extended)
+                    current_targets["arm_right_4_joint"] = j4_val
                 _apply_targets(articulation, dof_names, current_targets)
                 tx, ty, tz = _get_tool_pos()
                 mx, my, mz = _get_object_pos()
@@ -2822,6 +2832,12 @@ def run_task_config_episode(
                     render_every=render_every,
                     initial_targets=episode_targets,
                     gripper_length_m=gripper_length_m,
+                    top_descend_clearance=cfg.top_descend_clearance,
+                    top_verify_xy_tol=cfg.top_verify_xy_tol,
+                    top_xy_tol=cfg.top_xy_tol,
+                    approach_arm_retracted=bool(task.get("approach_arm_retracted", False)),
+                    lift_with_torso_only=bool(task.get("lift_with_torso_only", False)),
+                    lift_interpolation_steps_override=task.get("lift_interpolation_steps_override"),
                 )
                 if success:
                     episode_targets = new_targets
@@ -2926,7 +2942,16 @@ def run_task_config_episode(
         elif task_type == "place_object":
             release_height_m = float(task.get("release_height_m", 0.10))
             object_usd_path = (task.get("success_criteria") or {}).get("object_usd_path")
-            table_top_z = cfg.table_top_z
+            _p_top_z = float(task.get("placement_top_z", cfg.table_top_z))
+            _p_cx = float(task.get("placement_cx", cfg.table_cx))
+            _p_cy = float(task.get("placement_cy", cfg.table_cy))
+            _p_hw = float(task.get("placement_half_w", cfg.table_half_w))
+            _p_hd = float(task.get("placement_half_d", cfg.table_half_d))
+            _p_margin = float(task.get("placement_margin", cfg.bounds_margin))
+            _p_abort_z = float(task.get("placement_abort_z_offset", cfg.abort_below_z_offset))
+            _p_release_z = float(task.get("placement_release_z_offset", cfg.release_z_offset))
+            _p_success_z = float(task.get("placement_success_z_offset", cfg.success_z_offset))
+            table_top_z = _p_top_z
             current_targets = dict(episode_targets)
             j4_start = current_targets.get("arm_right_4_joint", cfg.j4_retracted)
             j4_end = cfg.j4_extended
@@ -2960,13 +2985,13 @@ def run_task_config_episode(
                     mug_pos = get_prim_world_position(object_usd_path) if object_usd_path else None
                     mug_z = mug_pos[2] if mug_pos else None
 
-                    if mug_z is not None and mug_z < table_top_z + cfg.abort_below_z_offset:
+                    if mug_z is not None and mug_z < table_top_z + _p_abort_z:
                         place_aborted = True
                         for gj in GRIPPER_JOINTS:
                             current_targets[gj] = GRIPPER_OPEN
                         released = True
-                        print(f"[Bench] place_object ABORT: mug Z={mug_z:.3f} below table ({table_top_z + cfg.abort_below_z_offset:.3f})")
-                    elif mug_z is not None and mug_z <= table_top_z + cfg.release_z_offset:
+                        print(f"[Bench] place_object ABORT: obj Z={mug_z:.3f} below surface ({table_top_z + _p_abort_z:.3f})")
+                    elif mug_z is not None and mug_z <= table_top_z + _p_release_z:
                         for gj in GRIPPER_JOINTS:
                             current_targets[gj] = GRIPPER_OPEN
                         released = True
@@ -2990,20 +3015,17 @@ def run_task_config_episode(
             place_success = not place_aborted
             if object_usd_path:
                 final_pos = get_prim_world_position(object_usd_path)
-                if final_pos is None or final_pos[2] > table_top_z + cfg.success_z_offset:
+                if final_pos is None or final_pos[2] > table_top_z + _p_success_z:
                     place_success = False
                     fz = f"{final_pos[2]:.3f}" if final_pos else "None"
-                    print(f"[Bench] place_object FAILED: mug Z={fz}, threshold={table_top_z + cfg.success_z_offset:.3f}")
+                    print(f"[Bench] place_object FAILED: obj Z={fz}, threshold={table_top_z + _p_success_z:.3f}")
                 if place_success and final_pos is not None:
-                    table_cx, table_cy = cfg.table_cx, cfg.table_cy
-                    half_w, half_d = cfg.table_half_w, cfg.table_half_d
-                    margin = cfg.bounds_margin
-                    if (final_pos[0] < table_cx - half_w - margin or
-                        final_pos[0] > table_cx + half_w + margin or
-                        final_pos[1] < table_cy - half_d - margin or
-                        final_pos[1] > table_cy + half_d + margin):
+                    if (final_pos[0] < _p_cx - _p_hw - _p_margin or
+                        final_pos[0] > _p_cx + _p_hw + _p_margin or
+                        final_pos[1] < _p_cy - _p_hd - _p_margin or
+                        final_pos[1] > _p_cy + _p_hd + _p_margin):
                         place_success = False
-                        print(f"[Bench] place_object FAILED: mug XY=({final_pos[0]:.3f},{final_pos[1]:.3f}) outside table bounds")
+                        print(f"[Bench] place_object FAILED: obj XY=({final_pos[0]:.3f},{final_pos[1]:.3f}) outside placement bounds")
 
             task_results.append({
                 "task_id": task_id, "type": task_type, "success": place_success,

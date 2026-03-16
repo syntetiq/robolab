@@ -100,7 +100,7 @@ objects:
   banana:
     length: 0.22
     radius: 0.030
-    mass_kg: 0.24
+    mass_kg: 0.05
     offset_x: -0.05          # relative to plate center -> west side of plate
     offset_y: 0.0
     material: banana_yellow
@@ -185,11 +185,17 @@ materials:
     diffuse: [0.92, 0.82, 0.20]
     roughness: 0.6
     metallic: 0.0
+    friction_static: 1.0
+    friction_dynamic: 0.8
+    restitution: 0.01
 
   mug_ceramic:
     diffuse: [0.80, 0.20, 0.15]
     roughness: 0.35
     metallic: 0.0
+    friction_static: 0.8
+    friction_dynamic: 0.6
+    restitution: 0.01
 
   shelf_metal:
     diffuse: [0.70, 0.70, 0.75]

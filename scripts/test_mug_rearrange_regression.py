@@ -296,7 +296,7 @@ def main():
 
     # Wheels always stopped after navigate_to and carry_to
     check("place_object: XY bounds check",
-          "outside table bounds" in bench_code, True)
+          "outside placement bounds" in bench_code, True)
     check("place_object: below-table abort",
           "below table" in bench_code, True)
 
