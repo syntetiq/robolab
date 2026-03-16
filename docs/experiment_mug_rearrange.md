@@ -31,8 +31,8 @@ Table bounds: X [0.95, 1.75], Y [3.05, 3.85]. Table top Z = 0.80 m.
 |--------|---------|---------|----------|------------------------|
 | Mug    | 1.15    | 3.30    | ~0.85    | r=0.04, h=0.10, 0.30kg |
 | Plate  | 1.60    | 3.45    | ~0.825   | r=0.15, h=0.025, 0.25kg|
-| Apple  | 1.67    | 3.45    | ~0.88    | r=0.05, 0.15kg         |
-| Banana | 1.55    | 3.45    | ~0.86    | l=0.22, r=0.03, 0.24kg |
+| Apple  | 1.67    | 3.45    | ~0.88    | r=0.05, 0.20kg         |
+| Banana | 1.55    | 3.45    | ~0.86    | l=0.22, r=0.03, 0.05kg |
 
 Object positions are relative to table center (1.35, 3.45):
 - Mug: offset_x=-0.20, offset_y=-0.15 (NW, south-shifted for reachability)
@@ -233,7 +233,14 @@ Video recordings: 3 cameras (top, front, isometric) in episode directory.
 .\scripts\run_task_config.ps1 -Config config/tasks/fixed_mug_rearrange.json -Duration 300
 ```
 
-## 9. Regression Test
+## 9. Shared Behaviors (added in Experiment 2, apply to all experiments)
+
+- **Post-release arm retraction in `place_object`**: after releasing the object, J4 retracts to `cfg.j4_retracted` and torso raises to `cfg.torso_hold` over 360 steps. Prevents arm from knocking placed objects when driving away.
+- **Arm retraction in `navigate_to`**: on entry, sets J4 to retracted and torso to max, applies arm targets every step. Keeps arm tucked during navigation.
+- **`grasp_success` reporting**: task-config mode correctly reports `grasp_success` based on `pick_object` task results.
+- **Apple stability**: mass increased to 0.20 kg, friction added (static=1.2, dynamic=0.9) to prevent knockoff during arm sweeps.
+
+## 10. Regression Test
 
 Run `scripts/test_mug_rearrange_regression.py` to validate that all config parameters match the documented values without running the simulation.
 

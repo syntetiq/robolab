@@ -300,6 +300,30 @@ def main():
     check("place_object: below-table abort",
           "below table" in bench_code, True)
 
+    # Shared behaviors (added in experiment-2, apply to all experiments)
+    check("code: post-release arm retraction (_release_step)",
+          "_release_step" in bench_code, True)
+    check("code: post-release J4 retract (cfg.j4_retracted - j4_end)",
+          "cfg.j4_retracted - j4_end" in bench_code, True)
+    check("code: post-release torso uses cfg.torso_hold",
+          "cfg.torso_hold - torso_start" in bench_code, True)
+    check("code: navigate_to applies arm targets",
+          'current_targets = dict(episode_targets)' in bench_code, True)
+    check("code: navigate_to sets j4_retracted",
+          'current_targets["arm_right_4_joint"] = cfg.j4_retracted' in bench_code, True)
+    check("code: navigate_to sets torso via cfg.torso_hold",
+          'current_targets["torso_lift_joint"] = cfg.torso_hold' in bench_code, True)
+    check("code: grasp_success set in task-config mode",
+          'report["grasp_success"]' in bench_code, True)
+
+    # Scene config: apple stability
+    with open(os.path.join(REPO_ROOT, "scenes/kitchen_fixed/kitchen_fixed_config.yaml"), "r") as f:
+        scene_cfg = yaml.safe_load(f)
+    check("apple.mass_kg", scene_cfg["objects"]["apple"]["mass_kg"], 0.20)
+    apple_mat = scene_cfg["materials"]["apple_red"]
+    check("apple_mat.friction_static", apple_mat.get("friction_static"), 1.2)
+    check("apple_mat.friction_dynamic", apple_mat.get("friction_dynamic"), 0.9)
+
     # ---------------------------------------------------------------
     # 6. Derived geometry checks
     # ---------------------------------------------------------------

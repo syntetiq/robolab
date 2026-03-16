@@ -104,8 +104,8 @@ Config file: `config/tasks/fixed_banana_to_sink.json`
 ### Control Timing (Optimized)
 - `grasp_settle_steps`: 120 (1.0s)
 - `extend_arm_steps`: 300 (2.5s)
-- `settle_at_table_steps`: 60 (0.5s)
-- `approach_timeout_steps`: 600 (5.0s)
+- `settle_at_table_steps`: 360 (3.0s)
+- `approach_timeout_steps`: 1800 (15.0s)
 - `place_descent_steps`: 600 (5.0s)
 
 ### Placement Overrides (Sink vs Table)
@@ -118,6 +118,8 @@ The robot carries the banana west past the table to (0.45, 2.80), then rotates t
 - Banana mass: 0.05 kg (reduced from 0.24 kg for reliable gripper friction)
 - Banana material friction: static=1.0, dynamic=0.8 (added for grip)
 - Banana orientation: rotate_xyz=(90, 0, 0) -- lies flat on plate instead of standing upright
+- Apple mass: 0.20 kg (increased from 0.15 for stability)
+- Apple material friction: static=1.2, dynamic=0.9 (prevents knockoff during arm sweeps)
 
 ## 5. Safety Boundaries
 
@@ -129,7 +131,7 @@ The robot carries the banana west past the table to (0.45, 2.80), then rotates t
 ## 6. Code Changes from Experiment 1
 
 1. **Per-task placement overrides** in `place_object` handler: reads `placement_top_z`, `placement_cx`, etc. from task dict, falling back to `cfg` globals.
-2. **`approach_arm_retracted`** parameter: keeps J4 at retracted position during `extend_arm` and `drive_to_mug`, lowering to extended in `settle_at_table`. Prevents gripper from sweeping table objects.
+2. **`approach_arm_retracted`** parameter: keeps J4 at retracted position during `extend_arm` and `drive_to_mug`, extending fully in `settle_at_table`. Prevents gripper from sweeping table objects.
 3. **`lift_with_torso_only`** parameter: option to skip J4 retraction during lift (not used in final config).
 4. **`lift_interpolation_steps_override`** parameter: allows per-task slower lift speed.
 5. **`gripper_final_close_value`** parameter: controls the second-stage gripper close (step 45), defaults to GRIPPER_CLOSED.
@@ -138,6 +140,12 @@ The robot carries the banana west past the table to (0.45, 2.80), then rotates t
 8. **`carry_to` TABLE_SOUTH_BOUNDARY_Y bypass**: allows northward carry when target is north of the boundary.
 9. **`place_object` place_heading_deg**: optional rotation before arm descent (available but not used in final config).
 10. **Banana orientation fix**: rotate_xyz=(90, 0, 0) in scene builder so cylinder lies flat on plate.
+11. **`fine_align` state**: after `settle_at_table`, performs gentle proportional XY correction (kp=0.03) to center tool over banana before descent. Converges to <=15mm XY error.
+12. **`descend_vertical` XY tracking**: during torso descent, proportional base control (kp=0.15, gain=3.0) compensates for lateral tool drift.
+13. **XY convergence gate**: gripper only closes when both Z clearance (dz <= 0.04) and XY error (<= 25mm) are satisfied, preventing empty grasps.
+14. **Post-release arm retraction in `place_object`**: after releasing the banana, J4 retracts from extended to `cfg.j4_retracted` and torso raises to `cfg.torso_hold` over 360 steps. Prevents arm from knocking the banana off the sink when driving away.
+15. **Arm retraction in `navigate_to`**: on entry, sets J4 to retracted and torso to max, applies arm targets every step. Keeps arm tucked during all navigation, preventing sweeps past furniture.
+16. **`grasp_success` reporting fix**: task-config mode now correctly reports `grasp_success` based on `pick_object` task results.
 
 ## 7. How to Run
 
@@ -152,14 +160,16 @@ The robot carries the banana west past the table to (0.45, 2.80), then rotates t
 python scripts/test_banana_to_sink_regression.py
 ```
 
-## 8. Verified Results
+## 8. Verified Results (2026-03-16)
 
 | Task | Type        | Success | Steps | Sim Time |
 |------|-------------|---------|-------|----------|
-| T1   | navigate_to | PASS    | 703   | 5.86 s   |
-| T2   | pick_object | PASS    | 2660  | 22.17 s  |
-| T3   | carry_to    | PASS    | 3120  | 26.00 s  |
+| T1   | navigate_to | PASS    | 704   | 5.87 s   |
+| T2   | pick_object | PASS    | 3766  | 31.38 s  |
+| T3   | carry_to    | PASS    | 2994  | 24.95 s  |
 | T4   | place_object| PASS    | 1200  | 9.99 s   |
-| T5   | navigate_to | PASS    | 454   | 3.78 s   |
+| T5   | navigate_to | PASS    | 443   | 3.69 s   |
 
-Total simulation: 8137 steps, ~67.8 s sim time, ~188 s wall time (no video), ~350 s (with video).
+Total simulation: 9107 steps, ~75.9 s sim time, ~217 s wall time (no video), ~302 s (with video).
+
+Regression test: 119/119 checks pass.

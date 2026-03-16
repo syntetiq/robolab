@@ -54,3 +54,8 @@ __pycache__/
 
 # dataset exports (large files)
 *.hdf5
+
+# video analysis artifacts (generated per-run)
+video_analysis/
+video_analysis_frames/
+video_frames/

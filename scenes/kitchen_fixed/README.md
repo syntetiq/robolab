@@ -50,10 +50,10 @@ Objects are placed on the table (center at X=1.35, Y=3.45, top at Z=0.80):
 
 | Object | World X | World Y | World Z  | Dimensions          |
 | ------ | ------- | ------- | -------- | ------------------- |
-| Plate  | 1.35    | 3.35    | 0.8125   | r=0.15, h=0.025     |
-| Apple  | 1.41    | 3.39    | ~0.88    | r=0.05 (sphere)     |
-| Banana | 1.29    | 3.38    | ~0.84    | r=0.015, l=0.20     |
-| Mug    | 1.55    | 3.55    | 0.85     | r=0.04, h=0.10      |
+| Plate  | 1.60    | 3.45    | 0.8125   | r=0.15, h=0.025     |
+| Apple  | 1.67    | 3.45    | ~0.88    | r=0.05 (sphere)     |
+| Banana | 1.55    | 3.45    | ~0.86    | r=0.030, l=0.22     |
+| Mug    | 1.15    | 3.30    | 0.85     | r=0.04, h=0.10      |
 
 ## Prim Hierarchy
 
@@ -159,8 +159,8 @@ For higher visual fidelity, replace diffuse colors with texture maps (albedo, no
 | Dishwasher Cabinet | RigidBody + kinematicEnabled    | Anchor for door joint              |
 | Dishwasher Door    | RigidBody (dynamic, 5 kg)       | RevoluteJoint to cabinet           |
 | Plate              | RigidBody (dynamic, 0.25 kg)    | Cylinder collider                  |
-| Apple              | RigidBody (dynamic, 0.15 kg)    | Sphere collider                    |
-| Banana             | RigidBody (dynamic, 0.12 kg)    | Cylinder collider                  |
+| Apple              | RigidBody (dynamic, 0.20 kg)    | Sphere collider                    |
+| Banana             | RigidBody (dynamic, 0.05 kg)    | Cylinder collider                  |
 | Mug                | RigidBody (dynamic, 0.30 kg)    | Cylinder collider                  |
 
 Physics scene uses TGS solver at 120 Hz with stabilization enabled.

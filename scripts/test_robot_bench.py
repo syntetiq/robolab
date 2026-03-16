@@ -94,7 +94,7 @@ DEFAULTS = {
     },
     # --- Safety ---
     "table_south_boundary_y": 2.75,
-    "furniture_zones": [
+    "furniture_zones": [  # cy shifted south from actual 3.45 to enlarge avoidance bounding box
         {"name": "fridge",       "cx": -1.35, "cy": 3.45, "hw": 0.50, "hd": 0.50},
         {"name": "sink_cabinet", "cx":  0.45, "cy": 3.60, "hw": 0.50, "hd": 0.40},
         {"name": "table",        "cx":  1.35, "cy": 3.55, "hw": 0.50, "hd": 0.50},
@@ -2768,7 +2768,7 @@ def run_task_config_episode(
                 max_steps = int(timeout_s / physics_dt)
                 current_targets = dict(episode_targets)
                 current_targets["arm_right_4_joint"] = cfg.j4_retracted
-                current_targets["torso_lift_joint"] = 0.35
+                current_targets["torso_lift_joint"] = cfg.torso_hold
                 for gj in GRIPPER_JOINTS:
                     current_targets[gj] = GRIPPER_OPEN
                 step_count = 0
@@ -2881,7 +2881,7 @@ def run_task_config_episode(
                 except Exception:
                     pass
                 episode_targets["arm_right_4_joint"] = cfg.j4_retracted
-                episode_targets["torso_lift_joint"] = 0.35
+                episode_targets["torso_lift_joint"] = cfg.torso_hold
                 task_results.append({
                     "task_id": task_id,
                     "type": task_type,
@@ -3197,14 +3197,14 @@ def run_task_config_episode(
                     _ret_elapsed = step - _release_step
                     _ret_alpha = min(1.0, _ret_elapsed / max(1, _retract_steps))
                     current_targets["arm_right_4_joint"] = j4_end + _ret_alpha * (cfg.j4_retracted - j4_end)
-                    current_targets["torso_lift_joint"] = torso_start + _ret_alpha * (0.35 - torso_start)
+                    current_targets["torso_lift_joint"] = torso_start + _ret_alpha * (cfg.torso_hold - torso_start)
 
                 _apply_targets(articulation, dof_names, current_targets)
                 if step % log_every == 0:
                     logger.log_frame(sim_time, step, current_targets, state_name="place_object")
                 world.step(render=(step % render_every == 0))
 
-            episode_targets["torso_lift_joint"] = 0.35
+            episode_targets["torso_lift_joint"] = cfg.torso_hold
             episode_targets["arm_right_4_joint"] = cfg.j4_retracted
             for gj in GRIPPER_JOINTS:
                 episode_targets[gj] = GRIPPER_OPEN
@@ -3306,8 +3306,11 @@ def run_task_config_episode(
     report["scene_info"] = scene_info
     report["task_config_episode"] = True
     report["task_results"] = task_results
-    report["verdict"] = "PASS (task config)" if all(r.get("success", False) for r in task_results) else "FAIL (task config)"
+    _all_ok = all(r.get("success", False) for r in task_results)
+    report["verdict"] = "PASS (task config)" if _all_ok else "FAIL (task config)"
     report["episode_name"] = config.get("episode_name", "")
+    _pick_ok = any(r.get("type") == "pick_object" and r.get("success") for r in task_results)
+    report["grasp_success"] = _pick_ok
 
     results_path = os.path.join(model_dir, "task_results.json")
     with open(results_path, "w", encoding="utf-8") as f:
