@@ -91,6 +91,7 @@ DEFAULTS = {
         "pre_grasp_top":    {"R": [1.50, 0.0, 0.0, -0.35, -1.57, 0.0, 0.0],   "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
         "grasp_top":        {"R": [1.50, 0.0, 0.0, -0.35, -1.57, 0.0, 0.0],   "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
         "lift_top":         {"R": [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0],      "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+        "pre_grasp_handle": {"R": [0.70, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],      "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
     },
     # --- Safety ---
     "table_south_boundary_y": 2.75,
@@ -1488,23 +1489,86 @@ def get_prim_world_position(prim_path):
     return None
 
 
-def get_door_hinge_angle_deg(door_prim_path):
-    """Return current door angle in degrees (0 = closed, 90 = fully open). Door rotates around world Y.
-    Uses door prim world orientation: door local +X is 'outward'; angle in XZ plane from -X (closed) to +Z (open)."""
+def _get_door_angle_from_joint(joint_prim_path):
+    """Read the door angle from a RevoluteJoint by examining the door body's world orientation
+    relative to the parent body's world orientation. Works for any joint axis/coordinate system.
+    Returns absolute angle in degrees (0=closed)."""
+    try:
+        from pxr import UsdPhysics
+        stage = omni.usd.get_context().get_stage()
+        joint_prim = stage.GetPrimAtPath(joint_prim_path)
+        if not joint_prim or not joint_prim.IsValid():
+            return None
+
+        state_attr = joint_prim.GetAttribute("state:angular:physics:position")
+        if state_attr and state_attr.HasValue():
+            return abs(float(state_attr.Get()))
+
+        axis_attr = joint_prim.GetAttribute("physics:axis")
+        axis = axis_attr.Get() if axis_attr and axis_attr.HasValue() else "Y"
+
+        body0_rel = joint_prim.GetRelationship("physics:body0")
+        body1_rel = joint_prim.GetRelationship("physics:body1")
+        if not body0_rel or not body1_rel:
+            return None
+        body0_targets = body0_rel.GetTargets()
+        body1_targets = body1_rel.GetTargets()
+        if not body0_targets or not body1_targets:
+            return None
+
+        xf0 = XFormPrim(prim_path=str(body0_targets[0]))
+        xf1 = XFormPrim(prim_path=str(body1_targets[0]))
+        _, ori0 = xf0.get_world_pose()
+        _, ori1 = xf1.get_world_pose()
+        if ori0 is None or ori1 is None:
+            return None
+
+        def quat_to_mat_col0(w, x, y, z):
+            return (1 - 2*(y*y + z*z), 2*(x*y - w*z), 2*(x*z + w*y))
+
+        def quat_conjugate(w, x, y, z):
+            return (w, -x, -y, -z)
+
+        def quat_multiply(aw, ax, ay, az, bw, bx, by, bz):
+            return (
+                aw*bw - ax*bx - ay*by - az*bz,
+                aw*bx + ax*bw + ay*bz - az*by,
+                aw*by - ax*bz + ay*bw + az*bx,
+                aw*bz + ax*by - ay*bx + az*bw,
+            )
+
+        w0, x0, y0, z0 = float(ori0[0]), float(ori0[1]), float(ori0[2]), float(ori0[3])
+        w1, x1, y1, z1 = float(ori1[0]), float(ori1[1]), float(ori1[2]), float(ori1[3])
+
+        cw, cx, cy, cz = quat_conjugate(w0, x0, y0, z0)
+        rw, rx, ry, rz = quat_multiply(cw, cx, cy, cz, w1, x1, y1, z1)
+
+        if axis == "Z":
+            angle_rad = math.atan2(2*(rw*rz + rx*ry), 1 - 2*(ry*ry + rz*rz))
+        elif axis == "X":
+            angle_rad = math.atan2(2*(rw*rx + ry*rz), 1 - 2*(rx*rx + ry*ry))
+        else:
+            angle_rad = math.atan2(2*(rw*ry + rx*rz), 1 - 2*(ry*ry + rz*rz))
+
+        return abs(math.degrees(angle_rad))
+    except Exception as e:
+        print(f"[Door] _get_door_angle_from_joint error: {e}")
+    return None
+
+
+def _get_door_angle_from_orientation(door_prim_path):
+    """Fallback: read door angle from prim world orientation (procedural scene, Y-axis rotation)."""
     try:
         xf = XFormPrim(prim_path=door_prim_path)
         _, ori = xf.get_world_pose()
         if ori is None:
             return None
         w, x, y, z = float(ori[0]), float(ori[1]), float(ori[2]), float(ori[3])
-        # Door local +X in world = first column of rotation matrix from quat
-        # q = (w,x,y,z) -> R col0 = (1-2(y^2+z^2), 2(xy-wz), 2(xz+wy))
         xx, yy, zz = x * x, y * y, z * z
         xy, xz, wy, wz = x * y, x * z, w * y, w * z
         door_x_x = 1.0 - 2.0 * (yy + zz)
         door_x_y = 2.0 * (xy - wz)
         door_x_z = 2.0 * (xz + wy)
-        # Angle in XZ plane: closed = (-1,0,0) -> 0°, open 90° = (0,0,1) -> 90°
         angle_rad = math.atan2(door_x_z, -door_x_x)
         angle_deg = math.degrees(angle_rad)
         if angle_deg < 0:
@@ -1513,6 +1577,17 @@ def get_door_hinge_angle_deg(door_prim_path):
     except Exception:
         pass
     return None
+
+
+def get_door_hinge_angle_deg(door_prim_path, joint_path=None):
+    """Return current door angle in degrees (0=closed, 90=fully open).
+    If joint_path is provided, reads the RevoluteJoint body orientations (works for any coordinate system).
+    Otherwise falls back to orientation-based reading (procedural scene only)."""
+    if joint_path:
+        angle = _get_door_angle_from_joint(joint_path)
+        if angle is not None:
+            return angle
+    return _get_door_angle_from_orientation(door_prim_path)
 
 
 # ---------------------------------------------------------------------------
@@ -2432,11 +2507,19 @@ def run_door_open_close_cycle(
     push_speed_ms=0.04,
     approach_clearance_m=0.15,
     drive_speed=0.25,
+    approach_axis="x",
+    arm_reach_m=0.85,
+    door_joint_path=None,
+    door_arm_pose="pre_grasp_handle",
+    base_lateral_offset_m=0.40,
 ):
-    """Run door open (is_open=True) or close (is_open=False). Returns (success, steps_used)."""
+    """Run door open (is_open=True) or close (is_open=False). Returns (success, steps_used).
+    approach_axis: 'x' (procedural scene, robot west of handle) or 'y' (fixed kitchen, robot south of handle).
+    door_joint_path: USD path to RevoluteJoint for accurate angle reading.
+    door_arm_pose: arm pose name to use for reaching the handle."""
     current_targets = dict(initial_targets)
     _current_wheel_vels = (0.0, 0.0, 0.0, 0.0)
-    success_criteria = target_angle_deg  # min angle for open, max angle for close
+    success_criteria = target_angle_deg
 
     _ee_path = logger._link_paths.get("gripper_right_grasping_frame") or logger._link_paths.get("arm_right_tool_link")
 
@@ -2478,36 +2561,88 @@ def run_door_open_close_cycle(
             current_targets[gj] = val
         _apply_targets(articulation, dof_names, current_targets)
 
+    def _read_door_angle():
+        return get_door_hinge_angle_deg(door_usd_path, joint_path=door_joint_path)
+
+    _axis_y = (approach_axis == "y")
+
     state = "drive_to_handle"
     state_start_step = -1
     success = False
-    door_angle_at_push_start = None  # for close_door: accept success if angle decreased
+    door_angle_at_push_start = None
+    _close_fixed_handle_pos = None
+    _close_waypoints = []
+    _close_wp_idx = 0
 
     for step in range(timeout_steps):
         sim_time = step * physics_dt
         handle_pos = _get_handle_pos()
         tool_pos = _get_tool_pos()
-        door_angle = get_door_hinge_angle_deg(door_usd_path)
+        door_angle = _read_door_angle()
 
         if state == "drive_to_handle":
             if handle_pos is None:
                 _set_wheels(omni_wheel_velocities(0, 0, 0))
             else:
                 hx, hy, hz = handle_pos[0], handle_pos[1], handle_pos[2]
-                # Base position so that extended arm (pre_grasp_top, reach ~0.85 m) has EE at handle
-                arm_reach_x = 0.85
-                target_base_x = hx - arm_reach_x
-                target_base_y = hy
+                if _axis_y:
+                    if is_open:
+                        target_base_x = hx - base_lateral_offset_m
+                        target_base_y = hy - arm_reach_m
+                    else:
+                        bx_now, by_now, _ = _get_base_pos() or (0, 0, 0)
+                        if _close_fixed_handle_pos is None:
+                            _close_fixed_handle_pos = (hx, hy, hz)
+                            _close_waypoints = [
+                                (bx_now, 1.50),
+                                (hx + 0.60, 1.50),
+                                (hx + 0.60, hy),
+                            ]
+                            _close_wp_idx = 0
+                        if _close_wp_idx < len(_close_waypoints):
+                            target_base_x, target_base_y = _close_waypoints[_close_wp_idx]
+                        else:
+                            target_base_x = bx_now
+                            target_base_y = by_now
+                else:
+                    target_base_x = hx - arm_reach_m
+                    target_base_y = hy
                 bx, by, _ = _get_base_pos() or (0, 0, 0)
                 dx = target_base_x - bx
                 dy = target_base_y - by
-                if abs(dx) < 0.05 and abs(dy) < 0.05:
+                if step % 60 == 0:
+                    print(f"[Door] drive_to_handle t={sim_time:.1f}s: base=({bx:.3f},{by:.3f}) "
+                          f"target=({target_base_x:.3f},{target_base_y:.3f}) dx={dx:.3f} dy={dy:.3f} "
+                          f"handle=({hx:.3f},{hy:.3f},{hz:.3f}) angle={door_angle}")
+                if not is_open and door_angle is not None and door_angle <= success_criteria:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
-                    _set_arm(cfg.pre_grasp_pose)
-                    current_targets["torso_lift_joint"] = cfg.torso_hold
-                    _apply_targets(articulation, dof_names, current_targets)
-                    state = "approach_and_grasp"
+                    success = True
+                    state = "release"
                     state_start_step = step
+                    print(f"[Door] close SUCCESS (during nav): angle={door_angle:.1f} <= {success_criteria}")
+                    continue
+                _tol = 0.20 if (_axis_y and not is_open) else 0.05
+                _close_wp_pending = (_axis_y and not is_open and _close_wp_idx < len(_close_waypoints))
+                if _close_wp_pending and abs(dx) < _tol and abs(dy) < _tol:
+                    _close_wp_idx += 1
+                    if _close_wp_idx < len(_close_waypoints):
+                        print(f"[Door] close waypoint {_close_wp_idx}/{len(_close_waypoints)} reached, next=({_close_waypoints[_close_wp_idx][0]:.2f},{_close_waypoints[_close_wp_idx][1]:.2f})")
+                    else:
+                        print(f"[Door] all close waypoints reached, starting push")
+                if not _close_wp_pending and abs(dx) < _tol and abs(dy) < _tol:
+                    _set_wheels(omni_wheel_velocities(0, 0, 0))
+                    _set_arm(door_arm_pose)
+                    current_targets["torso_lift_joint"] = 0.35
+                    _apply_targets(articulation, dof_names, current_targets)
+                    if _axis_y and not is_open:
+                        state = "pull_or_push"
+                        state_start_step = step
+                        door_angle_at_push_start = _read_door_angle()
+                        print(f"[Door] -> pull_or_push (close) at step {step}, angle={door_angle}")
+                    else:
+                        state = "approach_and_grasp"
+                        state_start_step = step
+                        print(f"[Door] -> approach_and_grasp at step {step}")
                 else:
                     try:
                         _, ori = articulation.get_world_pose()
@@ -2525,24 +2660,41 @@ def run_door_open_close_cycle(
 
         elif state == "approach_and_grasp":
             steps_in = step - state_start_step
-            if steps_in < 90:
+            _settle_phase = 240
+            _creep_phase = _settle_phase + 600
+            _gripper_open_phase = _creep_phase + 60
+            _gripper_close_phase = _gripper_open_phase + 120
+            _hold_phase = _gripper_close_phase + 60
+            if steps_in < _settle_phase:
                 _set_wheels(omni_wheel_velocities(0, 0, 0))
-            elif steps_in < 180:
-                _set_gripper(0.018)
+            elif steps_in < _creep_phase:
+                creep_speed = 0.05
+                if _axis_y and not is_open:
+                    _set_wheels(omni_wheel_velocities(0.0, -creep_speed, 0.0))
+                else:
+                    _set_wheels(omni_wheel_velocities(creep_speed, 0.0, 0.0))
+            elif steps_in < _gripper_open_phase:
+                _set_wheels(omni_wheel_velocities(0, 0, 0))
+                _set_gripper(0.030)
+            elif steps_in < _gripper_close_phase:
+                _set_gripper(GRIPPER_CLOSED)
             else:
                 _set_gripper(GRIPPER_CLOSED)
-            # Optional: short nudge forward when closing door so gripper contacts handle
-            if not is_open and steps_in >= 180 and steps_in < 240:
-                _set_wheels(omni_wheel_velocities(push_speed_ms * 0.5, 0.0, 0.0))
-            elif steps_in >= 240 and steps_in < 300:
-                _set_wheels(omni_wheel_velocities(0, 0, 0))
-            if steps_in >= 300:
+            if steps_in % 120 == 0:
+                tx, ty, tz = tool_pos or (None, None, None)
+                hx, hy, hz = (_get_handle_pos() or (None, None, None))
+                print(f"[Door] approach_and_grasp step={steps_in}: tool=({tx},{ty},{tz}) handle=({hx},{hy},{hz})")
+            if not is_open and steps_in >= _gripper_close_phase and steps_in < _hold_phase:
+                if _axis_y:
+                    _set_wheels(omni_wheel_velocities(0.0, -push_speed_ms * 0.5, 0.0))
+                else:
+                    _set_wheels(omni_wheel_velocities(push_speed_ms * 0.5, 0.0, 0.0))
+            if steps_in >= _hold_phase:
                 state = "pull_or_push"
                 state_start_step = step
-                door_angle_at_push_start = get_door_hinge_angle_deg(door_usd_path) if not is_open else None
-                if not is_open:
-                    success = True  # close_door: reached push phase (drive + grasp done)
+                door_angle_at_push_start = _read_door_angle() if not is_open else None
                 _set_wheels(omni_wheel_velocities(0, 0, 0))
+                print(f"[Door] -> pull_or_push at step {step}, angle={door_angle}")
 
         elif state == "pull_or_push":
             if door_angle is not None:
@@ -2551,26 +2703,36 @@ def run_door_open_close_cycle(
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
                     state = "release"
                     state_start_step = step
+                    print(f"[Door] open SUCCESS: angle={door_angle:.1f} >= {success_criteria}")
                 elif not is_open and door_angle <= success_criteria:
                     success = True
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
                     state = "release"
                     state_start_step = step
+                    print(f"[Door] close SUCCESS: angle={door_angle:.1f} <= {success_criteria}")
             if state == "pull_or_push":
                 speed = pull_speed_ms if is_open else push_speed_ms
-                vx = -speed if is_open else speed
-                _set_wheels(omni_wheel_velocities(vx, 0.0, 0.0))
-            if step - state_start_step >= int(20.0 / physics_dt) and state == "pull_or_push":
+                if _axis_y:
+                    if is_open:
+                        _set_wheels(omni_wheel_velocities(speed, speed * 0.3, 0.0))
+                    else:
+                        _set_wheels(omni_wheel_velocities(0.0, speed, 0.0))
+                else:
+                    vx = -speed if is_open else speed
+                    _set_wheels(omni_wheel_velocities(vx, 0.0, 0.0))
+                if step % 120 == 0:
+                    bx, by, _ = _get_base_pos() or (0, 0, 0)
+                    print(f"[Door] pull_or_push t={sim_time:.1f}s: angle={door_angle} target={success_criteria} "
+                          f"is_open={is_open} base=({bx:.2f},{by:.2f})")
+            if step - state_start_step >= int(40.0 / physics_dt) and state == "pull_or_push":
                 if is_open:
                     success = door_angle is not None and door_angle >= success_criteria * 0.7
                 else:
-                    success = (
-                        (door_angle is not None and (door_angle <= success_criteria + 45.0 or (door_angle_at_push_start is not None and door_angle < door_angle_at_push_start - 5.0)))
-                        or True  # close_door: full push sequence completed
-                    )
+                    success = door_angle is not None and door_angle <= success_criteria + 15.0
                 _set_wheels(omni_wheel_velocities(0, 0, 0))
                 state = "release"
                 state_start_step = step
+                print(f"[Door] pull_or_push TIMEOUT: angle={door_angle} success={success}")
 
         elif state == "release":
             steps_in = step - state_start_step
@@ -2597,9 +2759,8 @@ def run_door_open_close_cycle(
             logger.log_frame(sim_time, step, current_targets, state_name=state)
         world.step(render=(step % render_every == 0))
 
-    # close_door: if we timed out without reaching push phase (e.g. sim instability), still count as success
-    if not is_open and not success:
-        success = True
+    final_angle = _read_door_angle()
+    print(f"[Door] cycle done: is_open={is_open} success={success} final_angle={final_angle} steps={step + 1}")
     return success, step + 1
 
 
@@ -3234,7 +3395,7 @@ def run_task_config_episode(
 
         elif task_type == "open_door" and wheel_dof_indices and len(wheel_dof_indices) >= 4:
             handle_usd_path = task.get("handle_usd_path")
-            door_joint_path = (task.get("success_criteria") or {}).get("door_joint_path")
+            _door_joint_path = (task.get("success_criteria") or {}).get("door_joint_path")
             if not handle_usd_path:
                 task_results.append({"task_id": task_id, "type": task_type, "success": False, "error": "missing_handle_usd_path"})
                 with open(task_log_path, "a", encoding="utf-8") as tf:
@@ -3246,13 +3407,21 @@ def run_task_config_episode(
                 timeout_steps = max(1, int(float(task.get("timeout_s", 20.0)) / physics_dt))
                 pull_speed = float(task.get("pull_speed_ms", global_cfg.get("pull_speed_ms", 0.05)))
                 approach_clearance_m = float(task.get("approach_clearance_m", global_cfg.get("approach_clearance_m", 0.15)))
+                _approach_axis = task.get("approach_axis", "x")
+                _arm_reach = float(task.get("arm_reach_m", 0.85))
+                _arm_pose = task.get("arm_pose", "pre_grasp_handle")
+                _base_lat = float(task.get("base_lateral_offset_m", 0.40))
                 success, steps_used = run_door_open_close_cycle(
                     world=world, articulation=articulation, dof_names=dof_names, logger=logger,
                     wheel_dof_indices=wheel_dof_indices, handle_usd_path=handle_usd_path, door_usd_path=door_usd_path,
                     is_open=True, target_angle_deg=min_angle_deg, timeout_steps=timeout_steps,
                     physics_dt=physics_dt, log_every=log_every, render_every=render_every,
                     initial_targets=episode_targets, pull_speed_ms=pull_speed, approach_clearance_m=approach_clearance_m,
+                    approach_axis=_approach_axis, arm_reach_m=_arm_reach, door_joint_path=_door_joint_path,
+                    door_arm_pose=_arm_pose, base_lateral_offset_m=_base_lat,
                 )
+                episode_targets["arm_right_4_joint"] = cfg.j4_retracted
+                episode_targets["torso_lift_joint"] = cfg.torso_hold
                 task_results.append({
                     "task_id": task_id, "type": task_type, "success": success,
                     "sim_time_end": round(steps_used * physics_dt, 4), "steps": steps_used,
@@ -3263,6 +3432,7 @@ def run_task_config_episode(
 
         elif task_type == "close_door" and wheel_dof_indices and len(wheel_dof_indices) >= 4:
             handle_usd_path = task.get("handle_usd_path")
+            _door_joint_path = (task.get("success_criteria") or {}).get("door_joint_path")
             if not handle_usd_path:
                 task_results.append({"task_id": task_id, "type": task_type, "success": False, "error": "missing_handle_usd_path"})
                 with open(task_log_path, "a", encoding="utf-8") as tf:
@@ -3273,13 +3443,21 @@ def run_task_config_episode(
                 timeout_steps = max(1, int(float(task.get("timeout_s", 15.0)) / physics_dt))
                 push_speed = float(task.get("push_speed_ms", global_cfg.get("push_speed_ms", 0.04)))
                 approach_clearance_m = float(task.get("approach_clearance_m", global_cfg.get("approach_clearance_m", 0.15)))
+                _approach_axis = task.get("approach_axis", "x")
+                _arm_reach = float(task.get("arm_reach_m", 0.85))
+                _arm_pose = task.get("arm_pose", "pre_grasp_handle")
+                _base_lat = float(task.get("base_lateral_offset_m", 0.40))
                 success, steps_used = run_door_open_close_cycle(
                     world=world, articulation=articulation, dof_names=dof_names, logger=logger,
                     wheel_dof_indices=wheel_dof_indices, handle_usd_path=handle_usd_path, door_usd_path=door_usd_path,
                     is_open=False, target_angle_deg=max_angle_deg, timeout_steps=timeout_steps,
                     physics_dt=physics_dt, log_every=log_every, render_every=render_every,
                     initial_targets=episode_targets, push_speed_ms=push_speed, approach_clearance_m=approach_clearance_m,
+                    approach_axis=_approach_axis, arm_reach_m=_arm_reach, door_joint_path=_door_joint_path,
+                    door_arm_pose=_arm_pose, base_lateral_offset_m=_base_lat,
                 )
+                episode_targets["arm_right_4_joint"] = cfg.j4_retracted
+                episode_targets["torso_lift_joint"] = cfg.torso_hold
                 task_results.append({
                     "task_id": task_id, "type": task_type, "success": success,
                     "sim_time_end": round(steps_used * physics_dt, 4), "steps": steps_used,
