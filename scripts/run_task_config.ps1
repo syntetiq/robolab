@@ -90,6 +90,7 @@ if ($NoVideo) {
 Write-Host "Command: $IsaacPython $($benchArgs -join ' ')"
 Write-Host ""
 
+$env:PYTHONUNBUFFERED = "1"
 & $IsaacPython @benchArgs
 $exitCode = $LASTEXITCODE
 

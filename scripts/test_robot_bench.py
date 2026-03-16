@@ -2037,6 +2037,7 @@ def run_grasp_pick_only_cycle(
     drive_y_aligned = False
     rotate_target_yaw = None
     grasp_aborted = False
+    _overhead_pass = 0
     success = False
 
     for step in range(timeout_steps):
@@ -2137,36 +2138,99 @@ def run_grasp_pick_only_cycle(
                     else:
                         if dx_r >= -approach_clearance_m:
                             _set_wheels(omni_wheel_velocities(0, 0, 0))
-                            _transition("settle_at_table")
+                            if approach_arm_retracted:
+                                _transition("approach_overhead")
+                            else:
+                                _transition("settle_at_table")
                         else:
                             _set_wheels(omni_wheel_velocities(min(drive_speed, cfg.drive_speed_cap), 0, 0))
                 if steps_in_state >= cfg.drive_to_mug_timeout_steps:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
-                    _transition("settle_at_table")
+                    if approach_arm_retracted:
+                        _transition("approach_overhead")
+                    else:
+                        _transition("settle_at_table")
 
             elif state == "settle_at_table":
                 if entering:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
-                    _settle_j4_start = current_targets.get("arm_right_4_joint", cfg.j4_retracted)
+                    if approach_arm_retracted:
+                        _j4_partial = cfg.j4_retracted + (cfg.j4_extended - cfg.j4_retracted) * 0.85
+                        current_targets["arm_right_4_joint"] = _j4_partial
+                        _tx0s, _ty0s, _tz0s = _get_tool_pos()
+                        _tz0s_s = f"{_tz0s:.3f}" if _tz0s is not None else "N/A"
+                        print(f"[Grasp] settle_at_table ENTER t={sim_time:.1f}s "
+                              f"tool_z={_tz0s_s} setting j4_partial={_j4_partial:.2f}")
                 if approach_arm_retracted:
-                    alpha = min(1.0, steps_in_state / max(1, cfg.settle_at_table_steps))
-                    j4_now = _settle_j4_start + alpha * (cfg.j4_extended - _settle_j4_start)
-                    current_targets["arm_right_4_joint"] = j4_now
-                if steps_in_state >= cfg.settle_at_table_steps:
-                    _transition("approach_overhead")
+                    tx_s, ty_s, tz_s = _get_tool_pos()
+                    mx_s, my_s, mz_s = _get_object_pos()
+                    _j4_ok = (tz_s is not None and mz_s is not None and (tz_s - mz_s) < 0.10)
+                    if steps_in_state >= cfg.settle_at_table_steps and _j4_ok:
+                        _transition("fine_align")
+                    elif steps_in_state >= cfg.settle_at_table_steps * 3:
+                        _transition("fine_align")
+                else:
+                    if steps_in_state >= cfg.settle_at_table_steps:
+                        _transition("approach_overhead")
+
+            elif state == "fine_align":
+                if entering:
+                    _set_wheels(omni_wheel_velocities(0, 0, 0))
+                tx_fa, ty_fa, tz_fa = _get_tool_pos()
+                mx_fa, my_fa, mz_fa = _get_object_pos()
+                if tx_fa is not None and mx_fa is not None and my_fa is not None:
+                    _dxw_fa = tx_fa - mx_fa
+                    _dyw_fa = (ty_fa or 0) - my_fa
+                    _xy_err_fa = math.hypot(_dxw_fa, _dyw_fa)
+                    if steps_in_state % 60 == 0:
+                        print(f"[Grasp] fine_align t={sim_time:.1f}s: tool=({tx_fa:.3f},{ty_fa:.3f},{tz_fa:.3f}) "
+                              f"obj=({mx_fa:.3f},{my_fa:.3f}) xy_err={_xy_err_fa:.3f}")
+                    if _xy_err_fa <= 0.015 and steps_in_state >= 60:
+                        _set_wheels(omni_wheel_velocities(0, 0, 0))
+                        _transition("descend_vertical")
+                    elif _xy_err_fa > 0.005:
+                        pos_fa, ori_fa = articulation.get_world_pose()
+                        yaw_fa = 0.0
+                        if ori_fa is not None:
+                            _, _, _yd_fa = quat_to_euler(float(ori_fa[0]), float(ori_fa[1]), float(ori_fa[2]), float(ori_fa[3]))
+                            yaw_fa = math.radians(_yd_fa)
+                        _cfa, _sfa = math.cos(yaw_fa), math.sin(yaw_fa)
+                        _dxr_fa = _dxw_fa * _cfa + _dyw_fa * _sfa
+                        _dyr_fa = -_dxw_fa * _sfa + _dyw_fa * _cfa
+                        _kp_fa = 0.03
+                        _vx_fa = max(-_kp_fa, min(_kp_fa, -_dxr_fa * 0.5))
+                        _vy_fa = max(-_kp_fa, min(_kp_fa, -_dyr_fa * 0.5))
+                        _set_wheels(omni_wheel_velocities(_vx_fa, _vy_fa, 0))
+                    else:
+                        _set_wheels(omni_wheel_velocities(0, 0, 0))
+                if steps_in_state >= 600:
+                    _set_wheels(omni_wheel_velocities(0, 0, 0))
+                    _transition("descend_vertical")
 
             elif state == "approach_overhead":
                 if entering:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
+                    _overhead_pass += 1
+                    _tx0, _ty0, _tz0 = _get_tool_pos()
+                    _tz0_s = f"{_tz0:.3f}" if _tz0 is not None else "N/A"
+                    print(f"[Grasp] approach_overhead ENTER pass={_overhead_pass} t={sim_time:.1f}s "
+                          f"tool_z={_tz0_s} j4_target={current_targets.get('arm_right_4_joint','?')}")
                 tx, ty, tz = _get_tool_pos()
                 mx, my, mz = _get_object_pos()
+                if approach_arm_retracted and _overhead_pass == 1:
+                    _next_oh = "settle_at_table"
+                else:
+                    _next_oh = "descend_vertical"
                 if tx is not None and mx is not None and my is not None:
                     target_x, target_y = mx, my
                     dx_w = tx - target_x
                     dy_w = (ty or 0) - target_y
+                    if steps_in_state % 60 == 0:
+                        print(f"[Grasp] approach_overhead t={sim_time:.1f}s p={_overhead_pass}: "
+                              f"tool=({tx:.3f},{ty:.3f},{tz:.3f}) obj=({mx:.3f},{my:.3f}) dx={dx_w:.3f} dy={dy_w:.3f}")
                     if abs(dx_w) <= top_xy_tol and abs(dy_w) <= top_xy_tol:
                         _set_wheels(omni_wheel_velocities(0, 0, 0))
-                        _transition("descend_vertical")
+                        _transition(_next_oh)
                     else:
                         pos_oh, ori_oh = articulation.get_world_pose()
                         yaw_oh = 0.0
@@ -2177,29 +2241,71 @@ def run_grasp_pick_only_cycle(
                         dx_r_oh = dx_w * c_oh + dy_w * s_oh
                         dy_r_oh = -dx_w * s_oh + dy_w * c_oh
                         _aspd = cfg.approach_speed
-                        vx = -_aspd if dx_r_oh > top_xy_tol else (_aspd if dx_r_oh < -top_xy_tol else 0.0)
-                        vy = -_aspd if dy_r_oh > top_xy_tol else (_aspd if dy_r_oh < -top_xy_tol else 0.0)
+                        _kp_oh = 1.0
+                        vx = max(-_aspd, min(_aspd, -dx_r_oh * _kp_oh))
+                        vy = max(-_aspd, min(_aspd, -dy_r_oh * _kp_oh))
                         _set_wheels(omni_wheel_velocities(vx, vy, 0))
                 if steps_in_state >= cfg.approach_timeout_steps:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
-                    _transition("descend_vertical")
+                    _transition(_next_oh)
 
             elif state == "descend_vertical":
                 if entering:
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
                     _set_torso(0.0, top_descend_speed, sim_time)
+                    if approach_arm_retracted:
+                        _j4_desc_start = cfg.j4_retracted + (cfg.j4_extended - cfg.j4_retracted) * 0.85
+                        _j4_desc_end = cfg.j4_extended
+                        _j4_desc_steps = 600
                 tx, ty, tz = _get_tool_pos()
                 mx, my, mz = _get_object_pos()
+                if approach_arm_retracted:
+                    _j4_frac = min(1.0, steps_in_state / max(1, _j4_desc_steps))
+                    current_targets["arm_right_4_joint"] = _j4_desc_start + (_j4_desc_end - _j4_desc_start) * _j4_frac
+                    if tx is not None and mx is not None and my is not None:
+                        _dxw = tx - mx
+                        _dyw = (ty or 0) - my
+                        _xy_err = math.hypot(_dxw, _dyw)
+                        if _xy_err > 0.005:
+                            pos_dv, ori_dv = articulation.get_world_pose()
+                            yaw_dv = 0.0
+                            if ori_dv is not None:
+                                _, _, _yd = quat_to_euler(float(ori_dv[0]), float(ori_dv[1]), float(ori_dv[2]), float(ori_dv[3]))
+                                yaw_dv = math.radians(_yd)
+                            _cdv, _sdv = math.cos(yaw_dv), math.sin(yaw_dv)
+                            _dxr = _dxw * _cdv + _dyw * _sdv
+                            _dyr = -_dxw * _sdv + _dyw * _cdv
+                            _kp = 0.15
+                            _vxd = max(-_kp, min(_kp, -_dxr * 3.0))
+                            _vyd = max(-_kp, min(_kp, -_dyr * 3.0))
+                            _set_wheels(omni_wheel_velocities(_vxd, _vyd, 0))
+                        else:
+                            _set_wheels(omni_wheel_velocities(0, 0, 0))
                 if tz is not None and mz is not None:
                     dz = tz - mz
                     if steps_in_state % 120 == 0:
-                        print(f"[Grasp] descend_vertical t={sim_time:.1f}s: tool_z={tz:.3f} mug_z={mz:.3f} dz={dz:.4f} clearance={top_descend_clearance:.3f}")
-                    if dz <= top_descend_clearance:
-                        _freeze_torso()
-                        grasp_tool_z = tz
-                        _transition("close_gripper_top")
+                        _xy_d = math.hypot((tx or 0) - (mx or 0), (ty or 0) - (my or 0)) if tx and mx and my else -1
+                        print(f"[Grasp] descend_vertical t={sim_time:.1f}s: tool_z={tz:.3f} mug_z={mz:.3f} dz={dz:.4f} clearance={top_descend_clearance:.3f} xy_err={_xy_d:.3f}")
+                    _xy_close = math.hypot((tx or 0) - (mx or 0), (ty or 0) - (my or 0)) if tx and mx and my else 999
+                    _z_ready = dz <= top_descend_clearance
+                    _xy_ready = _xy_close <= 0.025
+                    if approach_arm_retracted:
+                        if _z_ready and _xy_ready:
+                            _freeze_torso()
+                            _set_wheels(omni_wheel_velocities(0, 0, 0))
+                            grasp_tool_z = tz
+                            _transition("close_gripper_top")
+                        elif _z_ready:
+                            _freeze_torso()
+                    else:
+                        if _z_ready:
+                            _freeze_torso()
+                            _set_wheels(omni_wheel_velocities(0, 0, 0))
+                            grasp_tool_z = tz
+                            _transition("close_gripper_top")
                 if steps_in_state >= cfg.descend_timeout_steps:
                     _freeze_torso()
+                    _set_wheels(omni_wheel_velocities(0, 0, 0))
                     grasp_tool_z = tz if tz else 0.9
                     _transition("close_gripper_top")
 
@@ -3505,13 +3611,13 @@ def run_test(model_name, world, output_dir, record_video):
         shift_rot_speed = getattr(args, "shift_rot_speed", 0.15)
         torso_speed = getattr(args, "torso_speed", cfg.torso_speed)
         torso_lower_speed = getattr(args, "torso_lower_speed", 0.02)
-        top_descend_speed = getattr(args, "top_descend_speed", 0.015)
+        top_descend_speed = getattr(cfg, "top_descend_speed", getattr(args, "top_descend_speed", 0.015))
         approach_clearance = getattr(args, "approach_clearance", 0.13)
         torso_approach = cfg.torso_approach
         grasp_mode_cli = getattr(args, "grasp_mode", "top")
         active_grasp_mode = "top" if grasp_mode_cli in ("top", "auto") else "side"
         top_pregrasp_height = getattr(args, "top_pregrasp_height", 0.06)
-        top_descend_clearance = getattr(args, "top_descend_clearance", 0.045)
+        top_descend_clearance = getattr(cfg, "top_descend_clearance", getattr(args, "top_descend_clearance", 0.045))
         top_xy_tol = getattr(args, "top_xy_tol", 0.01)
         top_lift_test_height = getattr(args, "top_lift_test_height", 0.03)
         top_lift_test_hold_steps = max(1, int(getattr(args, "top_lift_test_hold_s", 0.5) / physics_dt))

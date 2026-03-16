@@ -132,8 +132,8 @@ def main():
     control = tc.get("control", {})
     check("control.grasp_settle_steps", control.get("grasp_settle_steps"), 120)
     check("control.extend_arm_steps", control.get("extend_arm_steps"), 300)
-    check("control.settle_at_table_steps", control.get("settle_at_table_steps"), 180)
-    check("control.approach_timeout_steps", control.get("approach_timeout_steps"), 600)
+    check("control.settle_at_table_steps", control.get("settle_at_table_steps"), 360)
+    check("control.approach_timeout_steps", control.get("approach_timeout_steps"), 1800)
     check("control.lift_timeout_steps", control.get("lift_timeout_steps"), 1500)
     check("control.place_descent_steps", control.get("place_descent_steps"), 600)
 
@@ -201,10 +201,15 @@ def main():
     check("grasp.gripper_final_close_value", grasp.get("gripper_final_close_value"), 0.010)
     check("grasp.gripper_hold_threshold", grasp.get("gripper_hold_threshold"), 0.005)
     check("grasp.top_descend_clearance", grasp.get("top_descend_clearance"), 0.04)
+    check("grasp.top_xy_tol", grasp.get("top_xy_tol"), 0.01)
+    check("grasp.top_descend_speed", grasp.get("top_descend_speed"), 0.03)
     check("grasp.j4_extended", grasp.get("j4_extended"), -0.35)
     check("grasp.j4_retracted", grasp.get("j4_retracted"), 0.30)
     check("grasp.torso_approach", grasp.get("torso_approach"), 0.35)
     check("grasp.torso_hold", grasp.get("torso_hold"), 0.35)
+
+    nav = tc.get("navigation", {})
+    check("navigation.approach_speed", nav.get("approach_speed"), 0.02)
 
     # ---------------------------------------------------------------
     # 5. Code features for experiment-2
@@ -244,8 +249,16 @@ def main():
           "place_heading_deg" in bench_code, True)
     check("code: carry_to TABLE_SOUTH_BOUNDARY_Y bypass",
           "target_y <= TABLE_SOUTH_BOUNDARY_Y" in bench_code, True)
-    check("code: settle_at_table J4 interpolation (alpha)",
-          "_settle_j4_start" in bench_code and "alpha" in bench_code, True)
+    check("code: fine_align state",
+          "fine_align" in bench_code, True)
+    check("code: partial J4 extension (_j4_partial)",
+          "_j4_partial" in bench_code, True)
+    check("code: descent J4 interpolation (_j4_desc_start)",
+          "_j4_desc_start" in bench_code, True)
+    check("code: XY tracking during descent (_xy_err)",
+          "_xy_err" in bench_code and "_kp" in bench_code, True)
+    check("code: XY convergence gate for close_gripper (_xy_ready)",
+          "_xy_ready" in bench_code, True)
 
     # ---------------------------------------------------------------
     # 6. Derived geometry
