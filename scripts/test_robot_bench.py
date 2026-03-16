@@ -2854,6 +2854,7 @@ def run_task_config_episode(
             tolerance_m = float(task.get("tolerance_m", 0.05))
             timeout_s = float(task.get("timeout_s", 20.0))
             drive_speed = float(task.get("drive_speed_ms", global_cfg.get("drive_speed_ms", 0.3)))
+            carry_obj_path = task.get("object_usd_path")
             if (not dest_xy or len(dest_xy) < 2) and task.get("destination_usd_path"):
                 usd_pos = get_prim_world_position(task["destination_usd_path"])
                 if usd_pos is not None:
@@ -2886,13 +2887,18 @@ def run_task_config_episode(
                             break
                         bx, by = float(pos[0]), float(pos[1])
                         dx, dy = target_x - bx, target_y - by
-                        if by >= TABLE_SOUTH_BOUNDARY_Y and dy > 0:
+                        if by >= TABLE_SOUTH_BOUNDARY_Y and dy > 0 and target_y <= TABLE_SOUTH_BOUNDARY_Y:
                             dy = 0.0
                         dist = math.sqrt(dx * dx + dy * dy)
                         final_dist = dist
                         if step % 60 == 0:
+                            obj_info = ""
+                            if carry_obj_path:
+                                obj_p = get_prim_world_position(carry_obj_path)
+                                if obj_p is not None:
+                                    obj_info = f" obj=({obj_p[0]:.3f},{obj_p[1]:.3f},{obj_p[2]:.3f})"
                             print(f"[Carry] t={sim_time:.1f}s base=({bx:.3f},{by:.3f}) "
-                                  f"target=({target_x:.3f},{target_y:.3f}) dist={dist:.3f}")
+                                  f"target=({target_x:.3f},{target_y:.3f}) dist={dist:.3f}{obj_info}")
                         if dist < tolerance_m:
                             reached = True
                             step_count = step
@@ -2930,6 +2936,38 @@ def run_task_config_episode(
                     articulation.apply_action(ArticulationAction(joint_velocities=vel_array))
                 except Exception:
                     pass
+
+                final_heading = task.get("final_heading_deg")
+                if reached and final_heading is not None:
+                    target_yaw = float(final_heading)
+                    rotate_tol = cfg.rotate_tolerance_deg
+                    remaining = max_steps - step_count
+                    max_rot_steps = min(remaining, int(15.0 / physics_dt))
+                    heading_reached = False
+                    for rs in range(max_rot_steps):
+                        pos_r, ori_r = articulation.get_world_pose()
+                        if ori_r is not None:
+                            _, _, cur_yaw = quat_to_euler(float(ori_r[0]), float(ori_r[1]), float(ori_r[2]), float(ori_r[3]))
+                            err = target_yaw - cur_yaw
+                            while err > 180: err -= 360
+                            while err < -180: err += 360
+                            if abs(err) < rotate_tol:
+                                heading_reached = True
+                                break
+                            omega = cfg.rotate_speed_fast if abs(err) > cfg.rotate_speed_threshold_deg else cfg.rotate_speed_slow
+                            omega_z = omega if err > 0 else -omega
+                            vels = omni_wheel_velocities(0, 0, omega_z)
+                            vel_arr = np.zeros(len(dof_names), dtype=np.float32)
+                            for i, wi in enumerate(wheel_dof_indices):
+                                if i < len(vels): vel_arr[wi] = vels[i]
+                            articulation.apply_action(ArticulationAction(joint_velocities=vel_arr))
+                        _apply_targets(articulation, dof_names, current_targets)
+                        world.step(render=(rs % render_every == 0))
+                        step_count += 1
+                    vel_arr = np.zeros(len(dof_names), dtype=np.float32)
+                    articulation.apply_action(ArticulationAction(joint_velocities=vel_arr))
+                    print(f"[Carry] final heading: target={target_yaw:.0f} reached={heading_reached} steps={step_count}")
+
                 task_results.append({
                     "task_id": task_id, "type": task_type, "success": reached,
                     "sim_time_end": round(step_count * physics_dt, 4), "steps": step_count,
@@ -2952,12 +2990,14 @@ def run_task_config_episode(
             _p_release_z = float(task.get("placement_release_z_offset", cfg.release_z_offset))
             _p_success_z = float(task.get("placement_success_z_offset", cfg.success_z_offset))
             table_top_z = _p_top_z
+            place_heading_deg = task.get("place_heading_deg")
             current_targets = dict(episode_targets)
             j4_start = current_targets.get("arm_right_4_joint", cfg.j4_retracted)
             j4_end = cfg.j4_extended
             descent_steps = cfg.place_descent_steps
             released = False
             place_aborted = False
+            rotate_done = (place_heading_deg is None)
 
             try:
                 from omni.isaac.core.utils.types import ArticulationAction
@@ -2972,6 +3012,42 @@ def run_task_config_episode(
                 torso_start = float(jp[tidx]) if jp is not None else current_targets.get("torso_lift_joint", cfg.torso_hold)
             except Exception:
                 torso_start = current_targets.get("torso_lift_joint", cfg.torso_hold)
+
+            rotate_steps_used = 0
+            if place_heading_deg is not None and wheel_dof_indices and len(wheel_dof_indices) >= 4:
+                target_yaw = float(place_heading_deg)
+                rotate_tol = cfg.rotate_tolerance_deg
+                max_rotate = min(total_steps // 2, int(10.0 / physics_dt))
+                for rs in range(max_rotate):
+                    pos_r, ori_r = articulation.get_world_pose()
+                    if ori_r is not None:
+                        _, _, cur_yaw = quat_to_euler(float(ori_r[0]), float(ori_r[1]), float(ori_r[2]), float(ori_r[3]))
+                        err = target_yaw - cur_yaw
+                        while err > 180: err -= 360
+                        while err < -180: err += 360
+                        if abs(err) < rotate_tol:
+                            rotate_done = True
+                            rotate_steps_used = rs
+                            vel_arr = np.zeros(len(dof_names), dtype=np.float32)
+                            articulation.apply_action(ArticulationAction(joint_velocities=vel_arr))
+                            print(f"[Place] rotate done in {rs} steps, yaw={cur_yaw:.1f}")
+                            break
+                        omega = cfg.rotate_speed_fast if abs(err) > cfg.rotate_speed_threshold_deg else cfg.rotate_speed_slow
+                        omega_z = omega if err > 0 else -omega
+                        vels = omni_wheel_velocities(0, 0, omega_z)
+                        vel_arr = np.zeros(len(dof_names), dtype=np.float32)
+                        for i, wi in enumerate(wheel_dof_indices):
+                            if i < len(vels): vel_arr[wi] = vels[i]
+                        articulation.apply_action(ArticulationAction(joint_velocities=vel_arr))
+                    _apply_targets(articulation, dof_names, current_targets)
+                    world.step(render=(rs % render_every == 0))
+                    rotate_steps_used = rs + 1
+                if not rotate_done:
+                    print(f"[Place] rotate timeout after {rotate_steps_used} steps")
+                    rotate_done = True
+                total_steps = max(1, total_steps - rotate_steps_used)
+                vel_arr = np.zeros(len(dof_names), dtype=np.float32)
+                articulation.apply_action(ArticulationAction(joint_velocities=vel_arr))
 
             for step in range(total_steps):
                 sim_time = step * physics_dt

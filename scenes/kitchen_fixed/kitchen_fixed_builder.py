@@ -921,7 +921,7 @@ def _build_objects(stage, cfg: dict, mats: dict):
     banana_y = plate_y + bc["offset_y"]
     banana_z = table_top_z + pc["height"] + bc["radius"]
     _xform(stage, f"{OBJ}/Banana", translate=(banana_x, banana_y, banana_z),
-           rotate_xyz=(0, 0, 0))
+           rotate_xyz=(90, 0, 0))
     bp = _cylinder(stage, f"{OBJ}/Banana/Body", bc["radius"], bc["length"],
                    color=cfg["materials"]["banana_yellow"]["diffuse"])
     _add_collision(stage, bp)

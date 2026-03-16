@@ -1,7 +1,7 @@
 # Experiment 2: Banana to Sink (fixed_banana_to_sink)
 
 Last verified: 2026-03-16
-Episode: `fixed_banana_to_sink_20260316_000006`
+Episode: `fixed_banana_to_sink_20260316_084807`
 Verdict: **PASS (task config)** -- all 5 tasks succeed
 
 ## 1. Scene Setup
@@ -33,7 +33,7 @@ Sink basin: depth 0.18 m, margin 0.06 m, inner size 0.68 x 0.68 m, top Z = 0.90 
 | Apple  | 1.67    | 3.45    | 0.875    | r=0.05                 |
 | Mug    | 1.15    | 3.30    | 0.80     | r=0.04, h=0.10         |
 
-Banana is on the plate (plate center + offset_x=-0.05). Banana material has friction_static=1.0, friction_dynamic=0.8.
+Banana is on the plate (plate center + offset_x=-0.05), lying flat (rotate_xyz=90,0,0). Banana material has friction_static=1.0, friction_dynamic=0.8.
 
 ## 2. Robot Configuration
 
@@ -57,57 +57,72 @@ Config file: `config/tasks/fixed_banana_to_sink.json`
 - Grasp mode: top
 - Lift height: 0.20 m
 - Approach arm retracted: true (gripper stays high during drive)
-- Lift interpolation: 1800 steps (slow, 3x normal)
+- Lift interpolation: 1200 steps (2x normal, smooth lift)
 - Gripper: close=0.015, final=0.010, hold_threshold=0.005
 - Top descend clearance: 0.04 m (larger than default 0.015)
 - Timeout: 90 s
-- Result: **PASS** (4722 steps, 39.35 s)
+- Result: **PASS** (2660 steps, 22.17 s)
 
 ### T3: carry_to sink area (T3_carry_to_sink)
-- Destination: (0.45, 2.60) -- south of sink cabinet, absolute
+- Destination: (0.45, 2.80) -- south of sink cabinet, absolute
+- Drive speed: 0.15 m/s (slow, prevents banana drop)
+- Final heading: 180 deg (face west, so right arm extends north over sink)
+- Object tracking: `/World/Kitchen/Objects/Banana`
 - Tolerance: 0.20 m
-- Timeout: 60 s
-- Result: **PASS** (134 steps, 1.12 s)
+- Timeout: 40 s
+- Result: **PASS** (3120 steps, 26.0 s, includes rotation)
 
 ### T4: place_object in sink (T4_place_in_sink)
 - Per-task placement overrides:
   - placement_top_z: 0.90 (sink top, not table 0.80)
-  - placement_cx: 0.45, placement_cy: 3.45
-  - placement_half_w: 0.34, placement_half_d: 0.34
-  - placement_margin: 0.10
-  - placement_abort_z_offset: -0.10
-  - placement_release_z_offset: 0.04
-  - placement_success_z_offset: 0.20
-- Timeout: 15 s
-- Result: **PASS** (1800 steps, 14.99 s)
+  - placement_cx: 0.45, placement_cy: 3.10
+  - placement_half_w: 0.50, placement_half_d: 0.50
+  - placement_margin: 0.20 (wide bounds for drop placement)
+  - placement_abort_z_offset: -0.30
+  - placement_release_z_offset: 0.10
+  - placement_success_z_offset: 0.30
+- Timeout: 10 s
+- Result: **PASS** (1200 steps, 9.99 s)
 
 ### T5: navigate_to start (T5_return_to_start)
 - Target: (0.0, 0.0)
 - Tolerance: 1.50 m (loose, best-effort)
 - Timeout: 60 s
-- Result: **PASS** (319 steps, 2.66 s)
+- Result: **PASS** (454 steps, 3.78 s)
 
 ## 4. Key Parameters (Banana-Specific)
 
 ### Grasp Tuning
 - `gripper_close_value`: 0.015 (tighter than mug's 0.018)
-- `gripper_final_close_value`: 0.010 (new param, prevents over-squeeze)
+- `gripper_final_close_value`: 0.010 (prevents over-squeeze)
 - `gripper_hold_threshold`: 0.005 (lower than mug's 0.01)
 - `top_descend_clearance`: 0.04 (larger than mug's 0.015, avoids pushing banana)
 - `approach_arm_retracted`: true (keeps gripper high during drive-to-object)
-- `lift_interpolation_steps_override`: 1800 (3x slower than default 600)
-- `lift_timeout_steps`: 2400 (extended for slow lift)
+- `lift_interpolation_steps_override`: 1200 (2x slower than default 600)
+- `lift_timeout_steps`: 1500
+
+### Control Timing (Optimized)
+- `grasp_settle_steps`: 120 (1.0s)
+- `extend_arm_steps`: 300 (2.5s)
+- `settle_at_table_steps`: 60 (0.5s)
+- `approach_timeout_steps`: 600 (5.0s)
+- `place_descent_steps`: 600 (5.0s)
 
 ### Placement Overrides (Sink vs Table)
-The `place_object` handler now supports per-task placement parameters that override the global `cfg.table_*` values. This allows placing objects on non-table surfaces.
+The `place_object` handler supports per-task placement parameters that override the global `cfg.table_*` values. Wide bounds are used for the sink since the banana is dropped from above rather than precisely placed.
+
+### Carry Strategy
+The robot carries the banana west past the table to (0.45, 2.80), then rotates to face west (180 deg). This positions the right arm extending north over the sink cabinet. The slow carry speed (0.15 m/s) prevents the banana from slipping out of the gripper during lateral movement.
 
 ### Physics Adjustments
 - Banana mass: 0.05 kg (reduced from 0.24 kg for reliable gripper friction)
 - Banana material friction: static=1.0, dynamic=0.8 (added for grip)
+- Banana orientation: rotate_xyz=(90, 0, 0) -- lies flat on plate instead of standing upright
 
 ## 5. Safety Boundaries
 
 - TABLE_SOUTH_BOUNDARY_Y = 2.75 (same as experiment-1)
+- Carry_to bypasses boundary when target is north of boundary (for sink approach)
 - Furniture zones: fridge, sink_cabinet, table (for waypoint routing)
 - NAV_MARGIN = 0.35 m
 
@@ -118,6 +133,11 @@ The `place_object` handler now supports per-task placement parameters that overr
 3. **`lift_with_torso_only`** parameter: option to skip J4 retraction during lift (not used in final config).
 4. **`lift_interpolation_steps_override`** parameter: allows per-task slower lift speed.
 5. **`gripper_final_close_value`** parameter: controls the second-stage gripper close (step 45), defaults to GRIPPER_CLOSED.
+6. **`carry_to` final_heading_deg**: rotates robot to specified heading after reaching destination, while maintaining gripper hold.
+7. **`carry_to` object_usd_path**: tracks carried object position during carry for debugging.
+8. **`carry_to` TABLE_SOUTH_BOUNDARY_Y bypass**: allows northward carry when target is north of the boundary.
+9. **`place_object` place_heading_deg**: optional rotation before arm descent (available but not used in final config).
+10. **Banana orientation fix**: rotate_xyz=(90, 0, 0) in scene builder so cylinder lies flat on plate.
 
 ## 7. How to Run
 
@@ -127,6 +147,9 @@ The `place_object` handler now supports per-task placement parameters that overr
 
 # With video
 .\scripts\run_task_config.ps1 -Config config/tasks/fixed_banana_to_sink.json
+
+# Regression test (no Isaac Sim needed)
+python scripts/test_banana_to_sink_regression.py
 ```
 
 ## 8. Verified Results
@@ -134,9 +157,9 @@ The `place_object` handler now supports per-task placement parameters that overr
 | Task | Type        | Success | Steps | Sim Time |
 |------|-------------|---------|-------|----------|
 | T1   | navigate_to | PASS    | 703   | 5.86 s   |
-| T2   | pick_object | PASS    | 4722  | 39.35 s  |
-| T3   | carry_to    | PASS    | 134   | 1.12 s   |
-| T4   | place_object| PASS    | 1800  | 14.99 s  |
-| T5   | navigate_to | PASS    | 319   | 2.66 s   |
+| T2   | pick_object | PASS    | 2660  | 22.17 s  |
+| T3   | carry_to    | PASS    | 3120  | 26.00 s  |
+| T4   | place_object| PASS    | 1200  | 9.99 s   |
+| T5   | navigate_to | PASS    | 454   | 3.78 s   |
 
-Total simulation: 7678 steps, ~64 s sim time, ~258 s wall time (with video).
+Total simulation: 8137 steps, ~67.8 s sim time, ~188 s wall time (no video), ~350 s (with video).

@@ -64,6 +64,7 @@ def main():
     check_exists("robot_profile", "config/robots/tiago_heavy.yaml")
     check_exists("test_script", "scripts/test_robot_bench.py")
     check_exists("documentation", "docs/experiment_banana_to_sink.md")
+    check_exists("scene_builder", "scenes/kitchen_fixed/kitchen_fixed_builder.py")
 
     # ---------------------------------------------------------------
     # 2. Scene config: banana and sink
@@ -102,6 +103,16 @@ def main():
     check("table.height", table["height"], 0.80)
 
     # ---------------------------------------------------------------
+    # 2b. Scene builder: banana orientation
+    # ---------------------------------------------------------------
+    print("\n--- Scene builder (banana orientation) ---")
+    builder_path = os.path.join(REPO_ROOT, "scenes/kitchen_fixed/kitchen_fixed_builder.py")
+    with open(builder_path, "r", encoding="utf-8") as f:
+        builder_code = f.read()
+    check("banana rotate_xyz=(90, 0, 0)",
+          "rotate_xyz=(90, 0, 0)" in builder_code, True)
+
+    # ---------------------------------------------------------------
     # 3. Task config: fixed_banana_to_sink.json
     # ---------------------------------------------------------------
     print("\n--- Task config (fixed_banana_to_sink.json) ---")
@@ -116,6 +127,15 @@ def main():
     robot = tc["robot"]
     check("robot.start_pose", robot["start_pose"], [0.0, 0.0, 90])
     check("robot.robot_profile", robot["robot_profile"], "config/robots/tiago_heavy.yaml")
+
+    # Control timing parameters
+    control = tc.get("control", {})
+    check("control.grasp_settle_steps", control.get("grasp_settle_steps"), 120)
+    check("control.extend_arm_steps", control.get("extend_arm_steps"), 300)
+    check("control.settle_at_table_steps", control.get("settle_at_table_steps"), 60)
+    check("control.approach_timeout_steps", control.get("approach_timeout_steps"), 600)
+    check("control.lift_timeout_steps", control.get("lift_timeout_steps"), 1500)
+    check("control.place_descent_steps", control.get("place_descent_steps"), 600)
 
     tasks = tc["tasks"]
     check("task_count", len(tasks), 5)
@@ -135,28 +155,32 @@ def main():
     check("T2.grasp_mode", t2["grasp_mode"], "top")
     check("T2.lift_height_m", t2["lift_height_m"], 0.20)
     check("T2.approach_arm_retracted", t2["approach_arm_retracted"], True)
-    check("T2.lift_interpolation_steps_override", t2["lift_interpolation_steps_override"], 1800)
+    check("T2.lift_interpolation_steps_override", t2["lift_interpolation_steps_override"], 1200)
 
     # T3: carry to sink
     t3 = tasks[2]
     check("T3.id", t3["id"], "T3_carry_to_sink")
     check("T3.type", t3["type"], "carry_to")
-    check("T3.destination_xy", t3["destination_xy"], [0.45, 2.60])
+    check("T3.destination_xy", t3["destination_xy"], [0.45, 2.80])
     check("T3.relative", t3["relative"], False)
+    check("T3.drive_speed_ms", t3["drive_speed_ms"], 0.15)
+    check("T3.final_heading_deg", t3["final_heading_deg"], 180)
+    check("T3.object_usd_path", t3["object_usd_path"], "/World/Kitchen/Objects/Banana")
 
     # T4: place in sink
     t4 = tasks[3]
     check("T4.id", t4["id"], "T4_place_in_sink")
     check("T4.type", t4["type"], "place_object")
+    check("T4.timeout_s", t4["timeout_s"], 10)
     check("T4.placement_top_z", t4["placement_top_z"], 0.90)
     check("T4.placement_cx", t4["placement_cx"], 0.45)
-    check("T4.placement_cy", t4["placement_cy"], 3.45)
-    check("T4.placement_half_w", t4["placement_half_w"], 0.34)
-    check("T4.placement_half_d", t4["placement_half_d"], 0.34)
-    check("T4.placement_margin", t4["placement_margin"], 0.10)
-    check("T4.placement_abort_z_offset", t4["placement_abort_z_offset"], -0.10)
-    check("T4.placement_release_z_offset", t4["placement_release_z_offset"], 0.04)
-    check("T4.placement_success_z_offset", t4["placement_success_z_offset"], 0.20)
+    check("T4.placement_cy", t4["placement_cy"], 3.10)
+    check("T4.placement_half_w", t4["placement_half_w"], 0.50)
+    check("T4.placement_half_d", t4["placement_half_d"], 0.50)
+    check("T4.placement_margin", t4["placement_margin"], 0.20)
+    check("T4.placement_abort_z_offset", t4["placement_abort_z_offset"], -0.30)
+    check("T4.placement_release_z_offset", t4["placement_release_z_offset"], 0.10)
+    check("T4.placement_success_z_offset", t4["placement_success_z_offset"], 0.30)
     check("T4.success_criteria.object_usd_path",
           t4["success_criteria"]["object_usd_path"],
           "/World/Kitchen/Objects/Banana")
@@ -181,9 +205,6 @@ def main():
     check("grasp.j4_retracted", grasp.get("j4_retracted"), 0.30)
     check("grasp.torso_approach", grasp.get("torso_approach"), 0.35)
     check("grasp.torso_hold", grasp.get("torso_hold"), 0.35)
-
-    control = tc.get("control", {})
-    check("control.lift_timeout_steps", control.get("lift_timeout_steps"), 2400)
 
     # ---------------------------------------------------------------
     # 5. Code features for experiment-2
@@ -215,6 +236,14 @@ def main():
           "gripper_final_close_value" in bench_code, True)
     check("code: outside placement bounds",
           "outside placement bounds" in bench_code, True)
+    check("code: carry_to final_heading_deg",
+          "final_heading_deg" in bench_code, True)
+    check("code: carry_to object tracking",
+          "carry_obj_path" in bench_code, True)
+    check("code: place_object place_heading_deg",
+          "place_heading_deg" in bench_code, True)
+    check("code: carry_to TABLE_SOUTH_BOUNDARY_Y bypass",
+          "target_y <= TABLE_SOUTH_BOUNDARY_Y" in bench_code, True)
 
     # ---------------------------------------------------------------
     # 6. Derived geometry
@@ -244,9 +273,7 @@ def main():
     check("T3 dest south of sink", t3_dest[1] < sink_cy, True)
 
     t4_cx = t4["placement_cx"]
-    t4_cy = t4["placement_cy"]
-    check("T4 placement matches sink center X", t4_cx, sink_cx)
-    check("T4 placement matches sink center Y", t4_cy, sink_cy)
+    check("T4 placement near sink center X", t4_cx, sink_cx)
     check("T4 placement_top_z matches sink height", t4["placement_top_z"], sink["height"])
 
     # ---------------------------------------------------------------

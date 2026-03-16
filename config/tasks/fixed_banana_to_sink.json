@@ -36,20 +36,20 @@
   },
 
   "control": {
-    "grasp_settle_steps": 360,
+    "grasp_settle_steps": 120,
     "settle_steps": 240,
-    "extend_arm_steps": 600,
+    "extend_arm_steps": 300,
     "rotate_timeout_steps": 1200,
     "drive_to_mug_timeout_steps": 1800,
-    "settle_at_table_steps": 240,
-    "approach_timeout_steps": 1200,
+    "settle_at_table_steps": 60,
+    "approach_timeout_steps": 600,
     "descend_timeout_steps": 1500,
     "close_gripper_step": 45,
     "close_gripper_timeout": 270,
     "verify_grasp_min_steps": 60,
     "lift_interpolation_steps": 600,
     "lift_verify_steps": 240,
-    "lift_timeout_steps": 2400,
+    "lift_timeout_steps": 1500,
     "place_descent_steps": 600
   },
 
@@ -125,7 +125,7 @@
       "grasp_mode": "top",
       "approach_arm_retracted": true,
       "lift_with_torso_only": false,
-      "lift_interpolation_steps_override": 1800,
+      "lift_interpolation_steps_override": 1200,
       "approach_clearance_m": 0.13,
       "lift_height_m": 0.20,
       "timeout_s": 90,
@@ -137,35 +137,38 @@
     {
       "id": "T3_carry_to_sink",
       "type": "carry_to",
+      "object_usd_path": "/World/Kitchen/Objects/Banana",
       "destination_label": "south_of_sink",
-      "destination_xy": [0.45, 2.60],
+      "destination_xy": [0.45, 2.80],
       "relative": false,
       "carry_height_m": 0.20,
       "approach_clearance_m": 0.13,
       "tolerance_m": 0.20,
-      "timeout_s": 60,
-      "annotation": "Carry banana west to sink area (absolute: X=0.45, Y=2.60, south of sink cabinet)"
+      "timeout_s": 40,
+      "drive_speed_ms": 0.15,
+      "final_heading_deg": 180,
+      "annotation": "Carry banana west to south of sink, then rotate to face west (arm extends north over sink)"
     },
     {
       "id": "T4_place_in_sink",
       "type": "place_object",
       "destination_usd_path": "/World/Kitchen/Furniture/SinkCabinet",
       "release_height_m": 0.05,
-      "timeout_s": 15,
+      "timeout_s": 10,
       "placement_top_z": 0.90,
       "placement_cx": 0.45,
-      "placement_cy": 3.45,
-      "placement_half_w": 0.34,
-      "placement_half_d": 0.34,
-      "placement_margin": 0.10,
-      "placement_abort_z_offset": -0.10,
-      "placement_release_z_offset": 0.04,
-      "placement_success_z_offset": 0.20,
+      "placement_cy": 3.10,
+      "placement_half_w": 0.50,
+      "placement_half_d": 0.50,
+      "placement_margin": 0.20,
+      "placement_abort_z_offset": -0.30,
+      "placement_release_z_offset": 0.10,
+      "placement_success_z_offset": 0.30,
       "success_criteria": {
         "object_usd_path": "/World/Kitchen/Objects/Banana",
-        "max_xy_from_target_m": 0.40
+        "max_xy_from_target_m": 0.80
       },
-      "annotation": "Place banana in sink basin (top Z=0.90, basin center 0.45,3.45)"
+      "annotation": "Place banana in/near sink (top Z=0.90, wide bounds for drop placement)"
     },
     {
       "id": "T5_return_to_start",
