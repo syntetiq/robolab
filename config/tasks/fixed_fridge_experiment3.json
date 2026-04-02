@@ -1,6 +1,6 @@
 {
   "episode_name": "fixed_fridge_experiment3",
-  "description": "Drive to fridge, open door to 90 degrees by handle, close door, return to start",
+  "description": "Drive to fridge, grasp handle with right arm, pull door open, return to center",
   "kitchen_scene": "fixed",
   "simulation_duration_s": 300,
 
@@ -20,7 +20,7 @@
 
   "global": {
     "drive_speed_ms": 0.3,
-    "approach_clearance_m": 0.15,
+    "approach_clearance_m": 0.10,
     "torso_speed": 0.05,
     "on_task_failure": "abort"
   },
@@ -112,11 +112,11 @@
     {
       "id": "T1_drive_to_fridge",
       "type": "navigate_to",
-      "target_xy": [-2.10, 2.55],
+      "target_xy": [-1.25, 2.10],
       "tolerance_m": 0.30,
       "timeout_s": 50,
       "drive_speed_ms": 0.4,
-      "annotation": "Drive southwest of fridge handle (handle at -1.65, 2.96; robot positions west for right-arm reach)"
+      "annotation": "Drive south of fridge handle (handle closed at -1.65, 2.96; robot positions south with left arm reaching north-west)"
     },
     {
       "id": "T2_open_fridge",
@@ -124,41 +124,39 @@
       "handle_usd_path": "/World/Kitchen/Furniture/Fridge/Door/Handle",
       "target_angle_deg": 90,
       "approach_axis": "y",
-      "arm_reach_m": 0.40,
-      "base_lateral_offset_m": 0.50,
-      "arm_pose": "pre_grasp_handle",
-      "pull_speed_ms": 0.15,
-      "timeout_s": 60,
+      "arm_reach_m": 0.75,
+      "base_lateral_offset_m": 0.34,
+      "arm_pose": "handle_reach_right",
+      "use_arm": "right",
+      "pull_speed_ms": 0.12,
+      "timeout_s": 80,
+      "hinge_world_xy": [-1.75, 3.05],
       "success_criteria": {
         "door_joint_path": "/World/Kitchen/Furniture/Fridge/DoorHinge",
-        "min_angle_deg": 30
+        "min_angle_deg": 30,
+        "hinge_world_xy": [-1.75, 3.05]
       },
-      "annotation": "Open fridge door by pulling handle south (robot positioned west of handle)"
-    },
-    {
-      "id": "T3_close_fridge",
-      "type": "close_door",
-      "handle_usd_path": "/World/Kitchen/Furniture/Fridge/Door/Handle",
-      "approach_axis": "y",
-      "arm_reach_m": 0.40,
-      "base_lateral_offset_m": 0.50,
-      "arm_pose": "pre_grasp_handle",
-      "push_speed_ms": 0.20,
-      "timeout_s": 60,
-      "success_criteria": {
-        "door_joint_path": "/World/Kitchen/Furniture/Fridge/DoorHinge",
-        "max_angle_deg": 20
-      },
-      "annotation": "Close fridge door by pushing handle north (robot positioned west of handle)"
+      "retreat_after_grasp_m": 0.02,
+      "retreat_only": true,
+      "retreat_second_m": 0.10,
+      "base_stop_short_m": 0.30,
+      "base_left_shift_m": 0.16,
+      "approach_creep_forward_m": 0.12,
+      "handle_gripper_close_m": 0.010,
+      "door_torso_height": 0.35,
+      "door_settle_steps": 240,
+      "door_creep_speed": 0.03,
+      "door_retreat_speed": 0.03,
+      "annotation": "Stop 30 cm short, 16 cm left; creep 12 cm, close gripper to 0.010; retreat 2+10 cm south with grip; return to center"
     },
     {
       "id": "T4_return_to_start",
       "type": "navigate_to",
       "target_xy": [0.0, 0.0],
-      "tolerance_m": 2.00,
+      "tolerance_m": 0.30,
       "timeout_s": 60,
       "drive_speed_ms": 0.4,
-      "annotation": "Return towards starting position (loose tolerance, best-effort)"
+      "annotation": "Return to center of room (0, 0) - mandatory"
     }
   ]
 }

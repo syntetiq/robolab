@@ -1,0 +1,12 @@
+{
+  "name": "mvp_object_diversity",
+  "description": "Minimum diversity profile for MVP teleop data collection episodes.",
+  "required_categories": [
+    "mug_or_cup",
+    "bottle_or_container",
+    "fruit",
+    "container_or_dish"
+  ],
+  "min_total_objects": 4,
+  "min_objects_per_category": 1
+}

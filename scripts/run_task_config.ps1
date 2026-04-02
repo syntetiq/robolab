@@ -18,6 +18,27 @@
 .PARAMETER Model
     Robot model (heavy | light). Default: heavy.
 
+.PARAMETER RobotHeadCamera
+    Use robot head camera (head_2_link) per TTX. See docs/ttx_sensors_in_bench.md.
+
+.PARAMETER WristCamera
+    Use wrist camera on arm_tool_link per TTX.
+
+.PARAMETER ExternalCamera
+    Add fixed external third-person camera.
+
+.PARAMETER ReplicatorDepth
+    Write depth and pointcloud in Replicator output.
+
+.PARAMETER ContactSensors
+    Enable contact sensors on gripper fingers.
+
+.PARAMETER Width
+    Output video width in pixels. Default: 640.
+
+.PARAMETER Height
+    Output video height in pixels. Default: 480.
+
 .EXAMPLE
     .\scripts\run_task_config.ps1 -Config config/tasks/test_fridge_open_close.json
     .\scripts\run_task_config.ps1 -Config config/tasks/test_full_kitchen.json -Duration 300
@@ -28,7 +49,14 @@ param(
     [string]$Output   = "C:\RoboLab_Data\episodes",
     [double]$Duration = 120.0,
     [switch]$NoVideo,
-    [string]$Model    = "heavy"
+    [string]$Model    = "heavy",
+    [switch]$RobotHeadCamera,
+    [switch]$WristCamera,
+    [switch]$ExternalCamera,
+    [switch]$ReplicatorDepth,
+    [switch]$ContactSensors,
+    [int]$Width = 640,
+    [int]$Height = 480
 )
 
 $ScriptRoot   = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -47,6 +75,10 @@ if (-not [System.IO.Path]::IsPathRooted($Config)) {
 }
 if (-not (Test-Path $Config)) {
     Write-Error "Task config not found: $Config"
+    exit 1
+}
+if ($Width -lt 64 -or $Height -lt 64) {
+    Write-Error "Width/Height must be >= 64. Got ${Width}x${Height}"
     exit 1
 }
 
@@ -80,12 +112,19 @@ $benchArgs = @(
     "--output",      $episodeDir,
     "--duration",    $DurationStr,
     "--model",       $Model,
+    "--width",       $Width,
+    "--height",      $Height,
     "--headless"
 )
 
 if ($NoVideo) {
     $benchArgs += "--no-video"
 }
+if ($RobotHeadCamera) { $benchArgs += "--robot-head-camera" }
+if ($WristCamera)     { $benchArgs += "--wrist-camera" }
+if ($ExternalCamera)  { $benchArgs += "--external-camera" }
+if ($ReplicatorDepth) { $benchArgs += "--replicator-depth" }
+if ($ContactSensors)  { $benchArgs += "--contact-sensors" }
 
 Write-Host "Command: $IsaacPython $($benchArgs -join ' ')"
 Write-Host ""

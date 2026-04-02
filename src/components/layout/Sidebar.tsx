@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Settings, Package, LayoutGrid, PlayCircle, Rocket, Film } from "lucide-react";
+import { Activity, Settings, LayoutGrid, PlayCircle, Rocket, Film, FlaskConical } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
     { name: "Dashboard", href: "/", icon: Activity },
     { name: "Episodes", href: "/episodes", icon: PlayCircle },
+    { name: "Experiments", href: "/experiments", icon: FlaskConical },
     { name: "Recordings", href: "/recordings", icon: Film },
     { name: "Scenes", href: "/scenes", icon: LayoutGrid },
-    { name: "Object Sets", href: "/object-sets", icon: Package },
     { name: "Launch Profiles", href: "/launch-profiles", icon: Rocket },
     { name: "Configuration", href: "/config", icon: Settings },
 ];

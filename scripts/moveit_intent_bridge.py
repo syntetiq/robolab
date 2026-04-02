@@ -9,6 +9,7 @@ Run alongside move_group.
 """
 
 import argparse
+import collections
 import json
 import os
 import sys
@@ -181,6 +182,42 @@ TIAGO_OPEN_CLOSE_DISHWASHER_JOINTS = {
     "arm_5_joint": -0.90,
     "arm_6_joint": 0.30,
     "arm_7_joint": 0.60,
+}
+
+# Arm fully extended straight forward – shoulder forward, elbow straight.
+TIAGO_ARM_EXTEND_FORWARD_JOINTS = {
+    "torso_lift_joint": 0.25,
+    "arm_1_joint": 1.57,
+    "arm_2_joint": 0.0,
+    "arm_3_joint": 0.0,
+    "arm_4_joint": 0.0,
+    "arm_5_joint": 0.0,
+    "arm_6_joint": 0.0,
+    "arm_7_joint": 0.0,
+}
+
+# Arm extended forward low – shoulder forward, elbow slightly bent down.
+TIAGO_ARM_EXTEND_LOW_JOINTS = {
+    "torso_lift_joint": 0.15,
+    "arm_1_joint": 1.57,
+    "arm_2_joint": 0.40,
+    "arm_3_joint": 0.0,
+    "arm_4_joint": 0.20,
+    "arm_5_joint": 0.0,
+    "arm_6_joint": 0.0,
+    "arm_7_joint": 0.0,
+}
+
+# Arm raised high – shoulder forward and up, elbow straight.
+TIAGO_ARM_RAISE_HIGH_JOINTS = {
+    "torso_lift_joint": 0.35,
+    "arm_1_joint": 1.57,
+    "arm_2_joint": -1.10,
+    "arm_3_joint": 0.0,
+    "arm_4_joint": 0.0,
+    "arm_5_joint": 0.0,
+    "arm_6_joint": 0.0,
+    "arm_7_joint": 0.0,
 }
 
 # Pre-grasp: arm extended forward, wrist aligned for top-down approach.
@@ -990,6 +1027,8 @@ class MoveItIntentBridge(Node):
             10,
         )
         self._executing = False
+        self._intent_queue = collections.deque(maxlen=8)
+        self._queue_worker_running = False
         self._expected_grasp_object = None
         self._expected_grasp_object_path = None
         self._expected_grasp_world = None
@@ -1014,12 +1053,26 @@ class MoveItIntentBridge(Node):
                 f"CORRECTIONS DISABLED (ROBOLAB_DISABLE_CORRECTIONS=1){_override_str}"
             )
 
+    _QUEUEABLE_INTENTS = frozenset([
+        "open_gripper", "close_gripper",
+        "torso_up", "torso_down",
+        "arm_up", "arm_down", "arm_forward", "arm_back",
+        "wrist_cw", "wrist_ccw", "wrist_90_cw", "wrist_90_ccw",
+        "arm_extend", "arm_extend_low", "arm_raise_high",
+        "arm_home", "pre_grasp", "grasp_pose",
+    ])
+
     def _on_intent(self, msg: String):
         data = (msg.data or "").strip().lower()
         if not data:
             return
         if self._executing:
-            self.get_logger().warn(f"Sequence in progress, ignoring intent: {data}")
+            if data in self._QUEUEABLE_INTENTS:
+                self._intent_queue.append(data)
+                self.get_logger().info(f"Queued intent: {data} (queue size: {len(self._intent_queue)})")
+                self._start_queue_worker()
+            else:
+                self.get_logger().warn(f"Sequence in progress, ignoring intent: {data}")
             return
         self.get_logger().info(f"Intent received: {data}")
         sequence = self._resolve_intent_sequence(data)
@@ -1031,6 +1084,29 @@ class MoveItIntentBridge(Node):
             ).start()
         else:
             self.get_logger().warn(f"Unknown intent: {data}")
+
+    def _start_queue_worker(self):
+        if self._queue_worker_running:
+            return
+        self._queue_worker_running = True
+        import threading
+        threading.Thread(target=self._process_intent_queue, daemon=True).start()
+
+    def _process_intent_queue(self):
+        try:
+            while True:
+                while self._executing:
+                    _time.sleep(0.1)
+                if not self._intent_queue:
+                    break
+                data = self._intent_queue.popleft()
+                self.get_logger().info(f"Dequeued intent: {data} (remaining: {len(self._intent_queue)})")
+                sequence = self._resolve_intent_sequence(data)
+                if sequence is not None:
+                    self._executing = True
+                    self._execute_sequence(data, sequence)
+        finally:
+            self._queue_worker_running = False
 
     # Top-down gripper orientation: 180° around Y so tool Z points down (-Z world).
     _TOP_DOWN_QUAT = Quaternion(x=0.0, y=1.0, z=0.0, w=0.0)
@@ -1412,6 +1488,52 @@ class MoveItIntentBridge(Node):
             return [("move_direct", TIAGO_READY_JOINTS)]
         elif intent == "approach_workzone":
             return [("move_direct", TIAGO_APPROACH_WORKZONE_JOINTS)]
+        elif intent == "open_gripper":
+            return [("gripper", GRIPPER_OPEN)]
+        elif intent == "close_gripper":
+            return [("gripper", GRIPPER_CLOSED)]
+        elif intent == "torso_up":
+            return [("incremental", {"torso_lift_joint": +0.05})]
+        elif intent == "torso_down":
+            return [("incremental", {"torso_lift_joint": -0.05})]
+        elif intent == "arm_up":
+            return [("incremental", {"arm_2_joint": -0.10})]
+        elif intent == "arm_down":
+            return [("incremental", {"arm_2_joint": +0.10})]
+        elif intent == "arm_forward":
+            return [("incremental", {"arm_1_joint": +0.10})]
+        elif intent == "arm_back":
+            return [("incremental", {"arm_1_joint": -0.10})]
+        elif intent == "wrist_cw":
+            return [("incremental", {"arm_7_joint": +0.15})]
+        elif intent == "wrist_ccw":
+            return [("incremental", {"arm_7_joint": -0.15})]
+        elif intent == "wrist_90_cw":
+            return [("incremental", {"arm_7_joint": +1.5708})]
+        elif intent == "wrist_90_ccw":
+            return [("incremental", {"arm_7_joint": -1.5708})]
+        elif intent == "arm_extend":
+            _mid = {
+                "torso_lift_joint": 0.25,
+                "arm_1_joint": 1.57,
+                "arm_2_joint": 0.0,
+                "arm_3_joint": 0.0,
+                "arm_4_joint": 1.00,
+                "arm_5_joint": 0.0,
+                "arm_6_joint": 0.0,
+                "arm_7_joint": 0.0,
+            }
+            return [("move_direct", _mid), ("move_direct", TIAGO_ARM_EXTEND_FORWARD_JOINTS)]
+        elif intent == "arm_extend_low":
+            return [("move_direct", TIAGO_APPROACH_WORKZONE_JOINTS), ("move_direct", TIAGO_ARM_EXTEND_LOW_JOINTS)]
+        elif intent == "arm_raise_high":
+            return [("move_direct", TIAGO_APPROACH_WORKZONE_JOINTS), ("move_direct", TIAGO_ARM_RAISE_HIGH_JOINTS)]
+        elif intent == "arm_home":
+            return [("move_direct", TIAGO_READY_JOINTS)]
+        elif intent == "pre_grasp":
+            return [("move_direct", TIAGO_APPROACH_WORKZONE_JOINTS), ("move_direct", TIAGO_PRE_GRASP_JOINTS)]
+        elif intent == "grasp_pose":
+            return [("move_direct", TIAGO_PRE_GRASP_JOINTS), ("move_direct", TIAGO_GRASP_JOINTS)]
 
         elif intent in ("plan_pick", "plan_pick_sink"):
             obj_info = query_object_pose_info(timeout=2.0)
@@ -2264,10 +2386,10 @@ class MoveItIntentBridge(Node):
                 if action_type == "move_direct":
                     self.get_logger().info(f"  Direct trajectory: {list(value.keys())[:3]}...")
                     direct_targets = clamp_joints(value)
-                    snapped = send_direct_trajectory(direct_targets, duration=2.0, timeout=15.0)
+                    snapped = send_direct_trajectory(direct_targets, duration=3.0, timeout=25.0)
                     if not snapped:
                         self.get_logger().warn(f"  Step {i+1}: trajectory failed, falling back to direct_set")
-                        snapped = send_direct_set(direct_targets, timeout=6.0)
+                        snapped = send_direct_set(direct_targets, timeout=8.0)
                     if not snapped:
                         self.get_logger().error(f"  Step {i+1} direct move failed, aborting")
                         break
@@ -2806,6 +2928,25 @@ class MoveItIntentBridge(Node):
                                     _last_grasp_move = _prev_joints
                         else:
                             self.get_logger().warn("  Closed-loop grasp refinement move failed, continuing")
+                elif action_type == "incremental":
+                    js_data = _read_joint_state_snapshot()
+                    _all_arm_joints = ["torso_lift_joint"] + [f"arm_{i}_joint" for i in range(1, 8)]
+                    inc_targets = {}
+                    for jn in _all_arm_joints:
+                        if jn in js_data and isinstance(js_data[jn], dict):
+                            inc_targets[jn] = float(js_data[jn].get("position", 0.0))
+                        elif jn in js_data and isinstance(js_data[jn], (int, float)):
+                            inc_targets[jn] = float(js_data[jn])
+                    for jn, delta in value.items():
+                        cur = inc_targets.get(jn, 0.0)
+                        inc_targets[jn] = cur + delta
+                    inc_targets = clamp_joints(inc_targets)
+                    self.get_logger().info(f"  Incremental: {value} -> targets {inc_targets}")
+                    ok = send_direct_trajectory(inc_targets, duration=1.5, timeout=15.0)
+                    if not ok:
+                        ok = send_direct_set(inc_targets, timeout=5.0)
+                    if not ok:
+                        self.get_logger().warn(f"  Incremental move failed")
                 elif action_type == "wait":
                     self.get_logger().info(f"  Waiting {value}s...")
                     _time.sleep(float(value))

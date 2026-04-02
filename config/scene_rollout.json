@@ -1,0 +1,7 @@
+{
+  "enableExperimentalScenes": false,
+  "defaultSceneFilter": "fixed_only",
+  "requireFitValidatedForExperimental": true,
+  "allowedExperimentalScenePatterns": [],
+  "notes": "Set enableExperimentalScenes=true only after scene-fit, regression, and teleop sanity gates pass."
+}

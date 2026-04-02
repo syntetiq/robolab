@@ -23,58 +23,64 @@ export async function GET(req: NextRequest) {
         }
     };
 
-    // Keep track of the last seen log to avoid duplicate streaming
     let lastLogHash = "";
+    let notRunningStreak = 0;
 
     const intervalId = setInterval(async () => {
         if (isClosed) return clearInterval(intervalId);
 
         if (episodeId) {
             try {
-                const ep = await prisma.episode.findUnique({ where: { id: episodeId } });
+                const ep = await prisma.episode.findUnique({ where: { id: episodeId }, include: { launchProfile: true } });
                 const config = await prisma.config.findFirst();
 
                 if (ep && config) {
                     const runner = getRunner(config.runnerMode);
-
-                    // Always try to fetch actual remote status
                     const liveStatus = await runner.getLiveStatus(ep, config);
 
-                    // If DB is running but remote process stopped, transition state
                     if (ep.status === "running" && liveStatus.status !== "running") {
-                        const outputDir = ep.outputDir || `${config.defaultOutputDir}\\episodes\\${episodeId}`;
-                        const validation = validateEpisodeDataset(outputDir);
-                        const validationSummary = formatValidationSummary(validation);
-                        const nextStatus = validation.valid ? liveStatus.status : "failed";
-                        const nextNotes = validationSummary
-                            ? `${ep.notes || ""}${ep.notes ? "\n" : ""}[dataset-validation] ${validationSummary}`
-                            : ep.notes;
+                        const isGuiOrTeleop = !!ep.launchProfile?.enableGuiMode || !!ep.launchProfile?.enableMoveIt;
+                        const requiredStreak = isGuiOrTeleop ? 3 : 1;
+                        notRunningStreak++;
 
-                        await prisma.episode.update({
-                            where: { id: episodeId },
-                            data: {
-                                status: nextStatus,
-                                stoppedAt: new Date(),
-                                notes: nextNotes,
-                            }
-                        });
+                        if (notRunningStreak < requiredStreak) {
+                            await sendEvent("episode.status", { status: ep.status });
+                        } else {
+                            const outputDir = ep.outputDir || `${config.defaultOutputDir}\\episodes\\${episodeId}`;
+                            const validation = validateEpisodeDataset(outputDir);
+                            const validationSummary = formatValidationSummary(validation);
+                            const nextStatus = validation.valid
+                                ? liveStatus.status
+                                : isGuiOrTeleop
+                                    ? (liveStatus.status || "stopped")
+                                    : "failed";
+                            const nextNotes = validationSummary
+                                ? `${ep.notes || ""}${ep.notes ? "\n" : ""}[dataset-validation] ${validationSummary}`
+                                : ep.notes;
 
-                        // Release lock so the host can be used by the next episode
-                        await releaseLock(config.isaacHost, episodeId);
+                            await prisma.episode.update({
+                                where: { id: episodeId },
+                                data: {
+                                    status: nextStatus,
+                                    stoppedAt: new Date(),
+                                    notes: nextNotes,
+                                }
+                            });
 
-                        await sendEvent("episode.status", { status: nextStatus });
+                            await releaseLock(config.isaacHost, episodeId);
+                            await sendEvent("episode.status", { status: nextStatus });
+                        }
                     } else {
+                        notRunningStreak = 0;
                         await sendEvent("episode.status", { status: ep.status });
                     }
 
-                    // System Health
                     await sendEvent("system.health", {
                         cpu: liveStatus.cpuUsage,
                         memory: liveStatus.memoryUsage
                     });
 
                     if (ep.status === "running") {
-                        // Stream actual remote logs
                         const logs = await runner.getLiveLogs(ep, config, 1);
                         if (logs.length > 0) {
                             const newLine = logs[logs.length - 1];
@@ -86,11 +92,9 @@ export async function GET(req: NextRequest) {
                     }
                 }
             } catch (e) {
-                // Ignore errors to keep stream alive
                 console.error("SSE Poll error:", e);
             }
         } else {
-            // Default random health if no episode
             await sendEvent("system.health", {
                 cpu: Math.floor(Math.random() * 20 + 5),
                 memory: Math.floor(Math.random() * 10 + 40)

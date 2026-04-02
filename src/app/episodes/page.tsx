@@ -3,11 +3,21 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Eye, Play, CheckCircle2, XCircle, Clock, Square } from "lucide-react";
+import { Plus, Eye, Play, CheckCircle2, XCircle, Clock, Square, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { format } from "date-fns";
 import { Input } from "@/components/ui/input";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export default function EpisodesPage() {
     const [episodes, setEpisodes] = useState<any[]>([]);
@@ -15,6 +25,8 @@ export default function EpisodesPage() {
     const [statusFilter, setStatusFilter] = useState("");
     const [taskFilter, setTaskFilter] = useState("");
     const [queryFilter, setQueryFilter] = useState("");
+    const [deleteTarget, setDeleteTarget] = useState<{ id: string; scene: string } | null>(null);
+    const [deleting, setDeleting] = useState(false);
 
     const fetchEpisodes = async () => {
         setLoading(true);
@@ -37,6 +49,22 @@ export default function EpisodesPage() {
         fetchEpisodes();
     }, [statusFilter, taskFilter, queryFilter]);
 
+    const handleDelete = async () => {
+        if (!deleteTarget) return;
+        setDeleting(true);
+        try {
+            const res = await fetch(`/api/episodes/${deleteTarget.id}`, { method: "DELETE" });
+            if (res.ok) {
+                setEpisodes((prev) => prev.filter((ep) => ep.id !== deleteTarget.id));
+            }
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setDeleting(false);
+            setDeleteTarget(null);
+        }
+    };
+
     const getStatusBadge = (status: string) => {
         switch (status) {
             case "created": return <Badge variant="secondary"><Clock className="w-3 h-3 mr-1" />Created</Badge>;
@@ -48,6 +76,8 @@ export default function EpisodesPage() {
             default: return <Badge variant="outline">{status}</Badge>;
         }
     };
+
+    const canDelete = (status: string) => !["running", "stopping"].includes(status);
 
     return (
         <div className="p-8 max-w-7xl mx-auto">
@@ -65,21 +95,9 @@ export default function EpisodesPage() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
-                <Input
-                    value={queryFilter}
-                    onChange={(e) => setQueryFilter(e.target.value)}
-                    placeholder="Search by id, note, scene..."
-                />
-                <Input
-                    value={taskFilter}
-                    onChange={(e) => setTaskFilter(e.target.value)}
-                    placeholder="Task tag (e.g. pick_place_sink)"
-                />
-                <Input
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    placeholder="Status (running/completed/failed)"
-                />
+                <Input value={queryFilter} onChange={(e) => setQueryFilter(e.target.value)} placeholder="Search by id, note, scene..." />
+                <Input value={taskFilter} onChange={(e) => setTaskFilter(e.target.value)} placeholder="Task tag (e.g. pick_place_sink)" />
+                <Input value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} placeholder="Status (running/completed/failed)" />
                 <Link href="/recordings">
                     <Button variant="outline" className="w-full">Open Recordings Library</Button>
                 </Link>
@@ -91,7 +109,6 @@ export default function EpisodesPage() {
                         <TableRow>
                             <TableHead>Status</TableHead>
                             <TableHead>Scene</TableHead>
-                            <TableHead>Object Set</TableHead>
                             <TableHead>Duration</TableHead>
                             <TableHead>Created</TableHead>
                             <TableHead className="text-right">Actions</TableHead>
@@ -99,31 +116,55 @@ export default function EpisodesPage() {
                     </TableHeader>
                     <TableBody>
                         {loading ? (
-                            <TableRow><TableCell colSpan={6} className="text-center py-8">Loading...</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={5} className="text-center py-8">Loading...</TableCell></TableRow>
                         ) : episodes.length === 0 ? (
-                            <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No episodes found</TableCell></TableRow>
+                            <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No episodes found</TableCell></TableRow>
                         ) : episodes.map((ep) => (
                             <TableRow key={ep.id}>
                                 <TableCell>{getStatusBadge(ep.status)}</TableCell>
                                 <TableCell className="font-medium">{ep.scene?.name || "Unknown"}</TableCell>
-                                <TableCell>{ep.objectSet?.name || "None"}</TableCell>
                                 <TableCell>{ep.durationSec}s</TableCell>
                                 <TableCell className="text-sm text-muted-foreground">
                                     {format(new Date(ep.createdAt), "MMM d, HH:mm")}
                                 </TableCell>
-                                <TableCell className="text-right">
+                                <TableCell className="text-right space-x-2">
                                     <Link href={`/episodes/${ep.id}`}>
                                         <Button variant="outline" size="sm">
-                                            <Eye className="w-4 h-4 mr-2" />
-                                            View
+                                            <Eye className="w-4 h-4 mr-1" /> View
                                         </Button>
                                     </Link>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                                        disabled={!canDelete(ep.status)}
+                                        onClick={() => setDeleteTarget({ id: ep.id, scene: ep.scene?.name || "Unknown" })}
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </Button>
                                 </TableCell>
                             </TableRow>
                         ))}
                     </TableBody>
                 </Table>
             </div>
+
+            <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete Episode</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Are you sure you want to delete this episode ({deleteTarget?.scene})? This action cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={handleDelete} disabled={deleting} className="bg-red-600 hover:bg-red-700">
+                            {deleting ? "Deleting..." : "Delete"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }

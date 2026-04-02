@@ -23,15 +23,15 @@ furniture:
     center_x: -1.35
     center_y: 3.45
     door_thickness: 0.03
-    door_mass_kg: 8.0
+    door_mass_kg: 2.0
     door_open_deg: 90.0
     shelf_count: 4
     handle:
       type: vertical
       length: 0.50
-      width: 0.06
-      depth: 0.06
-      standoff: 0.06
+      width: 0.03
+      depth: 0.03
+      standoff: 0.04
       center_height: 1.10
       graspable_section: 0.20
     material: appliance_metal
@@ -116,7 +116,7 @@ objects:
 materials:
   floor_tile:
     diffuse: [0.85, 0.85, 0.82]
-    roughness: 0.5
+    roughness: 0.62
     metallic: 0.0
     friction_static: 0.8
     friction_dynamic: 0.6
@@ -124,30 +124,30 @@ materials:
 
   wall_paint:
     diffuse: [0.95, 0.93, 0.90]
-    roughness: 0.9
+    roughness: 0.82
     metallic: 0.0
 
   appliance_metal:
     diffuse: [0.82, 0.82, 0.84]
-    roughness: 0.3
-    metallic: 0.6
+    roughness: 0.22
+    metallic: 0.85
     friction_static: 0.8
     friction_dynamic: 0.6
     restitution: 0.01
 
   appliance_door:
     diffuse: [0.88, 0.90, 0.92]
-    roughness: 0.25
-    metallic: 0.5
+    roughness: 0.2
+    metallic: 0.75
 
   handle_metal:
     diffuse: [0.35, 0.35, 0.38]
-    roughness: 0.4
-    metallic: 0.8
+    roughness: 0.18
+    metallic: 0.9
 
   cabinet_wood:
     diffuse: [0.55, 0.40, 0.28]
-    roughness: 0.7
+    roughness: 0.58
     metallic: 0.0
     friction_static: 0.9
     friction_dynamic: 0.7
@@ -155,17 +155,20 @@ materials:
 
   sink_metal:
     diffuse: [0.75, 0.75, 0.78]
-    roughness: 0.3
-    metallic: 0.7
+    roughness: 0.16
+    metallic: 0.95
 
   faucet_metal:
     diffuse: [0.12, 0.12, 0.14]
-    roughness: 0.35
-    metallic: 0.85
+    roughness: 0.12
+    metallic: 0.95
+    friction_static: 1.2
+    friction_dynamic: 0.9
+    restitution: 0.01
 
   table_wood:
     diffuse: [0.62, 0.45, 0.30]
-    roughness: 0.65
+    roughness: 0.52
     metallic: 0.0
     friction_static: 0.9
     friction_dynamic: 0.7
@@ -173,19 +176,19 @@ materials:
 
   ceramic_white:
     diffuse: [0.95, 0.95, 0.93]
-    roughness: 0.3
+    roughness: 0.22
     metallic: 0.0
 
   apple_red:
     diffuse: [0.75, 0.12, 0.10]
-    roughness: 0.5
+    roughness: 0.42
     metallic: 0.0
     friction_static: 1.2
     friction_dynamic: 0.9
 
   banana_yellow:
     diffuse: [0.92, 0.82, 0.20]
-    roughness: 0.6
+    roughness: 0.55
     metallic: 0.0
     friction_static: 1.0
     friction_dynamic: 0.8
@@ -193,7 +196,7 @@ materials:
 
   mug_ceramic:
     diffuse: [0.80, 0.20, 0.15]
-    roughness: 0.35
+    roughness: 0.24
     metallic: 0.0
     friction_static: 0.8
     friction_dynamic: 0.6
@@ -201,16 +204,18 @@ materials:
 
   shelf_metal:
     diffuse: [0.70, 0.70, 0.75]
-    roughness: 0.4
-    metallic: 0.3
+    roughness: 0.3
+    metallic: 0.65
 
 lights:
   dome:
-    intensity: 800.0
+    intensity: 500.0
+    color: [1.0, 0.97, 0.93]
     texture: ""              # empty = default white dome
   ceiling:
     count: 4
-    intensity: 3000.0
+    intensity: 2200.0
+    color: [1.0, 0.96, 0.90]
     width: 0.6
     height: 0.6
     z: 2.75
@@ -234,4 +239,4 @@ cameras:
 robot:
   start_x: 0.0
   start_y: 0.0
-  start_z: 0.08
+  start_z: 0.0   # base_footprint on floor (floor top at z=0)

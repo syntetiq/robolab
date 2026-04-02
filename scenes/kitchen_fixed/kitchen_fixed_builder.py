@@ -13,41 +13,23 @@ from __future__ import annotations
 import os, sys, math, argparse, yaml
 from pathlib import Path
 
-_pxr_loaded = False
-Usd = UsdGeom = UsdLux = UsdShade = UsdPhysics = Sdf = Gf = Vt = None
-PhysxSchema = None
+# Ensure project root is on sys.path for standalone execution
+_project_root = str(Path(__file__).resolve().parent.parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
-
-def _ensure_pxr():
-    """Import pxr modules. Must be called after SimulationApp is created when running standalone."""
-    global _pxr_loaded, Usd, UsdGeom, UsdLux, UsdShade, UsdPhysics, Sdf, Gf, Vt, PhysxSchema
-    if _pxr_loaded:
-        return
-    from pxr import Usd as _Usd, UsdGeom as _UsdGeom, UsdLux as _UsdLux
-    from pxr import UsdShade as _UsdShade, UsdPhysics as _UsdPhysics
-    from pxr import Sdf as _Sdf, Gf as _Gf, Vt as _Vt
-    Usd, UsdGeom, UsdLux, UsdShade = _Usd, _UsdGeom, _UsdLux, _UsdShade
-    UsdPhysics, Sdf, Gf, Vt = _UsdPhysics, _Sdf, _Gf, _Vt
-    try:
-        from pxr import PhysxSchema as _PhysxSchema
-        PhysxSchema = _PhysxSchema
-    except ImportError:
-        PhysxSchema = None
-    _pxr_loaded = True
+from scenes import scene_utils as su
 
 ROOT = "/World/Kitchen"
 LOOKS = f"{ROOT}/Looks"
 FURN = f"{ROOT}/Furniture"
 OBJ = f"{ROOT}/Objects"
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+_CALLER_DIR = str(Path(__file__).parent)
 
-def _load_config(config_path: str) -> dict:
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
+# ---------------------------------------------------------------------------
+# Texture generation (kitchen-specific)
+# ---------------------------------------------------------------------------
 
 def _generate_textures(tex_dir: str):
     """Generate procedural PNG textures for kitchen materials."""
@@ -229,7 +211,6 @@ def _generate_textures(tex_dir: str):
             base_g = 200 + int(15 * math.sin(y * 0.08))
             base_b = 40 + int(10 * math.sin((x + y) * 0.03))
             # green at edges
-            edge_frac = max(0, 1 - abs(x - hsz // 2) / (hsz * 0.45))
             if x < hsz * 0.15 or x > hsz * 0.85:
                 base_g = int(base_g * 0.7 + 60)
                 base_r = int(base_r * 0.6)
@@ -298,157 +279,13 @@ def _generate_textures(tex_dir: str):
     return textures
 
 
-def _create_pbr_material(stage, name: str, mat_cfg: dict, texture_path: str = None) -> str:
-    """Create a UsdPreviewSurface material under LOOKS. Optionally attach a diffuse texture."""
-    mat_path = f"{LOOKS}/{name}"
-    mat = UsdShade.Material.Define(stage, mat_path)
-    shader_path = f"{mat_path}/Shader"
-    shader = UsdShade.Shader.Define(stage, shader_path)
-    shader.CreateIdAttr("UsdPreviewSurface")
-
-    d = mat_cfg.get("diffuse", [0.5, 0.5, 0.5])
-    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*d))
-    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(
-        float(mat_cfg.get("roughness", 0.5)))
-    shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(
-        float(mat_cfg.get("metallic", 0.0)))
-    shader.CreateInput("specularColor", Sdf.ValueTypeNames.Color3f).Set(
-        Gf.Vec3f(0.04, 0.04, 0.04))
-
-    if texture_path and os.path.isfile(texture_path):
-        tex_shader = UsdShade.Shader.Define(stage, f"{mat_path}/DiffuseTexture")
-        tex_shader.CreateIdAttr("UsdUVTexture")
-        tex_shader.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(texture_path)
-        tex_shader.CreateInput("wrapS", Sdf.ValueTypeNames.Token).Set("repeat")
-        tex_shader.CreateInput("wrapT", Sdf.ValueTypeNames.Token).Set("repeat")
-        tex_shader.CreateOutput("rgb", Sdf.ValueTypeNames.Float3)
-        shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(
-            tex_shader.ConnectableAPI(), "rgb")
-
-    mat.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
-
-    mat_prim = stage.GetPrimAtPath(mat_path)
-    if mat_cfg.get("friction_static") is not None:
-        UsdPhysics.MaterialAPI.Apply(mat_prim)
-        mat_prim.CreateAttribute("physics:staticFriction", Sdf.ValueTypeNames.Float).Set(
-            float(mat_cfg["friction_static"]))
-        mat_prim.CreateAttribute("physics:dynamicFriction", Sdf.ValueTypeNames.Float).Set(
-            float(mat_cfg.get("friction_dynamic", 0.5)))
-        mat_prim.CreateAttribute("physics:restitution", Sdf.ValueTypeNames.Float).Set(
-            float(mat_cfg.get("restitution", 0.01)))
-
-    return mat_path
-
-
-def _create_painting_material(stage, name: str, texture_path: str) -> str:
-    """Create a diffuse material for a painting with UV texture reader."""
-    mat_path = f"{LOOKS}/{name}"
-    mat = UsdShade.Material.Define(stage, mat_path)
-    shader = UsdShade.Shader.Define(stage, f"{mat_path}/Shader")
-    shader.CreateIdAttr("UsdPreviewSurface")
-    shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(0.5, 0.5, 0.5))
-    shader.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.3)
-    shader.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(0.0)
-    if os.path.isfile(texture_path):
-        st_reader = UsdShade.Shader.Define(stage, f"{mat_path}/STReader")
-        st_reader.CreateIdAttr("UsdPrimvarReader_float2")
-        st_reader.CreateInput("varname", Sdf.ValueTypeNames.Token).Set("st")
-        st_reader.CreateOutput("result", Sdf.ValueTypeNames.Float2)
-
-        tex = UsdShade.Shader.Define(stage, f"{mat_path}/Tex")
-        tex.CreateIdAttr("UsdUVTexture")
-        tex.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(texture_path)
-        tex.CreateInput("wrapS", Sdf.ValueTypeNames.Token).Set("clamp")
-        tex.CreateInput("wrapT", Sdf.ValueTypeNames.Token).Set("clamp")
-        tex.CreateInput("st", Sdf.ValueTypeNames.Float2).ConnectToSource(
-            st_reader.ConnectableAPI(), "result")
-        tex.CreateOutput("rgb", Sdf.ValueTypeNames.Float3)
-        shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(
-            tex.ConnectableAPI(), "rgb")
-    mat.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
-    return mat_path
-
-
-def _bind_material(stage, prim_path: str, mat_path: str):
-    prim = stage.GetPrimAtPath(prim_path)
-    mat = UsdShade.Material.Get(stage, mat_path)
-    if prim and mat:
-        UsdShade.MaterialBindingAPI.Apply(prim).Bind(mat)
-
-
-def _add_collision(stage, prim_path: str):
-    UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(prim_path))
-    if PhysxSchema:
-        PhysxSchema.PhysxCollisionAPI.Apply(stage.GetPrimAtPath(prim_path))
-
-
-def _make_kinematic(stage, prim_path: str):
-    prim = stage.GetPrimAtPath(prim_path)
-    UsdPhysics.RigidBodyAPI.Apply(prim)
-    prim.CreateAttribute("physics:kinematicEnabled", Sdf.ValueTypeNames.Bool).Set(True)
-
-
-def _make_dynamic(stage, prim_path: str, mass_kg: float):
-    prim = stage.GetPrimAtPath(prim_path)
-    UsdPhysics.RigidBodyAPI.Apply(prim)
-    UsdPhysics.MassAPI.Apply(prim)
-    prim.CreateAttribute("physics:mass", Sdf.ValueTypeNames.Float).Set(mass_kg)
-
-
-def _cube(stage, path: str, sx: float, sy: float, sz: float, color=None) -> str:
-    c = UsdGeom.Cube.Define(stage, path)
-    c.CreateSizeAttr(1.0)
-    c.AddScaleOp().Set(Gf.Vec3f(sx, sy, sz))
-    if color:
-        c.CreateDisplayColorAttr([Gf.Vec3f(*color)])
-    return path
-
-
-def _cylinder(stage, path: str, radius: float, height: float, color=None) -> str:
-    c = UsdGeom.Cylinder.Define(stage, path)
-    c.CreateRadiusAttr(radius)
-    c.CreateHeightAttr(height)
-    if color:
-        c.CreateDisplayColorAttr([Gf.Vec3f(*color)])
-    return path
-
-
-def _xform(stage, path: str, translate=None, rotate_xyz=None) -> str:
-    xf = UsdGeom.Xform.Define(stage, path)
-    api = UsdGeom.Xformable(xf.GetPrim())
-    if translate:
-        api.AddTranslateOp().Set(Gf.Vec3d(*translate))
-    if rotate_xyz:
-        api.AddRotateXYZOp().Set(Gf.Vec3f(*rotate_xyz))
-    return path
-
-
 # ---------------------------------------------------------------------------
-# Scene builders
+# Materials (kitchen-specific)
 # ---------------------------------------------------------------------------
-
-def _build_physics_scene(stage, cfg: dict):
-    scene_path = f"{ROOT}/PhysicsScene"
-    scene = UsdPhysics.Scene.Define(stage, scene_path)
-    scene.CreateGravityDirectionAttr().Set(Gf.Vec3f(0, 0, -1))
-    scene.CreateGravityMagnitudeAttr().Set(9.81)
-    prim = stage.GetPrimAtPath(scene_path)
-    if PhysxSchema:
-        ps = PhysxSchema.PhysxSceneAPI.Apply(prim)
-        ps.CreateEnableCCDAttr().Set(False)
-        ps.CreateEnableStabilizationAttr().Set(True)
-        ps.CreateTimeStepsPerSecondAttr().Set(120)
-        ps.CreateSolverTypeAttr().Set("TGS")
-        try:
-            ps.CreateGpuFoundLostPairsCapacityAttr().Set(1024)
-            ps.CreateGpuTotalAggregatePairsCapacityAttr().Set(1024)
-        except Exception:
-            pass
-
 
 def _build_materials(stage, cfg: dict, tex_dir: str = None) -> dict[str, str]:
     """Create all UsdPreviewSurface materials with textures, return name->path map."""
-    UsdGeom.Xform.Define(stage, LOOKS)
+    su.UsdGeom.Xform.Define(stage, LOOKS)
 
     if tex_dir is None:
         tex_dir = str(Path(__file__).parent / "textures")
@@ -456,55 +293,38 @@ def _build_materials(stage, cfg: dict, tex_dir: str = None) -> dict[str, str]:
 
     mats = {}
     for name, mat_cfg in cfg.get("materials", {}).items():
-        tex_path = textures.get(name)
-        mats[name] = _create_pbr_material(stage, name, mat_cfg, texture_path=tex_path)
+        texture_paths = {"diffuse": textures.get(name)}
+
+        cfg_roughness = mat_cfg.get("roughness_texture") or mat_cfg.get("texture_roughness")
+        cfg_normal = mat_cfg.get("normal_texture") or mat_cfg.get("texture_normal")
+        auto_roughness = su.resolve_texture_path(f"{name}_roughness.png", tex_dir=tex_dir, caller_dir=_CALLER_DIR)
+        auto_normal = su.resolve_texture_path(f"{name}_normal.png", tex_dir=tex_dir, caller_dir=_CALLER_DIR)
+
+        roughness_path = su.resolve_texture_path(cfg_roughness, tex_dir=tex_dir, caller_dir=_CALLER_DIR) or auto_roughness
+        normal_path = su.resolve_texture_path(cfg_normal, tex_dir=tex_dir, caller_dir=_CALLER_DIR) or auto_normal
+        if roughness_path:
+            texture_paths["roughness"] = roughness_path
+        if normal_path:
+            texture_paths["normal"] = normal_path
+
+        mats[name] = su.create_pbr_material(stage, name, mat_cfg, texture_paths=texture_paths, looks_path=LOOKS)
 
     # Painting materials
     for pname in ["painting_north", "painting_south", "painting_east", "painting_west"]:
         tp = textures.get(pname)
         if tp:
-            mats[pname] = _create_painting_material(stage, pname, tp)
+            mats[pname] = su.create_painting_material(stage, pname, tp, looks_path=LOOKS)
 
     # Frame material (dark wood)
     frame_cfg = {"diffuse": [0.15, 0.10, 0.06], "roughness": 0.6, "metallic": 0.0}
-    mats["frame_wood"] = _create_pbr_material(stage, "frame_wood", frame_cfg)
+    mats["frame_wood"] = su.create_pbr_material(stage, "frame_wood", frame_cfg, looks_path=LOOKS)
 
     return mats
 
 
-def _build_floor(stage, cfg: dict, mats: dict):
-    room = cfg["room"]
-    sx, sy = room["size_x"], room["size_y"]
-    fh = room.get("floor_thickness", 0.02)
-
-    _xform(stage, f"{ROOT}/Floor", translate=(0, 0, -fh / 2))
-    fp = _cube(stage, f"{ROOT}/Floor/Slab", sx, sy, fh)
-    _add_collision(stage, fp)
-    _bind_material(stage, fp, mats.get("floor_tile", ""))
-    print(f"[kitchen] Floor: {sx}x{sy}m (parquet)")
-
-
-def _build_walls(stage, cfg: dict, mats: dict):
-    room = cfg["room"]
-    sx, sy = room["size_x"], room["size_y"]
-    wh = room["wall_height"]
-    wt = room["wall_thickness"]
-    _xform(stage, f"{ROOT}/Walls")
-
-    specs = {
-        "NorthWall": {"pos": (0, sy / 2 - wt / 2, wh / 2), "size": (sx, wt, wh)},
-        "SouthWall": {"pos": (0, -sy / 2 + wt / 2, wh / 2), "size": (sx, wt, wh)},
-        "EastWall":  {"pos": (sx / 2 - wt / 2, 0, wh / 2), "size": (wt, sy - 2 * wt, wh)},
-        "WestWall":  {"pos": (-sx / 2 + wt / 2, 0, wh / 2), "size": (wt, sy - 2 * wt, wh)},
-    }
-    for name, s in specs.items():
-        wp = f"{ROOT}/Walls/{name}"
-        _xform(stage, wp, translate=s["pos"])
-        bp = _cube(stage, f"{wp}/Body", *s["size"])
-        _add_collision(stage, bp)
-        _bind_material(stage, bp, mats.get("wall_paint", ""))
-    print(f"[kitchen] Walls: 4 walls, height={wh}m, thickness={wt}m")
-
+# ---------------------------------------------------------------------------
+# Kitchen-specific furniture builders
+# ---------------------------------------------------------------------------
 
 def _build_paintings(stage, cfg: dict, mats: dict):
     """Add a framed painting on each wall."""
@@ -512,9 +332,6 @@ def _build_paintings(stage, cfg: dict, mats: dict):
     sx, sy = room["size_x"], room["size_y"]
     wt = room["wall_thickness"]
     wh = room["wall_height"]
-    paint_w, paint_h = 1.0, 0.7
-    frame_t = 0.04
-    frame_d = 0.02
     paint_z = wh * 0.55
 
     wall_paintings = {
@@ -539,51 +356,13 @@ def _build_paintings(stage, cfg: dict, mats: dict):
             "mat": "painting_north",
         },
     }
-
-    UsdGeom.Xform.Define(stage, f"{ROOT}/Paintings")
-    for wname, spec in wall_paintings.items():
-        base = f"{ROOT}/Paintings/{wname}"
-        _xform(stage, base, translate=spec["pos"], rotate_xyz=spec["rot"])
-
-        # Canvas as Mesh quad with UV so texture maps correctly
-        cw = paint_w - 2 * frame_t
-        ch = paint_h - 2 * frame_t
-        canvas_path = f"{base}/Canvas"
-        mesh = UsdGeom.Mesh.Define(stage, canvas_path)
-        hw_c, hh_c = cw / 2, ch / 2
-        mesh.CreatePointsAttr([
-            Gf.Vec3f(-hw_c, -hh_c, 0), Gf.Vec3f(hw_c, -hh_c, 0),
-            Gf.Vec3f(hw_c, hh_c, 0), Gf.Vec3f(-hw_c, hh_c, 0),
-        ])
-        mesh.CreateFaceVertexCountsAttr([4])
-        mesh.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
-        mesh.CreateNormalsAttr([Gf.Vec3f(0, 0, 1)] * 4)
-        mesh.SetNormalsInterpolation("vertex")
-        st_primvar = UsdGeom.PrimvarsAPI(mesh.GetPrim()).CreatePrimvar(
-            "st", Sdf.ValueTypeNames.TexCoord2fArray, "vertex")
-        st_primvar.Set([Gf.Vec2f(0, 0), Gf.Vec2f(1, 0), Gf.Vec2f(1, 1), Gf.Vec2f(0, 1)])
-        if spec["mat"] in mats:
-            _bind_material(stage, canvas_path, mats[spec["mat"]])
-
-        # Frame (4 bars)
-        hw, hh = paint_w / 2, paint_h / 2
-        ft = frame_t
-        for fname, fpos, fsz in [
-            ("Top", (0, hh - ft / 2, 0), (paint_w, ft, frame_d)),
-            ("Bottom", (0, -hh + ft / 2, 0), (paint_w, ft, frame_d)),
-            ("Left", (-hw + ft / 2, 0, 0), (ft, paint_h - 2 * ft, frame_d)),
-            ("Right", (hw - ft / 2, 0, 0), (ft, paint_h - 2 * ft, frame_d)),
-        ]:
-            fp = f"{base}/Frame/{fname}"
-            _xform(stage, fp, translate=fpos)
-            fbp = _cube(stage, f"{fp}/Body", *fsz, color=[0.15, 0.10, 0.06])
-            _bind_material(stage, fbp, mats.get("frame_wood", ""))
-
-    print(f"[kitchen] Paintings: 4 framed paintings on walls")
+    su.build_paintings(stage, ROOT, cfg, mats, wall_paintings,
+                       paint_w=1.0, paint_h=0.7, frame_t=0.04, frame_d=0.02,
+                       label="kitchen")
 
 
 def _build_fridge(stage, cfg: dict, mats: dict):
-    """Build fridge against north wall, front faces south (-Y after -90° Z rotation).
+    """Build fridge against north wall, front faces south (-Y after -90deg Z rotation).
     Cabinet is an open-front box (back + 2 sides + top + bottom) so the door and handle are visible."""
     fc = cfg["furniture"]["fridge"]
     w, d, h = fc["width"], fc["depth"], fc["height"]
@@ -593,67 +372,66 @@ def _build_fridge(stage, cfg: dict, mats: dict):
     wall_t = 0.025  # cabinet wall thickness
 
     base = f"{FURN}/Fridge"
-    # +90° Z rotation: local -X (front/door) → world -Y (toward room/south)
-    _xform(stage, base, translate=(cx, cy, 0), rotate_xyz=(0, 0, 90))
+    # +90deg Z rotation: local -X (front/door) -> world -Y (toward room/south)
+    su.xform(stage, base, translate=(cx, cy, 0), rotate_xyz=(0, 0, 90))
 
     # Cabinet: open-front box (kinematic). 5 panels: back, left, right, top, bottom.
-    _xform(stage, f"{base}/Cabinet", translate=(0, 0, half_h))
+    su.xform(stage, f"{base}/Cabinet", translate=(0, 0, half_h))
 
     cab_color = cfg["materials"]["appliance_metal"]["diffuse"]
     cab_mat = mats.get("appliance_metal", "")
 
     # Back wall (at +X, against north wall)
     bp = f"{base}/Cabinet/Back"
-    _xform(stage, bp, translate=(half_d - wall_t / 2, 0, 0))
-    p = _cube(stage, f"{bp}/Body", wall_t, w, h, color=cab_color)
-    _add_collision(stage, p); _bind_material(stage, p, cab_mat)
+    su.xform(stage, bp, translate=(half_d - wall_t / 2, 0, 0))
+    p = su.cube(stage, f"{bp}/Body", wall_t, w, h, color=cab_color)
+    su.add_collision(stage, p); su.bind_material(stage, p, cab_mat)
 
     # Left side (-Y)
     lp = f"{base}/Cabinet/Left"
-    _xform(stage, lp, translate=(0, -half_w + wall_t / 2, 0))
-    p = _cube(stage, f"{lp}/Body", d, wall_t, h, color=cab_color)
-    _add_collision(stage, p); _bind_material(stage, p, cab_mat)
+    su.xform(stage, lp, translate=(0, -half_w + wall_t / 2, 0))
+    p = su.cube(stage, f"{lp}/Body", d, wall_t, h, color=cab_color)
+    su.add_collision(stage, p); su.bind_material(stage, p, cab_mat)
 
     # Right side (+Y)
     rp = f"{base}/Cabinet/Right"
-    _xform(stage, rp, translate=(0, half_w - wall_t / 2, 0))
-    p = _cube(stage, f"{rp}/Body", d, wall_t, h, color=cab_color)
-    _add_collision(stage, p); _bind_material(stage, p, cab_mat)
+    su.xform(stage, rp, translate=(0, half_w - wall_t / 2, 0))
+    p = su.cube(stage, f"{rp}/Body", d, wall_t, h, color=cab_color)
+    su.add_collision(stage, p); su.bind_material(stage, p, cab_mat)
 
     # Top
     tp = f"{base}/Cabinet/Top"
-    _xform(stage, tp, translate=(0, 0, half_h - wall_t / 2))
-    p = _cube(stage, f"{tp}/Body", d, w, wall_t, color=cab_color)
-    _add_collision(stage, p); _bind_material(stage, p, cab_mat)
+    su.xform(stage, tp, translate=(0, 0, half_h - wall_t / 2))
+    p = su.cube(stage, f"{tp}/Body", d, w, wall_t, color=cab_color)
+    su.add_collision(stage, p); su.bind_material(stage, p, cab_mat)
 
     # Bottom
     btp = f"{base}/Cabinet/Bottom"
-    _xform(stage, btp, translate=(0, 0, -half_h + wall_t / 2))
-    p = _cube(stage, f"{btp}/Body", d, w, wall_t, color=cab_color)
-    _add_collision(stage, p); _bind_material(stage, p, cab_mat)
+    su.xform(stage, btp, translate=(0, 0, -half_h + wall_t / 2))
+    p = su.cube(stage, f"{btp}/Body", d, w, wall_t, color=cab_color)
+    su.add_collision(stage, p); su.bind_material(stage, p, cab_mat)
 
-    _make_kinematic(stage, f"{base}/Cabinet")
+    su.make_kinematic(stage, f"{base}/Cabinet")
 
     # Shelves inside cabinet
     shelf_h = 0.02
     shelf_dx, shelf_dy = d - 0.1, w - 0.1
     for i, z_frac in enumerate([0.25, 0.45, 0.65, 0.85]):
         sp = f"{base}/Cabinet/Shelf{i}"
-        _xform(stage, sp, translate=(0, 0, h * z_frac - half_h))
-        sbp = _cube(stage, f"{sp}/Plane", shelf_dx, shelf_dy, shelf_h,
+        su.xform(stage, sp, translate=(0, 0, h * z_frac - half_h))
+        sbp = su.cube(stage, f"{sp}/Plane", shelf_dx, shelf_dy, shelf_h,
                      color=cfg["materials"]["shelf_metal"]["diffuse"])
-        _add_collision(stage, sbp)
-        _bind_material(stage, sbp, mats.get("shelf_metal", ""))
+        su.add_collision(stage, sbp)
+        su.bind_material(stage, sbp, mats.get("shelf_metal", ""))
 
     # Door: flush with front opening of cabinet (local -X face)
-    hinge_y_local = -half_w
     door_center_x = -half_d + door_d / 2.0
-    _xform(stage, f"{base}/Door", translate=(door_center_x, 0, half_h))
+    su.xform(stage, f"{base}/Door", translate=(door_center_x, 0, half_h))
     door_color = cfg["materials"]["appliance_door"]["diffuse"]
-    door_panel = _cube(stage, f"{base}/Door/Panel", door_d, w, h, color=door_color)
-    _add_collision(stage, door_panel)
-    _bind_material(stage, door_panel, mats.get("appliance_door", ""))
-    _make_dynamic(stage, f"{base}/Door", fc["door_mass_kg"])
+    door_panel = su.cube(stage, f"{base}/Door/Panel", door_d, w, h, color=door_color)
+    su.add_collision(stage, door_panel)
+    su.bind_material(stage, door_panel, mats.get("appliance_door", ""))
+    su.make_dynamic(stage, f"{base}/Door", fc["door_mass_kg"])
 
     # Handle: vertical bar on the OUTSIDE of the door (local -X direction = outward toward south).
     hc = fc["handle"]
@@ -664,38 +442,46 @@ def _build_fridge(stage, cfg: dict, mats: dict):
     bar_d   = hc["depth"]
 
     handle_x = -(door_d / 2.0 + standoff + bar_d / 2.0)
-    handle_y = half_w - 0.10  # near the free (right) edge
+    handle_y = -(half_w - 0.10)  # near the free (left/east) edge
 
-    _xform(stage, f"{base}/Door/Handle",
+    su.xform(stage, f"{base}/Door/Handle",
            translate=(handle_x, handle_y, handle_z_local))
 
     handle_color = (0.08, 0.08, 0.08)
-    bar_path = _cube(stage, f"{base}/Door/Handle/Bar", bar_d, bar_w, bar_len,
+    bar_path = su.cube(stage, f"{base}/Door/Handle/Bar", bar_d, bar_w, bar_len,
                      color=handle_color)
-    _add_collision(stage, bar_path)
-    _bind_material(stage, bar_path, mats.get("faucet_metal", ""))
+    su.add_collision(stage, bar_path)
+    fridge_handle_mat = mats.get(fc.get("handle_material", "handle_metal"), mats.get("handle_metal", ""))
+    su.bind_material(stage, bar_path, fridge_handle_mat)
 
     bracket_d = standoff + 0.01
     for bi, bz in enumerate([bar_len / 2 - 0.04, -bar_len / 2 + 0.04]):
         bp_path = f"{base}/Door/Handle/Bracket{bi}"
-        _xform(stage, bp_path, translate=(bar_d / 2 + bracket_d / 2, 0, bz))
-        bbp = _cube(stage, f"{bp_path}/Body", bracket_d, bar_w, 0.03,
+        su.xform(stage, bp_path, translate=(bar_d / 2 + bracket_d / 2, 0, bz))
+        bbp = su.cube(stage, f"{bp_path}/Body", bracket_d, bar_w, 0.03,
                      color=handle_color)
-        _add_collision(stage, bbp)
-        _bind_material(stage, bbp, mats.get("faucet_metal", ""))
+        su.add_collision(stage, bbp)
+        su.bind_material(stage, bbp, fridge_handle_mat)
 
     print(f"[kitchen] Fridge handle: local pos=({handle_x:.3f}, {handle_y:.3f}, {handle_z_local:.3f}), bar {bar_d}x{bar_w}x{bar_len}")
 
-    # Revolute joint: hinge at front-left edge; door swings open toward room center
+    # Revolute joint: hinge at front-right edge (+Y local = west in world after 90deg Z rot);
+    # door swings open toward south (room center) when pulled south.
+    hinge_y_right = half_w  # +Y local = west side in world
     hinge = f"{base}/DoorHinge"
-    rev = UsdPhysics.RevoluteJoint.Define(stage, hinge)
-    rev.GetBody0Rel().SetTargets([Sdf.Path(f"{base}/Cabinet")])
-    rev.GetBody1Rel().SetTargets([Sdf.Path(f"{base}/Door")])
+    rev = su.UsdPhysics.RevoluteJoint.Define(stage, hinge)
+    rev.GetBody0Rel().SetTargets([su.Sdf.Path(f"{base}/Cabinet")])
+    rev.GetBody1Rel().SetTargets([su.Sdf.Path(f"{base}/Door")])
     rev.CreateAxisAttr("Z")
-    rev.CreateLowerLimitAttr(-fc["door_open_deg"])
-    rev.CreateUpperLimitAttr(0.0)
-    rev.CreateLocalPos0Attr().Set(Gf.Vec3f(-half_d, hinge_y_local, 0.0))
-    rev.CreateLocalPos1Attr().Set(Gf.Vec3f(-door_d / 2.0, hinge_y_local, 0.0))
+    rev.CreateLowerLimitAttr(0.0)
+    rev.CreateUpperLimitAttr(fc["door_open_deg"])
+    rev.CreateLocalPos0Attr().Set(su.Gf.Vec3f(-half_d, hinge_y_right, 0.0))
+    rev.CreateLocalPos1Attr().Set(su.Gf.Vec3f(-door_d / 2.0, hinge_y_right, 0.0))
+
+    hinge_prim = stage.GetPrimAtPath(hinge)
+    drive = su.UsdPhysics.DriveAPI.Apply(hinge_prim, "angular")
+    drive.CreateDampingAttr().Set(5.0)
+    drive.CreateStiffnessAttr().Set(0.0)
 
     print(f"[kitchen] Fridge at ({cx}, {cy}): face south; handle on door at /World/Kitchen/Furniture/Fridge/Door/Handle")
 
@@ -709,34 +495,34 @@ def _build_dishwasher(stage, cfg: dict, mats: dict):
     half_w, half_d, half_h = w / 2, d / 2, h / 2
 
     base = f"{FURN}/Dishwasher"
-    _xform(stage, base, translate=(cx, cy, 0))
+    su.xform(stage, base, translate=(cx, cy, 0))
 
     # Cabinet (kinematic)
-    _xform(stage, f"{base}/Cabinet", translate=(0, 0, half_h))
-    cab_body = _cube(stage, f"{base}/Cabinet/Body", d, w, h,
+    su.xform(stage, f"{base}/Cabinet", translate=(0, 0, half_h))
+    cab_body = su.cube(stage, f"{base}/Cabinet/Body", d, w, h,
                      color=cfg["materials"]["appliance_metal"]["diffuse"])
-    _add_collision(stage, cab_body)
-    _bind_material(stage, cab_body, mats.get("appliance_metal", ""))
-    _make_kinematic(stage, f"{base}/Cabinet")
+    su.add_collision(stage, cab_body)
+    su.bind_material(stage, cab_body, mats.get("appliance_metal", ""))
+    su.make_kinematic(stage, f"{base}/Cabinet")
 
     # Racks
     for i, z_frac in enumerate([0.35, 0.65]):
         rp = f"{base}/Cabinet/Rack{i}"
-        _xform(stage, rp, translate=(0, 0, h * z_frac - half_h))
-        rbp = _cube(stage, f"{rp}/Plane", d - 0.1, w - 0.1, 0.02,
+        su.xform(stage, rp, translate=(0, 0, h * z_frac - half_h))
+        rbp = su.cube(stage, f"{rp}/Plane", d - 0.1, w - 0.1, 0.02,
                      color=cfg["materials"]["shelf_metal"]["diffuse"])
-        _add_collision(stage, rbp)
-        _bind_material(stage, rbp, mats.get("shelf_metal", ""))
+        su.add_collision(stage, rbp)
+        su.bind_material(stage, rbp, mats.get("shelf_metal", ""))
 
     # Door on front face (-X). Hinge on LEFT (local -Y) so door opens RIGHT toward +X = toward center.
     hinge_y_local = -half_w
     door_center_x = -half_d + door_d / 2.0
-    _xform(stage, f"{base}/Door", translate=(door_center_x, 0, half_h))
-    door_panel = _cube(stage, f"{base}/Door/Panel", door_d, w, h,
+    su.xform(stage, f"{base}/Door", translate=(door_center_x, 0, half_h))
+    door_panel = su.cube(stage, f"{base}/Door/Panel", door_d, w, h,
                        color=cfg["materials"]["appliance_door"]["diffuse"])
-    _add_collision(stage, door_panel)
-    _bind_material(stage, door_panel, mats.get("appliance_door", ""))
-    _make_dynamic(stage, f"{base}/Door", dc["door_mass_kg"])
+    su.add_collision(stage, door_panel)
+    su.bind_material(stage, door_panel, mats.get("appliance_door", ""))
+    su.make_dynamic(stage, f"{base}/Door", dc["door_mass_kg"])
 
     # Handle on right (free) side of door so pull opens toward center
     hc = dc["handle"]
@@ -744,31 +530,31 @@ def _build_dishwasher(stage, cfg: dict, mats: dict):
     standoff = hc["standoff"]
     bar_len, bar_w, bar_d = hc["length"], hc["width"], hc["depth"]
 
-    _xform(stage, f"{base}/Door/Handle",
+    su.xform(stage, f"{base}/Door/Handle",
            translate=(-door_d / 2 - standoff - bar_d / 2, half_w - 0.08, handle_z_local))
-    bar_path = _cube(stage, f"{base}/Door/Handle/Bar", bar_d, bar_len, bar_w,
+    bar_path = su.cube(stage, f"{base}/Door/Handle/Bar", bar_d, bar_len, bar_w,
                      color=cfg["materials"]["handle_metal"]["diffuse"])
-    _add_collision(stage, bar_path)
-    _bind_material(stage, bar_path, mats.get("handle_metal", ""))
+    su.add_collision(stage, bar_path)
+    su.bind_material(stage, bar_path, mats.get("handle_metal", ""))
 
     for bi, by in enumerate([bar_len / 2 - 0.02, -bar_len / 2 + 0.02]):
         bp = f"{base}/Door/Handle/Bracket{bi}"
-        _xform(stage, bp, translate=(bar_d / 2 + standoff / 2, by, 0))
-        bbp = _cube(stage, f"{bp}/Body", standoff, bar_w, bar_w,
+        su.xform(stage, bp, translate=(bar_d / 2 + standoff / 2, by, 0))
+        bbp = su.cube(stage, f"{bp}/Body", standoff, bar_w, bar_w,
                      color=cfg["materials"]["handle_metal"]["diffuse"])
-        _add_collision(stage, bbp)
-        _bind_material(stage, bbp, mats.get("handle_metal", ""))
+        su.add_collision(stage, bbp)
+        su.bind_material(stage, bbp, mats.get("handle_metal", ""))
 
     # Revolute: axis Z (vertical); hinge at left (-Y). Limits -90..0 so door opens toward +X (center).
     hinge = f"{base}/DoorHinge"
-    rev = UsdPhysics.RevoluteJoint.Define(stage, hinge)
-    rev.GetBody0Rel().SetTargets([Sdf.Path(f"{base}/Cabinet")])
-    rev.GetBody1Rel().SetTargets([Sdf.Path(f"{base}/Door")])
+    rev = su.UsdPhysics.RevoluteJoint.Define(stage, hinge)
+    rev.GetBody0Rel().SetTargets([su.Sdf.Path(f"{base}/Cabinet")])
+    rev.GetBody1Rel().SetTargets([su.Sdf.Path(f"{base}/Door")])
     rev.CreateAxisAttr("Z")
     rev.CreateLowerLimitAttr(-dc["door_open_deg"])
     rev.CreateUpperLimitAttr(0.0)
-    rev.CreateLocalPos0Attr().Set(Gf.Vec3f(-half_d, hinge_y_local, 0.0))
-    rev.CreateLocalPos1Attr().Set(Gf.Vec3f(-door_d / 2.0, hinge_y_local, 0.0))
+    rev.CreateLocalPos0Attr().Set(su.Gf.Vec3f(-half_d, hinge_y_local, 0.0))
+    rev.CreateLocalPos1Attr().Set(su.Gf.Vec3f(-door_d / 2.0, hinge_y_local, 0.0))
 
     print(f"[kitchen] Dishwasher at ({cx}, {cy}): straight against wall, handle length={hc['length']}m")
 
@@ -780,33 +566,33 @@ def _build_sink_cabinet(stage, cfg: dict, mats: dict):
     half_w, half_d, half_h = w / 2, d / 2, h / 2
 
     base = f"{FURN}/SinkCabinet"
-    _xform(stage, base, translate=(cx, cy, 0))
+    su.xform(stage, base, translate=(cx, cy, 0))
 
-    _xform(stage, f"{base}/Cabinet", translate=(0, 0, half_h))
-    cab_body = _cube(stage, f"{base}/Cabinet/Body", d, w, h,
+    su.xform(stage, f"{base}/Cabinet", translate=(0, 0, half_h))
+    cab_body = su.cube(stage, f"{base}/Cabinet/Body", d, w, h,
                      color=cfg["materials"]["cabinet_wood"]["diffuse"])
-    _add_collision(stage, cab_body)
-    _bind_material(stage, cab_body, mats.get("cabinet_wood", ""))
+    su.add_collision(stage, cab_body)
+    su.bind_material(stage, cab_body, mats.get("cabinet_wood", ""))
 
     ct_h = 0.03
-    _xform(stage, f"{base}/CounterTop", translate=(0, 0, h + ct_h / 2))
-    ct_path = _cube(stage, f"{base}/CounterTop/Slab", d, w, ct_h,
+    su.xform(stage, f"{base}/CounterTop", translate=(0, 0, h + ct_h / 2))
+    ct_path = su.cube(stage, f"{base}/CounterTop/Slab", d, w, ct_h,
                     color=cfg["materials"]["sink_metal"]["diffuse"])
-    _add_collision(stage, ct_path)
-    _bind_material(stage, ct_path, mats.get("sink_metal", ""))
+    su.add_collision(stage, ct_path)
+    su.bind_material(stage, ct_path, mats.get("sink_metal", ""))
 
     bd = sc["basin_depth"]
     bm = sc["basin_margin"]
     basin_w = w - 2 * bm
     basin_d = d - 2 * bm
     basin_z = h - bd / 2
-    _xform(stage, f"{base}/Basin", translate=(0, 0, basin_z))
+    su.xform(stage, f"{base}/Basin", translate=(0, 0, basin_z))
 
-    _xform(stage, f"{base}/Basin/Floor", translate=(0, 0, -bd / 2 + 0.01))
-    bf = _cube(stage, f"{base}/Basin/Floor/Slab", basin_d, basin_w, 0.02,
+    su.xform(stage, f"{base}/Basin/Floor", translate=(0, 0, -bd / 2 + 0.01))
+    bf = su.cube(stage, f"{base}/Basin/Floor/Slab", basin_d, basin_w, 0.02,
                color=cfg["materials"]["sink_metal"]["diffuse"])
-    _add_collision(stage, bf)
-    _bind_material(stage, bf, mats.get("sink_metal", ""))
+    su.add_collision(stage, bf)
+    su.bind_material(stage, bf, mats.get("sink_metal", ""))
 
     wall_t = 0.015
     for name, pos, sz in [
@@ -816,34 +602,34 @@ def _build_sink_cabinet(stage, cfg: dict, mats: dict):
         ("WallW", (-basin_d / 2 + wall_t / 2, 0, 0), (wall_t, basin_w, bd)),
     ]:
         wp = f"{base}/Basin/{name}"
-        _xform(stage, wp, translate=pos)
-        wbp = _cube(stage, f"{wp}/Body", *sz,
+        su.xform(stage, wp, translate=pos)
+        wbp = su.cube(stage, f"{wp}/Body", *sz,
                      color=cfg["materials"]["sink_metal"]["diffuse"])
-        _add_collision(stage, wbp)
-        _bind_material(stage, wbp, mats.get("sink_metal", ""))
+        su.add_collision(stage, wbp)
+        su.bind_material(stage, wbp, mats.get("sink_metal", ""))
 
-    # Faucet: base + stem (connects to spout) + spout. Black metallic. Spout height x3 then +half again; spout 2x longer.
+    # Faucet
     ct_z = h + ct_h
     faucet_y = 0.24
     base_h = 0.08
     base_rad = 0.06
     faucet_color = cfg["materials"]["faucet_metal"]["diffuse"]
-    _xform(stage, f"{base}/Faucet", translate=(0, faucet_y, ct_z + base_h / 2))
-    _xform(stage, f"{base}/Faucet/Base", translate=(0, 0, 0))
-    faucet_base = _cylinder(stage, f"{base}/Faucet/Base/Cyl", base_rad, base_h, color=faucet_color)
-    _bind_material(stage, faucet_base, mats.get("faucet_metal", ""))
-    stem_h = 0.15 * 1.5  # spout height x3 then +half = 0.225
-    _xform(stage, f"{base}/Faucet/Stem", translate=(0, 0, base_h / 2 + stem_h / 2))
-    stem = _cylinder(stage, f"{base}/Faucet/Stem/Cyl", base_rad * 0.6, stem_h, color=faucet_color)
-    _bind_material(stage, stem, mats.get("faucet_metal", ""))
-    spout_len = 0.28 * 2  # 2x longer = 0.56
+    su.xform(stage, f"{base}/Faucet", translate=(0, faucet_y, ct_z + base_h / 2))
+    su.xform(stage, f"{base}/Faucet/Base", translate=(0, 0, 0))
+    faucet_base = su.cylinder(stage, f"{base}/Faucet/Base/Cyl", base_rad, base_h, color=faucet_color)
+    su.bind_material(stage, faucet_base, mats.get("faucet_metal", ""))
+    stem_h = 0.15 * 1.5
+    su.xform(stage, f"{base}/Faucet/Stem", translate=(0, 0, base_h / 2 + stem_h / 2))
+    stem = su.cylinder(stage, f"{base}/Faucet/Stem/Cyl", base_rad * 0.6, stem_h, color=faucet_color)
+    su.bind_material(stage, stem, mats.get("faucet_metal", ""))
+    spout_len = 0.28 * 2
     spout_z = base_h / 2 + stem_h
-    _xform(stage, f"{base}/Faucet/Spout", translate=(0, -spout_len / 2, spout_z))
-    spout = _cube(stage, f"{base}/Faucet/Spout/Bar", 0.04, spout_len, 0.04, color=faucet_color)
-    _bind_material(stage, spout, mats.get("faucet_metal", ""))
+    su.xform(stage, f"{base}/Faucet/Spout", translate=(0, -spout_len / 2, spout_z))
+    spout = su.cube(stage, f"{base}/Faucet/Spout/Bar", 0.04, spout_len, 0.04, color=faucet_color)
+    su.bind_material(stage, spout, mats.get("faucet_metal", ""))
 
     prim = stage.GetPrimAtPath(base)
-    UsdPhysics.CollisionAPI.Apply(prim)
+    su.UsdPhysics.CollisionAPI.Apply(prim)
     print(f"[kitchen] Sink cabinet at ({cx}, {cy}): {w}x{d}x{h}m, basin depth={bd}m, faucet added")
 
 
@@ -855,17 +641,17 @@ def _build_table(stage, cfg: dict, mats: dict):
     leg_w = tc["leg_width"]
 
     base = f"{FURN}/Table"
-    _xform(stage, base, translate=(cx, cy, 0))
+    su.xform(stage, base, translate=(cx, cy, 0))
 
     top_z = h - top_h / 2
-    _xform(stage, f"{base}/Top", translate=(0, 0, top_z))
-    tp = _cube(stage, f"{base}/Top/Slab", d, w, top_h,
+    su.xform(stage, f"{base}/Top", translate=(0, 0, top_z))
+    tp = su.cube(stage, f"{base}/Top/Slab", d, w, top_h,
                color=cfg["materials"]["table_wood"]["diffuse"])
-    _add_collision(stage, tp)
-    _bind_material(stage, tp, mats.get("table_wood", ""))
+    su.add_collision(stage, tp)
+    su.bind_material(stage, tp, mats.get("table_wood", ""))
 
     leg_h = h - top_h
-    UsdGeom.Xform.Define(stage, f"{base}/Legs")
+    su.UsdGeom.Xform.Define(stage, f"{base}/Legs")
     offsets = [
         (-d / 2 + leg_w, -w / 2 + leg_w),
         (d / 2 - leg_w, -w / 2 + leg_w),
@@ -874,11 +660,11 @@ def _build_table(stage, cfg: dict, mats: dict):
     ]
     for i, (lx, ly) in enumerate(offsets):
         lp = f"{base}/Legs/Leg{i}"
-        _xform(stage, lp, translate=(lx, ly, leg_h / 2))
-        lbp = _cube(stage, f"{lp}/Body", leg_w, leg_w, leg_h,
+        su.xform(stage, lp, translate=(lx, ly, leg_h / 2))
+        lbp = su.cube(stage, f"{lp}/Body", leg_w, leg_w, leg_h,
                      color=[c * 0.8 for c in cfg["materials"]["table_wood"]["diffuse"]])
-        _add_collision(stage, lbp)
-        _bind_material(stage, lbp, mats.get("table_wood", ""))
+        su.add_collision(stage, lbp)
+        su.bind_material(stage, lbp, mats.get("table_wood", ""))
 
     print(f"[kitchen] Table at ({cx}, {cy}): {w}x{d}x{h}m, top at z={h}m")
 
@@ -894,51 +680,51 @@ def _build_objects(stage, cfg: dict, mats: dict):
     plate_x = table_cx + pc["offset_x"]
     plate_y = table_cy + pc["offset_y"]
     plate_z = table_top_z + pc["height"] / 2
-    _xform(stage, f"{OBJ}/Plate", translate=(plate_x, plate_y, plate_z))
-    pp = _cylinder(stage, f"{OBJ}/Plate/Disc", pc["radius"], pc["height"],
+    su.xform(stage, f"{OBJ}/Plate", translate=(plate_x, plate_y, plate_z))
+    pp = su.cylinder(stage, f"{OBJ}/Plate/Disc", pc["radius"], pc["height"],
                    color=cfg["materials"]["ceramic_white"]["diffuse"])
-    _add_collision(stage, pp)
-    _bind_material(stage, pp, mats.get("ceramic_white", ""))
-    _make_dynamic(stage, f"{OBJ}/Plate", pc["mass_kg"])
+    su.add_collision(stage, pp)
+    su.bind_material(stage, pp, mats.get("ceramic_white", ""))
+    su.make_dynamic(stage, f"{OBJ}/Plate", pc["mass_kg"])
 
     # Apple
     ac = objs["apple"]
     apple_x = plate_x + ac["offset_x"]
     apple_y = plate_y + ac["offset_y"]
     apple_z = table_top_z + pc["height"] + ac["radius"]
-    _xform(stage, f"{OBJ}/Apple", translate=(apple_x, apple_y, apple_z))
+    su.xform(stage, f"{OBJ}/Apple", translate=(apple_x, apple_y, apple_z))
     ap = f"{OBJ}/Apple/Body"
-    sphere = UsdGeom.Sphere.Define(stage, ap)
+    sphere = su.UsdGeom.Sphere.Define(stage, ap)
     sphere.CreateRadiusAttr(ac["radius"])
-    sphere.CreateDisplayColorAttr([Gf.Vec3f(*cfg["materials"]["apple_red"]["diffuse"])])
-    _add_collision(stage, ap)
-    _bind_material(stage, ap, mats.get("apple_red", ""))
-    _make_dynamic(stage, f"{OBJ}/Apple", ac["mass_kg"])
+    sphere.CreateDisplayColorAttr([su.Gf.Vec3f(*cfg["materials"]["apple_red"]["diffuse"])])
+    su.add_collision(stage, ap)
+    su.bind_material(stage, ap, mats.get("apple_red", ""))
+    su.make_dynamic(stage, f"{OBJ}/Apple", ac["mass_kg"])
 
     # Banana: on the plate surface
     bc = objs["banana"]
     banana_x = plate_x + bc["offset_x"]
     banana_y = plate_y + bc["offset_y"]
     banana_z = table_top_z + pc["height"] + bc["radius"]
-    _xform(stage, f"{OBJ}/Banana", translate=(banana_x, banana_y, banana_z),
+    su.xform(stage, f"{OBJ}/Banana", translate=(banana_x, banana_y, banana_z),
            rotate_xyz=(90, 0, 0))
-    bp = _cylinder(stage, f"{OBJ}/Banana/Body", bc["radius"], bc["length"],
+    bp = su.cylinder(stage, f"{OBJ}/Banana/Body", bc["radius"], bc["length"],
                    color=cfg["materials"]["banana_yellow"]["diffuse"])
-    _add_collision(stage, bp)
-    _bind_material(stage, bp, mats.get("banana_yellow", ""))
-    _make_dynamic(stage, f"{OBJ}/Banana", bc["mass_kg"])
+    su.add_collision(stage, bp)
+    su.bind_material(stage, bp, mats.get("banana_yellow", ""))
+    su.make_dynamic(stage, f"{OBJ}/Banana", bc["mass_kg"])
 
     # Mug
     mc = objs["mug"]
     mug_x = table_cx + mc["offset_x"]
     mug_y = table_cy + mc["offset_y"]
     mug_z = table_top_z + mc["height"] / 2
-    _xform(stage, f"{OBJ}/Mug", translate=(mug_x, mug_y, mug_z))
-    mp = _cylinder(stage, f"{OBJ}/Mug/Body", mc["radius"], mc["height"],
+    su.xform(stage, f"{OBJ}/Mug", translate=(mug_x, mug_y, mug_z))
+    mp = su.cylinder(stage, f"{OBJ}/Mug/Body", mc["radius"], mc["height"],
                    color=cfg["materials"]["mug_ceramic"]["diffuse"])
-    _add_collision(stage, mp)
-    _bind_material(stage, mp, mats.get("mug_ceramic", ""))
-    _make_dynamic(stage, f"{OBJ}/Mug", mc["mass_kg"])
+    su.add_collision(stage, mp)
+    su.bind_material(stage, mp, mats.get("mug_ceramic", ""))
+    su.make_dynamic(stage, f"{OBJ}/Mug", mc["mass_kg"])
 
     print(f"[kitchen] Objects: plate({plate_x:.2f},{plate_y:.2f}), "
           f"apple, banana, mug({mug_x:.2f},{mug_y:.2f})")
@@ -946,46 +732,57 @@ def _build_objects(stage, cfg: dict, mats: dict):
 
 def _build_lights(stage, cfg: dict):
     lc = cfg.get("lights", {})
-    _xform(stage, f"{ROOT}/Lights")
+    su.xform(stage, f"{ROOT}/Lights")
 
-    # Dome light — warm tone for realism
+    # Dome light
     dc = lc.get("dome", {})
-    dome = UsdLux.DomeLight.Define(stage, f"{ROOT}/Lights/DomeLight")
+    dome = su.UsdLux.DomeLight.Define(stage, f"{ROOT}/Lights/DomeLight")
     dome.CreateIntensityAttr(dc.get("intensity", 800.0))
-    dome.CreateColorAttr(Gf.Vec3f(1.0, 0.96, 0.90))
+    dome_color = dc.get("color", [1.0, 0.96, 0.90])
+    dome.CreateColorAttr(su.Gf.Vec3f(*dome_color))
+    dome_texture = su.resolve_texture_path(dc.get("texture"), tex_dir=str(Path(__file__).parent / "textures"), caller_dir=_CALLER_DIR)
+    if dome_texture:
+        try:
+            dome.CreateTextureFileAttr().Set(su.Sdf.AssetPath(dome_texture))
+            print(f"[kitchen] Dome texture: {dome_texture}")
+        except Exception as e:
+            print(f"[kitchen] WARNING: failed to set dome texture '{dome_texture}': {e}")
+    elif str(dc.get("texture", "")).strip():
+        print(f"[kitchen] WARNING: dome texture not found: {dc.get('texture')}")
 
-    # Ceiling area lights — warm white
+    # Ceiling area lights
     cc = lc.get("ceiling", {})
     positions = cc.get("positions", [])
+    ceiling_color = cc.get("color", [1.0, 0.95, 0.88])
     for i, pos in enumerate(positions):
         lp = f"{ROOT}/Lights/CeilingLight{i}"
-        light = UsdLux.RectLight.Define(stage, lp)
+        light = su.UsdLux.RectLight.Define(stage, lp)
         light.CreateIntensityAttr(cc.get("intensity", 3000.0))
         light.CreateWidthAttr(cc.get("width", 0.6))
         light.CreateHeightAttr(cc.get("height", 0.6))
-        light.CreateColorAttr(Gf.Vec3f(1.0, 0.95, 0.88))
-        xf = UsdGeom.Xformable(light.GetPrim())
-        xf.AddTranslateOp().Set(Gf.Vec3d(pos[0], pos[1], cc.get("z", 2.75)))
-        xf.AddRotateXYZOp().Set(Gf.Vec3f(180, 0, 0))
+        light.CreateColorAttr(su.Gf.Vec3f(*ceiling_color))
+        xf = su.UsdGeom.Xformable(light.GetPrim())
+        xf.AddTranslateOp().Set(su.Gf.Vec3d(pos[0], pos[1], cc.get("z", 2.75)))
+        xf.AddRotateXYZOp().Set(su.Gf.Vec3f(180, 0, 0))
 
     print(f"[kitchen] Lights: warm dome + {len(positions)} warm ceiling panels")
 
 
 def _build_cameras(stage, cfg: dict):
     cams = cfg.get("cameras", {})
-    _xform(stage, f"{ROOT}/Cameras")
+    su.xform(stage, f"{ROOT}/Cameras")
     for name, cc in cams.items():
         cp = f"{ROOT}/Cameras/{name}"
-        cam = UsdGeom.Camera.Define(stage, cp)
-        xf = UsdGeom.Xformable(cam.GetPrim())
+        cam = su.UsdGeom.Camera.Define(stage, cp)
+        xf = su.UsdGeom.Xformable(cam.GetPrim())
         pos = cc["position"]
         tgt = cc["target"]
-        xf.AddTranslateOp().Set(Gf.Vec3d(*pos))
+        xf.AddTranslateOp().Set(su.Gf.Vec3d(*pos))
         dx, dy, dz = tgt[0] - pos[0], tgt[1] - pos[1], tgt[2] - pos[2]
         dist_xy = math.sqrt(dx * dx + dy * dy)
         pitch = -math.degrees(math.atan2(dz, dist_xy))
         yaw = math.degrees(math.atan2(dx, dy))
-        xf.AddRotateXYZOp().Set(Gf.Vec3f(pitch, 0, yaw))
+        xf.AddRotateXYZOp().Set(su.Gf.Vec3f(pitch, 0, yaw))
 
     print(f"[kitchen] Cameras: {list(cams.keys())}")
 
@@ -995,22 +792,22 @@ def _build_cameras(stage, cfg: dict):
 # ---------------------------------------------------------------------------
 
 def build_kitchen_scene(stage, config_path: str | None = None, cfg: dict | None = None):
-    _ensure_pxr()
+    su.ensure_pxr()
 
     if cfg is None:
         if config_path is None:
             config_path = str(Path(__file__).parent / "kitchen_fixed_config.yaml")
-        cfg = _load_config(config_path)
+        cfg = su.load_config(config_path)
 
-    UsdGeom.Xform.Define(stage, ROOT)
-    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
-    UsdGeom.SetStageMetersPerUnit(stage, 1.0)
+    su.UsdGeom.Xform.Define(stage, ROOT)
+    su.UsdGeom.SetStageUpAxis(stage, su.UsdGeom.Tokens.z)
+    su.UsdGeom.SetStageMetersPerUnit(stage, 1.0)
 
     print("[kitchen] Building fixed kitchen scene...")
-    _build_physics_scene(stage, cfg)
+    su.build_physics_scene(stage, ROOT, cfg)
     mats = _build_materials(stage, cfg)
-    _build_floor(stage, cfg, mats)
-    _build_walls(stage, cfg, mats)
+    su.build_floor(stage, ROOT, cfg, mats, floor_mat_key="floor_tile", label="kitchen")
+    su.build_walls(stage, ROOT, cfg, mats, label="kitchen")
     _build_paintings(stage, cfg, mats)
     _build_fridge(stage, cfg, mats)
     _build_sink_cabinet(stage, cfg, mats)
@@ -1040,7 +837,7 @@ def main():
     from isaacsim import SimulationApp
     sim_app = SimulationApp({"headless": True})
 
-    _ensure_pxr()
+    su.ensure_pxr()
 
     out_path = os.path.abspath(args.output)
     if args.usda and out_path.endswith(".usd"):
@@ -1049,7 +846,7 @@ def main():
         os.remove(out_path)
 
     _log(f"[kitchen] Creating stage: {out_path}")
-    stage = Usd.Stage.CreateNew(out_path)
+    stage = su.Usd.Stage.CreateNew(out_path)
     try:
         build_kitchen_scene(stage, config_path=args.config)
         stage.GetRootLayer().Save()

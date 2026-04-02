@@ -1,0 +1,96 @@
+{
+  "episode_name": "fixed_mug_to_dishwasher",
+  "description": "Drive to mug, pick from table, carry to dishwasher zone, place, return to start",
+  "kitchen_scene": "fixed",
+  "simulation_duration_s": 320,
+  "scene": {
+    "fridge": true,
+    "dishwasher": true,
+    "sink": true,
+    "plate_fruit": true
+  },
+  "robot": {
+    "start_pose": [0.0, 0.0, 90],
+    "model": "heavy",
+    "gripper_length_m": 0.10,
+    "robot_profile": "config/robots/tiago_heavy.yaml"
+  },
+  "global": {
+    "drive_speed_ms": 0.3,
+    "approach_clearance_m": 0.13,
+    "torso_speed": 0.05,
+    "on_task_failure": "abort"
+  },
+  "sensors": {
+    "robot_head_camera": true,
+    "wrist_camera": true,
+    "external_camera": true,
+    "replicator_depth": true,
+    "contact_sensors": true
+  },
+  "tasks": [
+    {
+      "id": "T1_drive_to_mug",
+      "type": "navigate_to",
+      "target_xy": [1.15, 2.50],
+      "tolerance_m": 0.25,
+      "timeout_s": 50,
+      "drive_speed_ms": 0.35
+    },
+    {
+      "id": "T2_pick_mug",
+      "type": "pick_object",
+      "object_usd_path": "/World/Kitchen/Objects/Mug",
+      "object_label": "mug",
+      "grasp_mode": "top",
+      "approach_clearance_m": 0.13,
+      "lift_height_m": 0.20,
+      "timeout_s": 90,
+      "success_criteria": {
+        "min_lift_delta_m": 0.02
+      }
+    },
+    {
+      "id": "T3_carry_to_dishwasher",
+      "type": "carry_to",
+      "object_usd_path": "/World/Kitchen/Objects/Mug",
+      "destination_label": "dishwasher_drop_zone",
+      "destination_xy": [-0.45, 2.85],
+      "relative": false,
+      "carry_height_m": 0.20,
+      "approach_clearance_m": 0.13,
+      "tolerance_m": 0.20,
+      "timeout_s": 60,
+      "drive_speed_ms": 0.15,
+      "final_heading_deg": 180
+    },
+    {
+      "id": "T4_place_near_dishwasher",
+      "type": "place_object",
+      "destination_usd_path": "/World/Kitchen/Furniture/Dishwasher",
+      "release_height_m": 0.05,
+      "timeout_s": 20,
+      "placement_top_z": 0.80,
+      "placement_cx": -0.45,
+      "placement_cy": 3.10,
+      "placement_half_w": 0.45,
+      "placement_half_d": 0.35,
+      "placement_margin": 0.15,
+      "placement_abort_z_offset": -0.30,
+      "placement_release_z_offset": 0.08,
+      "placement_success_z_offset": 0.30,
+      "success_criteria": {
+        "object_usd_path": "/World/Kitchen/Objects/Mug",
+        "max_xy_from_target_m": 0.70
+      }
+    },
+    {
+      "id": "T5_return_to_start",
+      "type": "navigate_to",
+      "target_xy": [0.0, 0.0],
+      "tolerance_m": 1.20,
+      "timeout_s": 60,
+      "drive_speed_ms": 0.35
+    }
+  ]
+}

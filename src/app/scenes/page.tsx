@@ -14,10 +14,12 @@ export default function ScenesPage() {
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editingScene, setEditingScene] = useState<any>(null);
 
+    const showExperimental = process.env.NEXT_PUBLIC_ENABLE_EXPERIMENTAL_SCENES === "1";
+
     const fetchScenes = async () => {
         setLoading(true);
         try {
-            const res = await fetch("/api/scenes");
+            const res = await fetch(showExperimental ? "/api/scenes?includeExperimental=1" : "/api/scenes");
             const data = await res.json();
             setScenes(data);
         } catch (e) {
@@ -89,6 +91,26 @@ export default function ScenesPage() {
                                 </TableCell>
                                 <TableCell>
                                     <div className="flex gap-1 flex-wrap">
+                                        {(() => {
+                                            try {
+                                                const tags = JSON.parse(scene.tags || "[]");
+                                                if (!Array.isArray(tags)) return null;
+                                                const lower = tags.map((t: any) => String(t).toLowerCase());
+                                                return (
+                                                    <>
+                                                        {lower.includes("experimental") ? <Badge variant="outline" className="text-[10px]">experimental</Badge> : null}
+                                                        {lower.includes("fit-validated")
+                                                            ? <Badge variant="secondary" className="text-[10px]">fit-validated</Badge>
+                                                            : <Badge variant="outline" className="text-[10px]">draft</Badge>}
+                                                        {lower.includes("rollout-enabled")
+                                                            ? <Badge variant="secondary" className="text-[10px]">rollout-enabled</Badge>
+                                                            : null}
+                                                    </>
+                                                );
+                                            } catch {
+                                                return null;
+                                            }
+                                        })()}
                                         {(() => {
                                             try {
                                                 const caps = JSON.parse(scene.capabilities);

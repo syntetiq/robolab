@@ -19,12 +19,20 @@ export default function LaunchProfileDialog({
     profile?: any;
     onSaved: () => void;
 }) {
+    const scenePresets = [
+        { id: "kitchen_fixed", label: "Kitchen Fixed (stable)", path: "C:\\RoboLab_Data\\scenes\\kitchen_fixed.usd" },
+        { id: "small_house", label: "Small House", path: "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd" },
+        { id: "office_interactive", label: "Office Interactive", path: "C:\\RoboLab_Data\\scenes\\Office_Interactive.usd" },
+        { id: "office_studio_exp", label: "Office Studio (experimental)", path: "C:\\RoboLab_Data\\scenes\\Office_Studio_TiagoCompatible.usda" },
+        { id: "office_fixed", label: "Office Fixed (open-space)", path: "C:\\RoboLab_Data\\scenes\\office_fixed.usd" },
+    ];
     const [formData, setFormData] = useState({
         name: "",
         runnerMode: "SSH_RUNNER",
         scriptName: "data_collector_tiago.py",
         environmentUsd: "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd",
         enableWebRTC: false,
+        enableGuiMode: false,
         enableVrTeleop: false,
         enableMoveIt: false,
         robotPovCameraPrim: "/World/Tiago",
@@ -46,6 +54,7 @@ export default function LaunchProfileDialog({
                     scriptName: profile.scriptName || "data_collector_tiago.py",
                     environmentUsd: profile.environmentUsd || "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd",
                     enableWebRTC: !!profile.enableWebRTC,
+                    enableGuiMode: !!profile.enableGuiMode,
                     enableVrTeleop: !!profile.enableVrTeleop,
                     enableMoveIt: !!profile.enableMoveIt,
                     robotPovCameraPrim: profile.robotPovCameraPrim || "/World/Tiago",
@@ -63,6 +72,7 @@ export default function LaunchProfileDialog({
                     scriptName: "data_collector_tiago.py",
                     environmentUsd: "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd",
                     enableWebRTC: false,
+                    enableGuiMode: false,
                     enableVrTeleop: false,
                     enableMoveIt: false,
                     robotPovCameraPrim: "/World/Tiago",
@@ -146,6 +156,19 @@ export default function LaunchProfileDialog({
                                 className="font-mono text-xs"
                                 placeholder="C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd"
                             />
+                            <Select
+                                onValueChange={(presetId) => {
+                                    const preset = scenePresets.find((p) => p.id === presetId);
+                                    if (preset) setFormData({ ...formData, environmentUsd: preset.path });
+                                }}
+                            >
+                                <SelectTrigger><SelectValue placeholder="Quick preset (optional)" /></SelectTrigger>
+                                <SelectContent>
+                                    {scenePresets.map((preset) => (
+                                        <SelectItem key={preset.id} value={preset.id}>{preset.label}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
                         <div className="flex items-center space-x-2">
                             <input
@@ -155,6 +178,15 @@ export default function LaunchProfileDialog({
                                 onChange={(e) => setFormData({ ...formData, enableWebRTC: e.target.checked })}
                             />
                             <Label htmlFor="enableWebRTC">Enable WebRTC livestream</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <input
+                                id="enableGuiMode"
+                                type="checkbox"
+                                checked={formData.enableGuiMode}
+                                onChange={(e) => setFormData({ ...formData, enableGuiMode: e.target.checked })}
+                            />
+                            <Label htmlFor="enableGuiMode">GUI mode (Isaac Sim visible window, no streaming)</Label>
                         </div>
                         <div className="flex items-center space-x-2">
                             <input

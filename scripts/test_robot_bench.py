@@ -27,7 +27,7 @@ import yaml
 # ---------------------------------------------------------------------------
 DEFAULTS = {
     # --- Robot physical constants ---
-    "spawn_z": 0.08,
+    "spawn_z": 0.0,   # base_footprint on floor (kitchen floor top at z=0)
     "wheel_radius": 0.0985,
     "wheel_separation_x": 0.222,
     "wheel_separation_y": 0.222,
@@ -92,6 +92,11 @@ DEFAULTS = {
         "grasp_top":        {"R": [1.50, 0.0, 0.0, -0.35, -1.57, 0.0, 0.0],   "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
         "lift_top":         {"R": [1.50, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0],      "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
         "pre_grasp_handle": {"R": [0.70, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],      "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+        "handle_reach_left": {"R": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0], "L": [1.35, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]},
+        "handle_reach_left_90": {"R": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0], "L": [1.35, 0.0, 0.0, 0.0, 0.0, 0.0, 1.57]},
+        "handle_reach_left_180": {"R": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0], "L": [1.35, 0.0, 0.0, 0.0, 0.0, 0.0, 3.14159]},
+        "handle_reach_right": {"R": [1.35, -0.12, 0.0, 0.0, -1.57, 0.0, 0.0], "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
+        "handle_reach_right_180": {"R": [1.35, 0.0, 0.0, 0.0, 0.0, 0.0, 3.14159], "L": [0.07, -1.0, -0.20, 1.50, -1.57, 0.10, 0.0]},
     },
     # --- Safety ---
     "table_south_boundary_y": 2.75,
@@ -380,6 +385,17 @@ parser.add_argument("--task-config", type=str, default=None,
                     help="Path to task config JSON (scene + task list); implies --grasp and kitchen scene")
 parser.add_argument("--kitchen-scene", type=str, default=None, choices=["legacy", "fixed"],
                     help="Kitchen scene variant: 'legacy' (old 5x5 procedural) or 'fixed' (new 8x8 with walls/PBR)")
+# TTX sensors: robot-mounted and external cameras, depth, contact sensors (see docs/ttx_sensors_in_bench.md)
+parser.add_argument("--robot-head-camera", action="store_true",
+                    help="Mount camera on robot head (head_2_link) for first-person view")
+parser.add_argument("--wrist-camera", action="store_true",
+                    help="Mount camera on arm tool link for close-up manipulation view")
+parser.add_argument("--external-camera", action="store_true",
+                    help="Add fixed external third-person camera")
+parser.add_argument("--replicator-depth", action="store_true",
+                    help="Write depth (distance_to_camera) and pointcloud in Replicator output")
+parser.add_argument("--contact-sensors", action="store_true",
+                    help="Enable contact sensors on gripper finger links")
 args, _unknown = parser.parse_known_args()
 if args.fridge is None:
     args.fridge = bool(getattr(args, "grasp", False))
@@ -413,6 +429,18 @@ if getattr(args, "task_config", None):
         args.torso_speed = float(global_cfg["torso_speed"])
     if _tcfg.get("kitchen_scene"):
         args.kitchen_scene = _tcfg["kitchen_scene"]
+    # Sensors by TTX: allow task config to enable robot head/wrist/external cameras, depth, contact sensors
+    sens = _tcfg.get("sensors", {})
+    if sens.get("robot_head_camera"):
+        args.robot_head_camera = True
+    if sens.get("wrist_camera"):
+        args.wrist_camera = True
+    if sens.get("external_camera"):
+        args.external_camera = True
+    if sens.get("replicator_depth"):
+        args.replicator_depth = True
+    if sens.get("contact_sensors"):
+        args.contact_sensors = True
     # Load robot profile YAML if specified, then build merged config
     _robot_profile = {}
     _profile_path = robot_cfg.get("robot_profile")
@@ -564,6 +592,10 @@ GRIPPER_OPEN = cfg.gripper_open
 GRIPPER_CLOSED = cfg.gripper_closed
 GRIPPER_GRASP_MUG = cfg.gripper_grasp_mug
 GRIPPER_JOINTS = list(cfg.gripper_joints)
+GRIPPER_JOINTS_LEFT = [
+    "gripper_left_left_finger_joint",
+    "gripper_left_right_finger_joint",
+]
 
 
 def _create_white_tile_material(stage, mat_path):
@@ -1005,20 +1037,24 @@ def build_clean_scene():
     elif use_fixed_kitchen:
         print("[Bench] Floor: using fixed kitchen 8x8 parquet")
 
-    # -- Dome light --
-    dome_path = "/World/DomeLight"
-    if not stage.GetPrimAtPath(dome_path).IsValid():
-        dome = UsdLux.DomeLight.Define(stage, dome_path)
-        dome.CreateIntensityAttr(1000.0)
+    # -- World lights --
+    # Fixed kitchen has its own dome + ceiling lights. Avoid stacking extra world lights.
+    if use_fixed_kitchen:
+        print("[Bench] Lights: using fixed kitchen light rig only")
+    else:
+        dome_path = "/World/DomeLight"
+        if not stage.GetPrimAtPath(dome_path).IsValid():
+            dome = UsdLux.DomeLight.Define(stage, dome_path)
+            dome.CreateIntensityAttr(1000.0)
 
-    # -- Distant light from above --
-    dist_path = "/World/DistantLight"
-    if not stage.GetPrimAtPath(dist_path).IsValid():
-        dist = UsdLux.DistantLight.Define(stage, dist_path)
-        dist.CreateIntensityAttr(500.0)
-        dist.CreateAngleAttr(0.53)
-        xf = UsdGeom.Xformable(dist.GetPrim())
-        xf.AddRotateXYZOp().Set(Gf.Vec3f(-45, 30, 0))
+        # -- Distant light from above --
+        dist_path = "/World/DistantLight"
+        if not stage.GetPrimAtPath(dist_path).IsValid():
+            dist = UsdLux.DistantLight.Define(stage, dist_path)
+            dist.CreateIntensityAttr(500.0)
+            dist.CreateAngleAttr(0.53)
+            xf = UsdGeom.Xformable(dist.GetPrim())
+            xf.AddRotateXYZOp().Set(Gf.Vec3f(-45, 30, 0))
 
     # -- Coordinate axes (thin cylinders, 1m each) --
     axis_defs = [
@@ -1235,8 +1271,21 @@ def _build_grasp_objects(stage):
 # ---------------------------------------------------------------------------
 # Camera setup
 # ---------------------------------------------------------------------------
-def setup_cameras(output_dir, width, height):
-    """Create cameras. For grasp/kitchen: isometric + top (full kitchen view). Else: front, side, top."""
+def _find_link_under_path(stage, root_path, link_name):
+    """Find first prim under root_path whose name equals link_name. Returns path string or None."""
+    root = stage.GetPrimAtPath(root_path)
+    if not root.IsValid():
+        return None
+    for prim in Usd.PrimRange(root):
+        if prim.GetName() == link_name:
+            return str(prim.GetPath())
+    return None
+
+
+def setup_cameras(output_dir, width, height, robot_prim_path=None):
+    """Create cameras. For grasp/kitchen: isometric + top (full kitchen view). Else: front, side, top.
+    If robot_prim_path is set and TTX sensor flags (robot_head_camera, wrist_camera, external_camera)
+    are on, adds robot-mounted and external cameras per docs/ttx_sensors_in_bench.md."""
     kitchen_variant = getattr(args, "kitchen_scene", None)
     if kitchen_variant == "fixed" and (args.grasp or getattr(args, "task_config", None)):
         # Fixed 8x8 kitchen: furniture along north wall at Y=3.45, robot at (0,0)
@@ -1305,6 +1354,49 @@ def setup_cameras(output_dir, width, height):
         w.attach([rp])
         cameras.append((name, rp, w, rep_dir))
         print(f"[Bench] Camera '{name}': pos={pos} target={target}")
+
+    # TTX sensors: robot head, wrist, external camera (robot_prim_path required for head/wrist)
+    use_depth = getattr(args, "replicator_depth", False)
+    if robot_prim_path:
+        stage = stage_utils.get_current_stage()
+        if getattr(args, "robot_head_camera", False):
+            head_link = _find_link_under_path(stage, robot_prim_path, "head_2_link")
+            if head_link:
+                head_cam = rep.create.camera(position=(0.05, 0, 0.05), look_at=(1, 0, 0), parent=head_link)
+                head_rp = rep.create.render_product(head_cam, (width, height))
+                head_rep_dir = os.path.join(output_dir, "replicator_head_robot")
+                head_w = rep.WriterRegistry.get("BasicWriter")
+                head_w.initialize(output_dir=head_rep_dir, rgb=True, distance_to_camera=use_depth, pointcloud=use_depth)
+                head_w.attach([head_rp])
+                cameras.append(("head_robot", head_rp, head_w, head_rep_dir))
+                print(f"[Bench] TTX head camera at {head_link}")
+            else:
+                print("[Bench] WARN: head_2_link not found, skipping robot head camera")
+        if getattr(args, "wrist_camera", False):
+            wrist_link = (_find_link_under_path(stage, robot_prim_path, "arm_tool_link") or
+                          _find_link_under_path(stage, robot_prim_path, "arm_right_tool_link"))
+            if wrist_link:
+                wrist_cam = rep.create.camera(position=(0.0, 0.0, 0.05), look_at=(0.0, 0.0, 0.2), parent=wrist_link)
+                wrist_rp = rep.create.render_product(wrist_cam, (width, height))
+                wrist_rep_dir = os.path.join(output_dir, "replicator_wrist_robot")
+                wrist_w = rep.WriterRegistry.get("BasicWriter")
+                wrist_w.initialize(output_dir=wrist_rep_dir, rgb=True, distance_to_camera=use_depth, pointcloud=use_depth)
+                wrist_w.attach([wrist_rp])
+                cameras.append(("wrist_robot", wrist_rp, wrist_w, wrist_rep_dir))
+                print(f"[Bench] TTX wrist camera at {wrist_link}")
+            else:
+                print("[Bench] WARN: arm_tool_link not found, skipping wrist camera")
+        if getattr(args, "external_camera", False):
+            cx, cy = 0.0, 1.7
+            ext_cam = rep.create.camera(position=(cx, cy - 4.0, 2.0), look_at=(cx, cy, 0.8))
+            ext_rp = rep.create.render_product(ext_cam, (width, height))
+            ext_rep_dir = os.path.join(output_dir, "replicator_external_robot")
+            ext_w = rep.WriterRegistry.get("BasicWriter")
+            ext_w.initialize(output_dir=ext_rep_dir, rgb=True, distance_to_camera=use_depth)
+            ext_w.attach([ext_rp])
+            cameras.append(("external_robot", ext_rp, ext_w, ext_rep_dir))
+            print("[Bench] TTX external camera added")
+
     return cameras
 
 
@@ -1618,6 +1710,8 @@ class PhysicsLogger:
             "arm_left_7_link", "arm_left_tool_link",
             "head_1_link", "head_2_link",
             "gripper_right_left_finger_link", "gripper_right_right_finger_link",
+            "gripper_left_grasping_frame",
+            "gripper_left_left_finger_link", "gripper_left_right_finger_link",
         ]
         found = {}
         for prim in Usd.PrimRange(stage.GetPrimAtPath(self.prim_path)):
@@ -2512,16 +2606,42 @@ def run_door_open_close_cycle(
     door_joint_path=None,
     door_arm_pose="pre_grasp_handle",
     base_lateral_offset_m=0.40,
+    use_arm="right",
+    hinge_world_xy=None,
+    retreat_after_grasp_m=0.02,
+    retreat_only=False,
+    base_stop_short_m=0.0,
+    base_left_shift_m=0.0,
+    approach_creep_forward_m=0.0,
+    handle_gripper_close_m=None,
+    retreat_second_m=0.0,
+    door_torso_height=0.35,
+    door_settle_steps=240,
+    door_creep_speed=0.03,
+    door_retreat_speed=0.03,
 ):
     """Run door open (is_open=True) or close (is_open=False). Returns (success, steps_used).
-    approach_axis: 'x' (procedural scene, robot west of handle) or 'y' (fixed kitchen, robot south of handle).
-    door_joint_path: USD path to RevoluteJoint for accurate angle reading.
-    door_arm_pose: arm pose name to use for reaching the handle."""
+    base_stop_short_m: stop this many metres before nominal approach (don't drive last X cm).
+    base_left_shift_m: shift approach position this many metres to the left (world -X).
+    approach_creep_forward_m: after extending arm, drive base this many metres toward fridge then close gripper.
+    handle_gripper_close_m: gripper closing width when grasping handle (m); None = use 0.005.
+    retreat_second_m: after release (retreat_only), drive this many metres south before finishing.
+
+    use_arm: 'left' or 'right' -- which arm/gripper to use for grasping.
+    hinge_world_xy: (x, y) of the door hinge in world coords, needed for arc-following.
+    """
     current_targets = dict(initial_targets)
     _current_wheel_vels = (0.0, 0.0, 0.0, 0.0)
     success_criteria = target_angle_deg
 
-    _ee_path = logger._link_paths.get("gripper_right_grasping_frame") or logger._link_paths.get("arm_right_tool_link")
+    if use_arm == "left":
+        _ee_path = (logger._link_paths.get("gripper_left_grasping_frame")
+                    or logger._link_paths.get("arm_left_tool_link"))
+        _gripper_joints = GRIPPER_JOINTS_LEFT
+    else:
+        _ee_path = (logger._link_paths.get("gripper_right_grasping_frame")
+                    or logger._link_paths.get("arm_right_tool_link"))
+        _gripper_joints = GRIPPER_JOINTS
 
     def _get_tool_pos():
         if not _ee_path:
@@ -2547,6 +2667,21 @@ def run_door_open_close_cycle(
             pass
         return None, None, None
 
+    def _get_yaw_rad():
+        try:
+            _, ori = articulation.get_world_pose()
+            if ori is not None:
+                _, _, yaw_deg = quat_to_euler(float(ori[0]), float(ori[1]), float(ori[2]), float(ori[3]))
+                return math.radians(yaw_deg)
+        except Exception:
+            pass
+        return 0.0
+
+    def _world_to_robot(wx, wy, yaw_rad):
+        """Convert world-frame velocity to robot-local frame."""
+        c, s = math.cos(yaw_rad), math.sin(yaw_rad)
+        return wx * c + wy * s, -wx * s + wy * c
+
     def _set_wheels(vels):
         nonlocal _current_wheel_vels
         _current_wheel_vels = vels
@@ -2557,22 +2692,43 @@ def run_door_open_close_cycle(
         _apply_targets(articulation, dof_names, current_targets)
 
     def _set_gripper(val):
-        for gj in GRIPPER_JOINTS:
+        for gj in _gripper_joints:
             current_targets[gj] = val
         _apply_targets(articulation, dof_names, current_targets)
 
     def _read_door_angle():
         return get_door_hinge_angle_deg(door_usd_path, joint_path=door_joint_path)
 
+    def _drive_to(target_x, target_y, speed_cap):
+        """Proportional drive toward a world-frame target. Returns (dx, dy) world error."""
+        bx, by, _ = _get_base_pos() or (0, 0, 0)
+        dx = target_x - bx
+        dy = target_y - by
+        yaw = _get_yaw_rad()
+        rx, ry = _world_to_robot(dx, dy, yaw)
+        vx = max(-speed_cap, min(speed_cap, rx * 0.5))
+        vy = max(-speed_cap, min(speed_cap, ry * 0.5))
+        _set_wheels(omni_wheel_velocities(vx, vy, 0.0))
+        return dx, dy
+
     _axis_y = (approach_axis == "y")
 
     state = "drive_to_handle"
     state_start_step = -1
     success = False
-    door_angle_at_push_start = None
-    _close_fixed_handle_pos = None
+
     _close_waypoints = []
     _close_wp_idx = 0
+    _close_wp_initialized = False
+    _frozen_handle_pos = None
+    _approach_base_y = None  # never drive base past this (fridge north = +Y)
+    _retreat_target_y = None  # target base Y after retreat (2 cm south of grasp)
+    _retreat_second_target_y = None  # target Y for second retreat (10 cm south after release)
+    _approach_creep_target_y = None
+    _approach_phase = "settle"
+    _gripper_open_start_step = None
+    _gripper_close_start_step = None
+    _verify_start_step = None
 
     for step in range(timeout_steps):
         sim_time = step * physics_dt
@@ -2580,122 +2736,200 @@ def run_door_open_close_cycle(
         tool_pos = _get_tool_pos()
         door_angle = _read_door_angle()
 
+        # ---- STATE: drive_to_handle ----
         if state == "drive_to_handle":
             if handle_pos is None:
                 _set_wheels(omni_wheel_velocities(0, 0, 0))
             else:
-                hx, hy, hz = handle_pos[0], handle_pos[1], handle_pos[2]
+                hx, hy, hz = handle_pos
+                if _axis_y and not is_open and not _close_wp_initialized:
+                    _close_wp_initialized = True
+                    _frozen_handle_pos = (hx, hy, hz)
+                    bx_now, by_now, _ = _get_base_pos() or (0, 0, 0)
+                    if hinge_world_xy is not None:
+                        hgx, hgy = hinge_world_xy
+                        _close_waypoints = [
+                            (bx_now, hgy - 0.80),
+                            (hgx + 0.30, hgy - 0.80),
+                            (hgx + 0.30, hgy + 0.20),
+                        ]
+                    else:
+                        _close_waypoints = [
+                            (bx_now, 2.20),
+                            (hx + 0.60, 2.20),
+                            (hx + 0.60, hy - arm_reach_m),
+                        ]
+                    print(f"[Door] close: {len(_close_waypoints)} waypoints, "
+                          f"frozen handle=({hx:.3f},{hy:.3f},{hz:.3f})")
+
                 if _axis_y:
                     if is_open:
-                        target_base_x = hx - base_lateral_offset_m
-                        target_base_y = hy - arm_reach_m
-                    else:
-                        bx_now, by_now, _ = _get_base_pos() or (0, 0, 0)
-                        if _close_fixed_handle_pos is None:
-                            _close_fixed_handle_pos = (hx, hy, hz)
-                            _close_waypoints = [
-                                (bx_now, 1.50),
-                                (hx + 0.60, 1.50),
-                                (hx + 0.60, hy),
-                            ]
-                            _close_wp_idx = 0
-                        if _close_wp_idx < len(_close_waypoints):
-                            target_base_x, target_base_y = _close_waypoints[_close_wp_idx]
+                        if use_arm == "left":
+                            target_base_x = hx + base_lateral_offset_m - base_left_shift_m
                         else:
-                            target_base_x = bx_now
-                            target_base_y = by_now
+                            target_base_x = hx - base_lateral_offset_m - base_left_shift_m
+                        target_base_y = hy - arm_reach_m - base_stop_short_m
+                    elif _close_wp_idx < len(_close_waypoints):
+                        target_base_x, target_base_y = _close_waypoints[_close_wp_idx]
+                    else:
+                        target_base_x, target_base_y = _close_waypoints[-1]
                 else:
                     target_base_x = hx - arm_reach_m
                     target_base_y = hy
-                bx, by, _ = _get_base_pos() or (0, 0, 0)
-                dx = target_base_x - bx
-                dy = target_base_y - by
+
+                dx, dy = _drive_to(target_base_x, target_base_y, drive_speed)
+
                 if step % 60 == 0:
+                    bx, by, _ = _get_base_pos() or (0, 0, 0)
+                    wp_info = f" wp={_close_wp_idx}/{len(_close_waypoints)}" if (not is_open and _close_waypoints) else ""
                     print(f"[Door] drive_to_handle t={sim_time:.1f}s: base=({bx:.3f},{by:.3f}) "
                           f"target=({target_base_x:.3f},{target_base_y:.3f}) dx={dx:.3f} dy={dy:.3f} "
-                          f"handle=({hx:.3f},{hy:.3f},{hz:.3f}) angle={door_angle}")
-                if not is_open and door_angle is not None and door_angle <= success_criteria:
-                    _set_wheels(omni_wheel_velocities(0, 0, 0))
-                    success = True
-                    state = "release"
-                    state_start_step = step
-                    print(f"[Door] close SUCCESS (during nav): angle={door_angle:.1f} <= {success_criteria}")
-                    continue
-                _tol = 0.20 if (_axis_y and not is_open) else 0.05
-                _close_wp_pending = (_axis_y and not is_open and _close_wp_idx < len(_close_waypoints))
-                if _close_wp_pending and abs(dx) < _tol and abs(dy) < _tol:
+                          f"handle=({hx:.3f},{hy:.3f},{hz:.3f}) angle={door_angle}{wp_info}")
+
+                _tol = 0.20 if (not is_open and _close_wp_idx < len(_close_waypoints)) else 0.08
+                if not is_open and _close_wp_idx < len(_close_waypoints) and abs(dx) < _tol and abs(dy) < _tol:
                     _close_wp_idx += 1
                     if _close_wp_idx < len(_close_waypoints):
-                        print(f"[Door] close waypoint {_close_wp_idx}/{len(_close_waypoints)} reached, next=({_close_waypoints[_close_wp_idx][0]:.2f},{_close_waypoints[_close_wp_idx][1]:.2f})")
+                        print(f"[Door] close waypoint {_close_wp_idx}/{len(_close_waypoints)} reached")
                     else:
-                        print(f"[Door] all close waypoints reached, starting push")
-                if not _close_wp_pending and abs(dx) < _tol and abs(dy) < _tol:
+                        print(f"[Door] all close waypoints reached, approaching handle")
+                elif abs(dx) < _tol and abs(dy) < _tol and not (not is_open and _close_wp_idx < len(_close_waypoints)):
                     _set_wheels(omni_wheel_velocities(0, 0, 0))
                     _set_arm(door_arm_pose)
-                    current_targets["torso_lift_joint"] = 0.35
+                    current_targets["torso_lift_joint"] = door_torso_height
                     _apply_targets(articulation, dof_names, current_targets)
-                    if _axis_y and not is_open:
-                        state = "pull_or_push"
-                        state_start_step = step
-                        door_angle_at_push_start = _read_door_angle()
-                        print(f"[Door] -> pull_or_push (close) at step {step}, angle={door_angle}")
+                    state = "approach_and_grasp"
+                    state_start_step = step
+                    bx0, by0, _ = _get_base_pos() or (0, 0, 0)
+                    _approach_base_y = by0
+                    _approach_phase = "settle"
+                    if approach_creep_forward_m > 0:
+                        _approach_creep_target_y = by0 + approach_creep_forward_m
                     else:
-                        state = "approach_and_grasp"
-                        state_start_step = step
-                        print(f"[Door] -> approach_and_grasp at step {step}")
-                else:
-                    try:
-                        _, ori = articulation.get_world_pose()
-                        yaw_rad = 0.0
-                        if ori is not None:
-                            _, _, yaw_deg = quat_to_euler(float(ori[0]), float(ori[1]), float(ori[2]), float(ori[3]))
-                            yaw_rad = math.radians(yaw_deg)
-                        dx_robot = dx * math.cos(yaw_rad) + dy * math.sin(yaw_rad)
-                        dy_robot = -dx * math.sin(yaw_rad) + dy * math.cos(yaw_rad)
-                        vx = max(-drive_speed, min(drive_speed, dx_robot * 0.5))
-                        vy = max(-drive_speed, min(drive_speed, dy_robot * 0.5))
-                        _set_wheels(omni_wheel_velocities(vx, vy, 0.0))
-                    except Exception:
-                        _set_wheels(omni_wheel_velocities(0, 0, 0))
+                        _approach_creep_target_y = None
+                    print(f"[Door] -> approach_and_grasp at step {step} (approach_base_y={_approach_base_y:.3f}, creep_forward_m={approach_creep_forward_m})")
 
+        # ---- STATE: approach_and_grasp ----
         elif state == "approach_and_grasp":
             steps_in = step - state_start_step
-            _settle_phase = 240
-            _creep_phase = _settle_phase + 600
-            _gripper_open_phase = _creep_phase + 60
-            _gripper_close_phase = _gripper_open_phase + 120
-            _hold_phase = _gripper_close_phase + 60
-            if steps_in < _settle_phase:
+
+            if steps_in < door_settle_steps:
                 _set_wheels(omni_wheel_velocities(0, 0, 0))
-            elif steps_in < _creep_phase:
-                creep_speed = 0.05
-                if _axis_y and not is_open:
-                    _set_wheels(omni_wheel_velocities(0.0, -creep_speed, 0.0))
+                _set_arm(door_arm_pose)
+                current_targets["torso_lift_joint"] = door_torso_height
+                _apply_targets(articulation, dof_names, current_targets)
+                if steps_in == door_settle_steps - 1:
+                    _approach_phase = "creep_forward" if (_approach_creep_target_y is not None) else "gripper_open"
+                    if _approach_phase == "gripper_open":
+                        _gripper_open_start_step = step
+            elif _approach_phase == "creep_forward":
+                bx, by, _ = _get_base_pos() or (0, 0, 0)
+                if by < _approach_creep_target_y - 0.008:
+                    yaw = _get_yaw_rad()
+                    rx, ry = _world_to_robot(0.0, door_creep_speed, yaw)
+                    vx = max(-door_creep_speed, min(door_creep_speed, rx))
+                    vy = max(-door_creep_speed, min(door_creep_speed, ry))
+                    _set_wheels(omni_wheel_velocities(vx, vy, 0.0))
                 else:
-                    _set_wheels(omni_wheel_velocities(creep_speed, 0.0, 0.0))
-            elif steps_in < _gripper_open_phase:
+                    _set_wheels(omni_wheel_velocities(0, 0, 0))
+                    _approach_phase = "gripper_open"
+                    _gripper_open_start_step = step
+                    print(f"[Door] creep_forward done at step {step} (by={by:.3f})")
+                _set_arm(door_arm_pose)
+                _set_gripper(GRIPPER_OPEN)
+            elif _approach_phase == "gripper_open":
                 _set_wheels(omni_wheel_velocities(0, 0, 0))
-                _set_gripper(0.030)
-            elif steps_in < _gripper_close_phase:
-                _set_gripper(GRIPPER_CLOSED)
+                _set_arm(door_arm_pose)
+                _set_gripper(GRIPPER_OPEN)
+                if _gripper_open_start_step is not None and step - _gripper_open_start_step >= 60:
+                    _approach_phase = "gripper_close"
+                    _gripper_close_start_step = step
+            elif _approach_phase == "gripper_close":
+                _set_wheels(omni_wheel_velocities(0, 0, 0))
+                _set_arm(door_arm_pose)
+                _gclose = (handle_gripper_close_m if handle_gripper_close_m is not None else 0.005)
+                _set_gripper(_gclose)
+                if _gripper_close_start_step is not None and step - _gripper_close_start_step >= 120:
+                    _approach_phase = "verify"
+                    _verify_start_step = step
+            elif _approach_phase == "verify":
+                _set_wheels(omni_wheel_velocities(0, 0, 0))
+                _gclose = (handle_gripper_close_m if handle_gripper_close_m is not None else 0.005)
+                _set_gripper(_gclose)
+                if _verify_start_step is None:
+                    _verify_start_step = step
             else:
-                _set_gripper(GRIPPER_CLOSED)
+                _set_wheels(omni_wheel_velocities(0, 0, 0))
+                _gclose = (handle_gripper_close_m if handle_gripper_close_m is not None else 0.005)
+                _set_gripper(_gclose)
+
             if steps_in % 120 == 0:
                 tx, ty, tz = tool_pos or (None, None, None)
-                hx, hy, hz = (_get_handle_pos() or (None, None, None))
-                print(f"[Door] approach_and_grasp step={steps_in}: tool=({tx},{ty},{tz}) handle=({hx},{hy},{hz})")
-            if not is_open and steps_in >= _gripper_close_phase and steps_in < _hold_phase:
-                if _axis_y:
-                    _set_wheels(omni_wheel_velocities(0.0, -push_speed_ms * 0.5, 0.0))
-                else:
-                    _set_wheels(omni_wheel_velocities(push_speed_ms * 0.5, 0.0, 0.0))
-            if steps_in >= _hold_phase:
-                state = "pull_or_push"
-                state_start_step = step
-                door_angle_at_push_start = _read_door_angle() if not is_open else None
-                _set_wheels(omni_wheel_velocities(0, 0, 0))
-                print(f"[Door] -> pull_or_push at step {step}, angle={door_angle}")
+                hx2, hy2, hz2 = (_get_handle_pos() or (None, None, None))
+                print(f"[Door] approach_and_grasp step={steps_in} phase={_approach_phase}: "
+                      f"tool=({tx},{ty},{tz}) handle=({hx2},{hy2},{hz2})")
 
+            _verify_done = (_approach_phase == "verify" and _verify_start_step is not None and step - _verify_start_step >= 60)
+            if _verify_done:
+                _set_wheels(omni_wheel_velocities(0, 0, 0))
+                _tp = tool_pos or (0, 0, 0)
+                _hp = _get_handle_pos() or (0, 0, 0)
+                _gdist = math.sqrt((_tp[0]-_hp[0])**2 + (_tp[1]-_hp[1])**2 + (_tp[2]-_hp[2])**2)
+                bx_now, by_now, _ = _get_base_pos() or (0, 0, 0)
+                print(f"[Door] verify: gripper_handle_dist={_gdist:.3f}m "
+                      f"tool=({_tp[0]:.3f},{_tp[1]:.3f},{_tp[2]:.3f}) "
+                      f"handle=({_hp[0]:.3f},{_hp[1]:.3f},{_hp[2]:.3f}) "
+                      f"door_angle={door_angle}")
+                if is_open and retreat_after_grasp_m > 0:
+                    _retreat_target_y = by_now - retreat_after_grasp_m
+                    state = "retreat_2cm"
+                    state_start_step = step
+                    print(f"[Door] -> retreat_2cm at step {step} (back off {retreat_after_grasp_m*100:.0f} cm to base_y={_retreat_target_y:.3f})")
+                else:
+                    state = "pull_or_push"
+                    state_start_step = step
+                    print(f"[Door] -> pull_or_push at step {step}, angle={door_angle}, "
+                          f"gripper_handle_dist={_gdist:.3f}m "
+                          f"tool=({_tp[0]:.3f},{_tp[1]:.3f},{_tp[2]:.3f}) "
+                          f"handle=({_hp[0]:.3f},{_hp[1]:.3f},{_hp[2]:.3f})")
+
+        # ---- STATE: retreat_2cm ----
+        elif state == "retreat_2cm":
+            if _retreat_target_y is not None:
+                bx, by, _ = _get_base_pos() or (0, 0, 0)
+                dy = _retreat_target_y - by
+                # Retreat must be strictly south (world -Y). Fridge north = +Y; south = decrease Y.
+                if by > _retreat_target_y + 0.008:
+                    yaw = _get_yaw_rad()
+                    rx, ry = _world_to_robot(0.0, -door_retreat_speed, yaw)
+                    vx = max(-door_retreat_speed, min(door_retreat_speed, rx))
+                    vy = max(-door_retreat_speed, min(door_retreat_speed, ry))
+                    _set_wheels(omni_wheel_velocities(vx, vy, 0.0))
+                else:
+                    _set_wheels(omni_wheel_velocities(0, 0, 0))
+                if abs(dy) < 0.008:
+                    _set_wheels(omni_wheel_velocities(0, 0, 0))
+                    if retreat_only and retreat_second_m > 0:
+                        bx2, by2, _ = _get_base_pos() or (0, 0, 0)
+                        _retreat_second_target_y = by2 - retreat_second_m
+                        state = "retreat_second"
+                        state_start_step = step
+                        success = True
+                        print(f"[Door] -> retreat_second with gripper closed (drive {retreat_second_m*100:.0f} cm south to base_y={_retreat_second_target_y:.3f})")
+                    elif retreat_only:
+                        state = "release"
+                        state_start_step = step
+                        success = True
+                        print(f"[Door] -> release after retreat (base_y={by:.3f}, retreat_only)")
+                    else:
+                        state = "pull_or_push"
+                        state_start_step = step
+                        print(f"[Door] -> pull_or_push after retreat (base_y={by:.3f})")
+            else:
+                state = "release" if retreat_only else "pull_or_push"
+                state_start_step = step
+
+        # ---- STATE: pull_or_push ----
         elif state == "pull_or_push":
             if door_angle is not None:
                 if is_open and door_angle >= success_criteria:
@@ -2710,20 +2944,44 @@ def run_door_open_close_cycle(
                     state = "release"
                     state_start_step = step
                     print(f"[Door] close SUCCESS: angle={door_angle:.1f} <= {success_criteria}")
+
             if state == "pull_or_push":
                 speed = pull_speed_ms if is_open else push_speed_ms
-                if _axis_y:
+
+                if hinge_world_xy is not None and handle_pos is not None:
+                    hx, hy, _ = handle_pos
+                    hgx, hgy = hinge_world_xy
+                    rx, ry = hx - hgx, hy - hgy
+                    r_len = math.sqrt(rx * rx + ry * ry) or 1.0
                     if is_open:
-                        _set_wheels(omni_wheel_velocities(speed, speed * 0.3, 0.0))
+                        # Pull: handle moves along arc around hinge. Tangent to circle = (-ry, rx) so base pulls door open
+                        tang_wx = -ry / r_len
+                        tang_wy = rx / r_len
                     else:
-                        _set_wheels(omni_wheel_velocities(0.0, speed, 0.0))
+                        tang_wx = -ry / r_len
+                        tang_wy = rx / r_len
+                    yaw = _get_yaw_rad()
+                    vwx, vwy = tang_wx * speed, tang_wy * speed
+                    if is_open and _approach_base_y is not None:
+                        bx, by, _ = _get_base_pos() or (0, 0, 0)
+                        if by >= _approach_base_y - 0.005 and vwy > 0:
+                            vwy = 0.0
+                    vr_x, vr_y = _world_to_robot(vwx, vwy, yaw)
+                    _set_wheels(omni_wheel_velocities(vr_x, vr_y, 0.0))
+                elif _axis_y:
+                    if is_open:
+                        _set_wheels(omni_wheel_velocities(-speed, 0.0, 0.0))
+                    else:
+                        _set_wheels(omni_wheel_velocities(speed, 0.0, 0.0))
                 else:
                     vx = -speed if is_open else speed
                     _set_wheels(omni_wheel_velocities(vx, 0.0, 0.0))
+
                 if step % 120 == 0:
                     bx, by, _ = _get_base_pos() or (0, 0, 0)
-                    print(f"[Door] pull_or_push t={sim_time:.1f}s: angle={door_angle} target={success_criteria} "
-                          f"is_open={is_open} base=({bx:.2f},{by:.2f})")
+                    print(f"[Door] pull_or_push t={sim_time:.1f}s: angle={door_angle} "
+                          f"target={success_criteria} is_open={is_open} base=({bx:.2f},{by:.2f})")
+
             if step - state_start_step >= int(40.0 / physics_dt) and state == "pull_or_push":
                 if is_open:
                     success = door_angle is not None and door_angle >= success_criteria * 0.7
@@ -2734,6 +2992,7 @@ def run_door_open_close_cycle(
                 state_start_step = step
                 print(f"[Door] pull_or_push TIMEOUT: angle={door_angle} success={success}")
 
+        # ---- STATE: release ----
         elif state == "release":
             steps_in = step - state_start_step
             if steps_in < 30:
@@ -2743,6 +3002,35 @@ def run_door_open_close_cycle(
             if steps_in >= 90:
                 break
 
+        # ---- STATE: retreat_second ----
+        elif state == "retreat_second":
+            _gclose = (handle_gripper_close_m if handle_gripper_close_m is not None else 0.005)
+            _set_gripper(_gclose)
+            steps_in = step - state_start_step
+            if steps_in % 30 == 0:
+                _tp2 = tool_pos or (0, 0, 0)
+                _hp2 = _get_handle_pos() or (0, 0, 0)
+                _jp = articulation.get_joint_positions()
+                _gi = [dof_names.index(j) for j in _gripper_joints]
+                _gvals = [float(_jp[i]) for i in _gi] if _jp is not None else []
+                print(f"[Door] retreat_second step={steps_in}: tool=({_tp2[0]:.3f},{_tp2[1]:.3f},{_tp2[2]:.3f}) "
+                      f"handle=({_hp2[0]:.3f},{_hp2[1]:.3f},{_hp2[2]:.3f}) gripper_joints={_gvals} angle={door_angle}")
+            if _retreat_second_target_y is not None:
+                bx, by, _ = _get_base_pos() or (0, 0, 0)
+                if by > _retreat_second_target_y + 0.008:
+                    yaw = _get_yaw_rad()
+                    rx, ry = _world_to_robot(0.0, -door_retreat_speed, yaw)
+                    vx = max(-door_retreat_speed, min(door_retreat_speed, rx))
+                    vy = max(-door_retreat_speed, min(door_retreat_speed, ry))
+                    _set_wheels(omni_wheel_velocities(vx, vy, 0.0))
+                else:
+                    _set_wheels(omni_wheel_velocities(0, 0, 0))
+                    _final_angle = _read_door_angle()
+                    print(f"[Door] retreat_second done (base_y={by:.3f}, door_angle={_final_angle})")
+                    state = "release"
+                    state_start_step = step
+
+        # Apply wheel velocities
         if wheel_dof_indices and len(wheel_dof_indices) >= 4:
             try:
                 from omni.isaac.core.utils.types import ArticulationAction
@@ -3411,6 +3699,22 @@ def run_task_config_episode(
                 _arm_reach = float(task.get("arm_reach_m", 0.85))
                 _arm_pose = task.get("arm_pose", "pre_grasp_handle")
                 _base_lat = float(task.get("base_lateral_offset_m", 0.40))
+                _use_arm = task.get("use_arm", "right")
+                _hinge_xy_raw = task.get("hinge_world_xy") or (task.get("success_criteria") or {}).get("hinge_world_xy")
+                _hinge_xy = tuple(_hinge_xy_raw) if _hinge_xy_raw else None
+                _retreat_m = float(task.get("retreat_after_grasp_m", global_cfg.get("retreat_after_grasp_m", 0.02)))
+                _retreat_only = bool(task.get("retreat_only", False))
+                _base_stop_short = float(task.get("base_stop_short_m", global_cfg.get("base_stop_short_m", 0.0)))
+                _base_left_shift = float(task.get("base_left_shift_m", global_cfg.get("base_left_shift_m", 0.0)))
+                _approach_creep = float(task.get("approach_creep_forward_m", global_cfg.get("approach_creep_forward_m", 0.0)))
+                _handle_close = task.get("handle_gripper_close_m")
+                if _handle_close is not None:
+                    _handle_close = float(_handle_close)
+                _retreat_second = float(task.get("retreat_second_m", global_cfg.get("retreat_second_m", 0.0)))
+                _door_torso = float(task.get("door_torso_height", global_cfg.get("door_torso_height", 0.35)))
+                _door_settle = int(task.get("door_settle_steps", global_cfg.get("door_settle_steps", 240)))
+                _door_creep_spd = float(task.get("door_creep_speed", global_cfg.get("door_creep_speed", 0.03)))
+                _door_retreat_spd = float(task.get("door_retreat_speed", global_cfg.get("door_retreat_speed", 0.03)))
                 success, steps_used = run_door_open_close_cycle(
                     world=world, articulation=articulation, dof_names=dof_names, logger=logger,
                     wheel_dof_indices=wheel_dof_indices, handle_usd_path=handle_usd_path, door_usd_path=door_usd_path,
@@ -3419,6 +3723,12 @@ def run_task_config_episode(
                     initial_targets=episode_targets, pull_speed_ms=pull_speed, approach_clearance_m=approach_clearance_m,
                     approach_axis=_approach_axis, arm_reach_m=_arm_reach, door_joint_path=_door_joint_path,
                     door_arm_pose=_arm_pose, base_lateral_offset_m=_base_lat,
+                    use_arm=_use_arm, hinge_world_xy=_hinge_xy, retreat_after_grasp_m=_retreat_m,
+                    retreat_only=_retreat_only, base_stop_short_m=_base_stop_short, base_left_shift_m=_base_left_shift,
+                    approach_creep_forward_m=_approach_creep, handle_gripper_close_m=_handle_close,
+                    retreat_second_m=_retreat_second,
+                    door_torso_height=_door_torso, door_settle_steps=_door_settle,
+                    door_creep_speed=_door_creep_spd, door_retreat_speed=_door_retreat_spd,
                 )
                 episode_targets["arm_right_4_joint"] = cfg.j4_retracted
                 episode_targets["torso_lift_joint"] = cfg.torso_hold
@@ -3447,6 +3757,21 @@ def run_task_config_episode(
                 _arm_reach = float(task.get("arm_reach_m", 0.85))
                 _arm_pose = task.get("arm_pose", "pre_grasp_handle")
                 _base_lat = float(task.get("base_lateral_offset_m", 0.40))
+                _use_arm = task.get("use_arm", "right")
+                _hinge_xy_raw = task.get("hinge_world_xy") or (task.get("success_criteria") or {}).get("hinge_world_xy")
+                _hinge_xy = tuple(_hinge_xy_raw) if _hinge_xy_raw else None
+                _retreat_m = float(task.get("retreat_after_grasp_m", global_cfg.get("retreat_after_grasp_m", 0.02)))
+                _base_stop_short = float(task.get("base_stop_short_m", global_cfg.get("base_stop_short_m", 0.0)))
+                _base_left_shift = float(task.get("base_left_shift_m", global_cfg.get("base_left_shift_m", 0.0)))
+                _approach_creep = float(task.get("approach_creep_forward_m", global_cfg.get("approach_creep_forward_m", 0.0)))
+                _handle_close = task.get("handle_gripper_close_m")
+                if _handle_close is not None:
+                    _handle_close = float(_handle_close)
+                _retreat_second = float(task.get("retreat_second_m", global_cfg.get("retreat_second_m", 0.0)))
+                _door_torso = float(task.get("door_torso_height", global_cfg.get("door_torso_height", 0.35)))
+                _door_settle = int(task.get("door_settle_steps", global_cfg.get("door_settle_steps", 240)))
+                _door_creep_spd = float(task.get("door_creep_speed", global_cfg.get("door_creep_speed", 0.03)))
+                _door_retreat_spd = float(task.get("door_retreat_speed", global_cfg.get("door_retreat_speed", 0.03)))
                 success, steps_used = run_door_open_close_cycle(
                     world=world, articulation=articulation, dof_names=dof_names, logger=logger,
                     wheel_dof_indices=wheel_dof_indices, handle_usd_path=handle_usd_path, door_usd_path=door_usd_path,
@@ -3455,6 +3780,12 @@ def run_task_config_episode(
                     initial_targets=episode_targets, push_speed_ms=push_speed, approach_clearance_m=approach_clearance_m,
                     approach_axis=_approach_axis, arm_reach_m=_arm_reach, door_joint_path=_door_joint_path,
                     door_arm_pose=_arm_pose, base_lateral_offset_m=_base_lat,
+                    use_arm=_use_arm, hinge_world_xy=_hinge_xy, retreat_after_grasp_m=_retreat_m,
+                    base_stop_short_m=_base_stop_short, base_left_shift_m=_base_left_shift,
+                    approach_creep_forward_m=_approach_creep, handle_gripper_close_m=_handle_close,
+                    retreat_second_m=_retreat_second,
+                    door_torso_height=_door_torso, door_settle_steps=_door_settle,
+                    door_creep_speed=_door_creep_spd, door_retreat_speed=_door_retreat_spd,
                 )
                 episode_targets["arm_right_4_joint"] = cfg.j4_retracted
                 episode_targets["torso_lift_joint"] = cfg.torso_hold
@@ -3569,10 +3900,29 @@ def run_test(model_name, world, output_dir, record_video):
         except Exception as e:
             print(f"[Bench] Anchor attempt {attempt} failed: {e}")
 
+    # TTX contact sensors on gripper fingers (optional)
+    if getattr(args, "contact_sensors", False):
+        try:
+            from pxr import PhysxSchema
+            stage = stage_utils.get_current_stage()
+            fl = _find_link_under_path(stage, prim_path, "gripper_right_left_finger_link")
+            fr = _find_link_under_path(stage, prim_path, "gripper_right_right_finger_link")
+            if fl and fr:
+                for _fp in (fl, fr):
+                    _p = stage.GetPrimAtPath(_fp)
+                    if _p.IsValid() and not _p.HasAPI(PhysxSchema.PhysxContactReportAPI):
+                        PhysxSchema.PhysxContactReportAPI.Apply(_p)
+                        PhysxSchema.PhysxContactReportAPI(_p).CreateThresholdAttr(0.0)
+                print(f"[Bench] TTX contact report API applied on gripper fingers: {fl}, {fr}")
+            else:
+                print("[Bench] WARN: gripper finger links not found, contact sensors skipped")
+        except Exception as e:
+            print(f"[Bench] WARN: contact sensors setup failed: {e}")
+
     # Setup cameras
     cameras = []
     if record_video:
-        cameras = setup_cameras(model_dir, args.width, args.height)
+        cameras = setup_cameras(model_dir, args.width, args.height, robot_prim_path=prim_path)
 
     # Logger
     logger = PhysicsLogger(model_name, dof_names, articulation, prim_path)

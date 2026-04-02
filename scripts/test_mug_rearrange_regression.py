@@ -234,7 +234,7 @@ def main():
     with open(os.path.join(REPO_ROOT, "config/robots/tiago_heavy.yaml"), "r") as f:
         rp = yaml.safe_load(f)
 
-    check("rp.spawn_z", rp["spawn_z"], 0.08)
+    check("rp.spawn_z", rp["spawn_z"], 0.0)
     check("rp.torso_speed", rp["torso_speed"], 0.05)
     check("rp.torso_max", rp["torso_max"], 0.35)
     check("rp.wheel.radius", rp["wheel"]["radius"], 0.0985)

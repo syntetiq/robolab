@@ -4,9 +4,13 @@ import { NodeSSH } from "node-ssh";
 
 export class SshRunner implements Runner {
     private resolveEnvironmentUsd(episode: any): string {
-        const configured = (episode.launchProfile?.environmentUsd || episode.scene?.stageUsdPath || "").trim();
-        if (configured && !configured.startsWith("/Isaac/")) {
-            return configured;
+        const sceneUsd = (episode.scene?.stageUsdPath || "").trim();
+        if (sceneUsd && !sceneUsd.startsWith("/Isaac/")) {
+            return sceneUsd;
+        }
+        const profileUsd = (episode.launchProfile?.environmentUsd || "").trim();
+        if (profileUsd && !profileUsd.startsWith("/Isaac/")) {
+            return profileUsd;
         }
         const sceneName = (episode.scene?.name || "").toLowerCase();
         const sceneType = (episode.scene?.type || "").toLowerCase();
@@ -286,7 +290,15 @@ export class SshRunner implements Runner {
                 "dataset.json",
                 "dataset_manifest.json",
                 "telemetry.json",
-                "camera_0.mp4"
+                "grasp_events.json",
+                "camera_0.mp4",
+                "camera_1_wrist.mp4",
+                "camera_2_external.mp4",
+            ];
+            const dirsToSync = [
+                "replicator_data",
+                "replicator_wrist",
+                "replicator_external",
             ];
 
             let syncedCount = 0;
@@ -296,6 +308,20 @@ export class SshRunner implements Runner {
                     syncedCount++;
                 } catch (err) {
                     console.log(`[SshRunner] Could not sync ${file} (might not exist yet)`);
+                }
+            }
+            for (const dir of dirsToSync) {
+                try {
+                    const remoteDir = `${episodeOutDir}\\${dir}`;
+                    const localDir = `${localOutDir}/${dir}`;
+                    const { stdout } = await ssh.execCommand(`if exist "${remoteDir}" (echo EXISTS) else (echo MISSING)`);
+                    if (stdout.trim() === "EXISTS") {
+                        require('fs').mkdirSync(localDir, { recursive: true });
+                        await ssh.getDirectory(localDir, remoteDir);
+                        syncedCount++;
+                    }
+                } catch (err) {
+                    console.log(`[SshRunner] Could not sync dir ${dir} (might not exist yet)`);
                 }
             }
 

@@ -23,6 +23,7 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, required=True, help="Episode output directory.")
     parser.add_argument("--duration", type=int, default=120, help="Episode duration in seconds.")
     parser.add_argument("--headless", action="store_true", help="Run with no UI window.")
+    parser.add_argument("--gui", action="store_true", help="Run with visible 3D viewport window (non-headless).")
     parser.add_argument("--vr", action="store_true", help="Enable OpenXR/VR profile when available.")
     parser.add_argument("--webrtc", action="store_true", help="Enable WebRTC streaming on port 8211.")
     parser.add_argument("--moveit", action="store_true", help="Enable MoveIt integration mode (metadata + hooks).")
@@ -317,7 +318,7 @@ from isaacsim import SimulationApp
 simulation_app = SimulationApp({
     # WebRTC on Windows is more reliable with an active display/session.
     # Keep headless for non-streaming runs, but default to windowed when --webrtc.
-    "headless": args.headless or (not args.vr and not args.webrtc),
+    "headless": args.headless or (not args.vr and not args.webrtc and not args.gui),
     "livestream": 2 if args.webrtc else 0,
     "width": args.capture_width,
     "height": args.capture_height,
@@ -408,7 +409,28 @@ try:
     # Prepare stage and world — use 120 Hz physics for stable articulated contacts.
     world = World(physics_dt=1.0 / 120.0, rendering_dt=1.0 / 60.0)
     env_usd = resolve_usd_path(args.env)
-    stage_utils.add_reference_to_stage(usd_path=env_usd, prim_path="/World/Environment")
+    _env_basename = os.path.basename(env_usd or "")
+    _use_kitchen_fixed_builder = "kitchen_fixed" in _env_basename
+    _use_office_fixed_builder = "office_fixed" in _env_basename
+    if _use_kitchen_fixed_builder or _use_office_fixed_builder:
+        try:
+            _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            import sys as _sys_tmp
+            if _repo_root not in _sys_tmp.path:
+                _sys_tmp.path.insert(0, _repo_root)
+            if _use_kitchen_fixed_builder:
+                from scenes.kitchen_fixed.kitchen_fixed_builder import build_kitchen_scene
+                build_kitchen_scene(stage_utils.get_current_stage())
+                print(f"[RoboLab] Built kitchen_fixed scene procedurally (same as experiments)")
+            else:
+                from scenes.office_fixed.office_fixed_builder import build_office_scene
+                build_office_scene(stage_utils.get_current_stage())
+                print(f"[RoboLab] Built office_fixed scene procedurally")
+        except Exception as _kfe:
+            print(f"[RoboLab] WARN: procedural builder failed ({_kfe}), falling back to USD reference")
+            stage_utils.add_reference_to_stage(usd_path=env_usd, prim_path="/World/Environment")
+    else:
+        stage_utils.add_reference_to_stage(usd_path=env_usd, prim_path="/World/Environment")
     # Ensure scene is lit for camera capture; many lightweight USDs have no lights.
     _cur_stage = stage_utils.get_current_stage()
     dome_path = "/World/RoboLabDomeLight"
@@ -842,6 +864,8 @@ try:
             f"Check --tiago-usd path and asset contents (current: {tiago_usd})."
         )
 
+    _robot_start_x = getattr(args, "robot_start_x", 0.8)
+
     # Replicator streams for rgb/depth/pointcloud/semantics.
     replicator_dir = os.path.join(args.output_dir, "replicator_data")
     camera_parent_prim = args.robot_pov_camera_prim or tiago_prim_path
@@ -1044,10 +1068,10 @@ try:
     try:
         tiago_xform = XFormPrim(prim_path=tiago_prim_path, name="tiago_root_pose")
         tiago_xform.set_world_pose(
-            position=np.array([_robot_start_x, 0.0, 0.08], dtype=np.float32),
+            position=np.array([_robot_start_x, 0.0, 0.0], dtype=np.float32),
             orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
         )
-        print(f"[RoboLab] Applied startup pose: pos=({_robot_start_x}, 0.0, 0.08) facing +X toward table")
+        print(f"[RoboLab] Applied startup pose: pos=({_robot_start_x}, 0.0, 0.0) facing +X toward table")
     except Exception as err:
         print(f"[RoboLab] WARN: failed to apply startup pose stabilization: {err}")
 
@@ -1064,7 +1088,7 @@ try:
     # Anchor the articulation physics body at the desired start position.
     # Retry set_world_pose until PhysX actually places the robot there.
     if tiago_articulation and _use_fixed_base:
-        _INIT_POS = np.array([_robot_start_x, 0.0, 0.08], dtype=np.float32)
+        _INIT_POS = np.array([_robot_start_x, 0.0, 0.0], dtype=np.float32)
         _INIT_ORI = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
         _anchor_ok = False
         for _anchor_attempt in range(5):
@@ -1078,7 +1102,7 @@ try:
                 if _art_pos is not None:
                     _anchor_drift = (abs(float(_art_pos[0]) - _robot_start_x) +
                                      abs(float(_art_pos[1])) +
-                                     abs(float(_art_pos[2]) - 0.08))
+                                     abs(float(_art_pos[2]) - 0.0))
                     print(f"[RoboLab] Anchor attempt {_anchor_attempt}: "
                           f"pos=({_art_pos[0]:.4f},{_art_pos[1]:.4f},{_art_pos[2]:.4f}) "
                           f"drift={_anchor_drift:.4f}", flush=True)
@@ -1088,7 +1112,7 @@ try:
             except Exception as err:
                 print(f"[RoboLab] WARN: anchor attempt {_anchor_attempt} failed: {err}", flush=True)
         if not _anchor_ok:
-            print(f"[RoboLab] WARN: could not anchor robot at ({_robot_start_x}, 0, 0.08) after 5 attempts", flush=True)
+            print(f"[RoboLab] WARN: could not anchor robot at ({_robot_start_x}, 0, 0.0) after 5 attempts", flush=True)
 
     # Log robot frame pose for diagnostics.
     # fixedBase=True should hold the articulation root in place.
@@ -2252,6 +2276,25 @@ try:
             print(f"[RoboLab] WARN: Could not add ROS2 joint_states publisher: {err}")
             print("[RoboLab] For MoveIt, enable joint_states in Isaac Sim: Tools > Robotics > ROS 2 OmniGraphs > JointStates.")
 
+    _spawned_classes = sorted({str(cls).lower() for _, cls in _spawned_objects})
+
+    def _class_to_category(name: str) -> str:
+        _n = name.lower()
+        if any(tok in _n for tok in ("mug", "cup", "glass")):
+            return "mug_or_cup"
+        if any(tok in _n for tok in ("bottle", "can", "jar", "carton")):
+            return "bottle_or_container"
+        if any(tok in _n for tok in ("apple", "banana", "orange", "fruit")):
+            return "fruit"
+        if any(tok in _n for tok in ("box", "container", "bowl", "plate", "dish")):
+            return "container_or_dish"
+        return "other"
+
+    _category_counts = {}
+    for _c in _spawned_classes:
+        _cat = _class_to_category(_c)
+        _category_counts[_cat] = _category_counts.get(_cat, 0) + 1
+
     dataset = {
         "metadata": {
             "robot": "tiago_omni_or_tiago_plus_plus",
@@ -2279,6 +2322,9 @@ try:
             },
             "n_cameras": _n_cameras,
             "task_label": args.task_label if args.task_label else "unlabeled",
+            "spawned_object_count": len(_spawned_objects),
+            "spawned_object_classes": _spawned_classes,
+            "spawned_object_category_counts": _category_counts,
         },
         "frames": [],
         # Per-frame joint states (positions + velocities) — continuous 20 Hz log.
@@ -2937,7 +2983,7 @@ try:
 
     _fk_tip_local_offset = np.zeros(3, dtype=np.float64)
 
-    _fk_robot_root_pos = np.array([_robot_start_x, 0.0, 0.08], dtype=np.float64)
+    _fk_robot_root_pos = np.array([_robot_start_x, 0.0, 0.0], dtype=np.float64)
     _fk_robot_root_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)  # w,x,y,z
 
     def _quat_to_rotmat(q):
@@ -3424,6 +3470,12 @@ try:
         except Exception as _zv_err:
             print(f"[RoboLab] WARN: pre-loop velocity zero failed: {_zv_err}")
 
+    if args.gui:
+        import omni.timeline
+        timeline = omni.timeline.get_timeline_interface()
+        timeline.play()
+        print("[RoboLab] GUI mode: timeline.play() called to start physics")
+
     print("[RoboLab] Starting simulation loop...")
     _grasp_events.clear()
     _prev_gripper_gap = None
@@ -3496,7 +3548,7 @@ try:
                 _base_xf = XFormPrim(prim_path=tiago_prim_path)
                 _base_pos, _base_rot = _base_xf.get_world_pose()
                 if _base_pos is not None:
-                    _drift = abs(float(_base_pos[0]) - _robot_start_x) + abs(float(_base_pos[1])) + abs(float(_base_pos[2]) - 0.08)
+                    _drift = abs(float(_base_pos[0]) - _robot_start_x) + abs(float(_base_pos[1])) + abs(float(_base_pos[2]) - 0.0)
                     if _drift > 0.05:
                         print(f"[RoboLab] WARN: base drift={_drift:.3f}m pos=({float(_base_pos[0]):.3f},{float(_base_pos[1]):.3f},{float(_base_pos[2]):.3f})", flush=True)
                 if _base_rot is not None:
@@ -3639,32 +3691,48 @@ try:
             except Exception as _ipc_err:
                 pass  # non-fatal IPC errors
 
-            # 3. Mobile base: read base_cmd.json and apply velocity to root body.
+            # 3. Mobile base: read base_cmd.json, apply velocity only if fresh (< 500ms).
+            #    Also write robot base pose to base_pose.json for diagnostics.
             if getattr(args, "mobile_base", False) and tiago_articulation:
                 try:
+                    from omni.isaac.core.prims import XFormPrim as _XFP
+                    import math
+                    import time as _time_mod
+                    _root = _XFP(prim_path=tiago_prim_path)
+                    _pos, _orient = _root.get_world_pose()
+                    _qw, _qx, _qy, _qz = float(_orient[0]), float(_orient[1]), float(_orient[2]), float(_orient[3])
+                    _yaw = math.atan2(2.0 * (_qw * _qz + _qx * _qy), 1.0 - 2.0 * (_qy * _qy + _qz * _qz))
+
+                    if _sim_frame_idx % 30 == 0:
+                        _pose_file = FJT_PROXY_DIR / "base_pose.json"
+                        _pose_file.write_text(json.dumps({
+                            "x": round(float(_pos[0]), 4),
+                            "y": round(float(_pos[1]), 4),
+                            "z": round(float(_pos[2]), 4),
+                            "yaw_rad": round(_yaw, 4),
+                            "yaw_deg": round(math.degrees(_yaw), 1),
+                            "t": round(_time_mod.time(), 3),
+                        }), encoding="utf-8")
+
                     _base_cmd_file = FJT_PROXY_DIR / "base_cmd.json"
                     if _base_cmd_file.exists():
-                        _bcmd = json.loads(_base_cmd_file.read_text(encoding="utf-8"))
-                        _vx = float(_bcmd.get("vx", 0.0))
-                        _vy = float(_bcmd.get("vy", 0.0))
-                        _vyaw = float(_bcmd.get("vyaw", 0.0))
-                        if abs(_vx) > 0.001 or abs(_vy) > 0.001 or abs(_vyaw) > 0.001:
-                            from omni.isaac.core.prims import XFormPrim as _XFP
-                            _root = _XFP(prim_path=tiago_prim_path)
-                            _pos, _orient = _root.get_world_pose()
-                            import math
-                            _qw, _qx, _qy, _qz = float(_orient[0]), float(_orient[1]), float(_orient[2]), float(_orient[3])
-                            _yaw = math.atan2(2.0 * (_qw * _qz + _qx * _qy), 1.0 - 2.0 * (_qy * _qy + _qz * _qz))
-                            _dt = 1.0 / 60.0
-                            _dx = (_vx * math.cos(_yaw) - _vy * math.sin(_yaw)) * _dt
-                            _dy = (_vx * math.sin(_yaw) + _vy * math.cos(_yaw)) * _dt
-                            _dyaw = _vyaw * _dt
-                            _new_pos = np.array([float(_pos[0]) + _dx, float(_pos[1]) + _dy, float(_pos[2])], dtype=np.float32)
-                            _half = _dyaw / 2.0
-                            _new_qw = _qw * math.cos(_half) - _qz * math.sin(_half)
-                            _new_qz = _qw * math.sin(_half) + _qz * math.cos(_half)
-                            _root.set_world_pose(position=_new_pos,
-                                                 orientation=np.array([_new_qw, _qx, _qy, _new_qz], dtype=np.float32))
+                        _file_age = _time_mod.time() - _base_cmd_file.stat().st_mtime
+                        if _file_age <= 0.5:
+                            _bcmd = json.loads(_base_cmd_file.read_text(encoding="utf-8"))
+                            _vx = float(_bcmd.get("vx", 0.0))
+                            _vy = float(_bcmd.get("vy", 0.0))
+                            _vyaw = float(_bcmd.get("vyaw", 0.0))
+                            if abs(_vx) > 0.001 or abs(_vy) > 0.001 or abs(_vyaw) > 0.001:
+                                _dt = 1.0 / 60.0
+                                _dx = (_vx * math.cos(_yaw) - _vy * math.sin(_yaw)) * _dt
+                                _dy = (_vx * math.sin(_yaw) + _vy * math.cos(_yaw)) * _dt
+                                _dyaw = _vyaw * _dt
+                                _new_pos = np.array([float(_pos[0]) + _dx, float(_pos[1]) + _dy, float(_pos[2])], dtype=np.float32)
+                                _half = _dyaw / 2.0
+                                _new_qw = _qw * math.cos(_half) - _qz * math.sin(_half)
+                                _new_qz = _qw * math.sin(_half) + _qz * math.cos(_half)
+                                _root.set_world_pose(position=_new_pos,
+                                                     orientation=np.array([_new_qw, _qx, _qy, _new_qz], dtype=np.float32))
                 except Exception:
                     pass
 
@@ -3930,7 +3998,7 @@ try:
                             _rw_q = float(_ro[0])
                             _rx_q, _ry_q, _rz_q = float(_ro[1]), float(_ro[2]), float(_ro[3])
                         except Exception:
-                            _rx, _ry, _rz = _robot_start_x, 0.0, 0.08
+                            _rx, _ry, _rz = _robot_start_x, 0.0, 0.0
                             _rw_q, _rx_q, _ry_q, _rz_q = 1.0, 0.0, 0.0, 0.0
                         _lx, _ly, _lz = float(_ik_target_local[0]), float(_ik_target_local[1]), float(_ik_target_local[2])
                         _q = np.array([_rw_q, _rx_q, _ry_q, _rz_q], dtype=np.float64)

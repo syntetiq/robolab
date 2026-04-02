@@ -68,6 +68,7 @@ model LaunchProfile {
   scriptName             String    @default("data_collector_tiago.py")
   environmentUsd         String    @default("C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd")
   enableWebRTC           Boolean   @default(false)
+  enableGuiMode          Boolean   @default(false)
   enableVrTeleop         Boolean   @default(false)
   enableMoveIt           Boolean   @default(false)
   robotPovCameraPrim     String    @default("/World/Tiago")

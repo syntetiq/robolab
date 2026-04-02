@@ -3,7 +3,7 @@
 # These do not change between experiments.
 
 model_file: tiago_dual_functional.usd
-spawn_z: 0.08
+spawn_z: 0.0   # base_footprint on floor (z=0)
 
 # --- Wheel kinematics (mecanum omni-base) ---
 wheel:
