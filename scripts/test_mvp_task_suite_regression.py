@@ -2,12 +2,10 @@
 Regression checks for MVP task suite coverage.
 
 Validates that required fixed task configs exist and include required task types
-for the 5 main scenarios:
+for the 3 main scenarios:
   1) pick/place to sink
   2) pick/place to fridge
-  3) pick/place to dishwasher
-  4) open/close fridge
-  5) open/close dishwasher
+  3) open/close fridge
 """
 
 from __future__ import annotations
@@ -24,9 +22,7 @@ TASK_DIR = REPO_ROOT / "config" / "tasks"
 REQUIRED_CONFIGS = {
     "fixed_banana_to_sink.json": {"pick_object", "place_object"},
     "fixed_mug_to_fridge.json": {"pick_object", "place_object"},
-    "fixed_mug_to_dishwasher.json": {"pick_object", "place_object"},
     "fixed_fridge_open_close.json": {"open_door", "close_door"},
-    "fixed_dishwasher_open_close.json": {"open_door", "close_door"},
 }
 
 

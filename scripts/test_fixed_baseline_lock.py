@@ -27,9 +27,7 @@ def main() -> int:
     required_fixed_configs = [
         "fixed_banana_to_sink.json",
         "fixed_mug_to_fridge.json",
-        "fixed_mug_to_dishwasher.json",
         "fixed_fridge_open_close.json",
-        "fixed_dishwasher_open_close.json",
     ]
     for name in required_fixed_configs:
         cfg = REPO_ROOT / "config/tasks" / name

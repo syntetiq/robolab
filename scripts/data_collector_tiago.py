@@ -494,7 +494,7 @@ try:
     # recursively. Every prim with RigidBodyAPI gets kinematic=True; prims
     # matching furniture keywords get the API applied if missing.
     _ANCHOR_KEYWORDS = (
-        "fridge", "refrigerator", "dishwasher", "sink", "counter",
+        "fridge", "refrigerator", "sink", "counter",
         "table", "shelf", "cabinet", "oven", "microwave", "wall",
         "floor", "ceiling", "door", "drawer", "handle", "panel",
         "hood", "rack", "basket", "tray",
@@ -523,7 +523,7 @@ try:
     # --single-object: hide all small scene-native objects (cups, fruits, etc.)
     # so only furniture remains and our single spawned object is on the table.
     _FURNITURE_KEYWORDS = (
-        "fridge", "refrigerator", "dishwasher", "sink", "counter",
+        "fridge", "refrigerator", "sink", "counter",
         "table", "shelf", "cabinet", "oven", "microwave", "wall",
         "floor", "ceiling", "door", "drawer", "handle", "panel",
         "hood", "rack", "basket", "tray", "light", "lamp", "window",
@@ -1003,10 +1003,10 @@ try:
             tracked_prims.append((_p, semantic["class"]))
             _tracked_paths.add(_p)
     # Recursively scan /World/Environment for furniture prims (fridge,
-    # dishwasher, sink, etc.) that may lack USD semantic labels.
+    # sink, etc.) that may lack USD semantic labels.
     # USD scenes often nest geometry several levels deep (e.g.
     # /World/Environment/Environment/Fridge).
-    _FURNITURE_KW = ("fridge", "refrigerator", "dishwasher", "sink", "counter",
+    _FURNITURE_KW = ("fridge", "refrigerator", "sink", "counter",
                      "table", "shelf", "cabinet", "oven", "microwave", "door")
     _env_prim = stage.GetPrimAtPath("/World/Environment")
     if _env_prim and _env_prim.IsValid():

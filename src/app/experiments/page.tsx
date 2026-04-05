@@ -16,8 +16,10 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Play, FolderOpen, Clock, Bot, ListChecks, RefreshCw, Video, Loader2, Trash2, Eye } from "lucide-react";
+import { Play, FolderOpen, Clock, Bot, ListChecks, RefreshCw, Video, Loader2, Trash2, Eye, Plus } from "lucide-react";
 import { format } from "date-fns";
+import TaskEditorDialog from "./TaskEditorDialog";
+import { HelpTooltip } from "@/components/HelpTooltip";
 
 interface Experiment {
     file: string;
@@ -47,6 +49,7 @@ export default function ExperimentsPage() {
     const [confirmLaunch, setConfirmLaunch] = useState<Experiment | null>(null);
     const [confirmDeleteConfig, setConfirmDeleteConfig] = useState<Experiment | null>(null);
     const [confirmDeleteRun, setConfirmDeleteRun] = useState<Run | null>(null);
+    const [showTaskEditor, setShowTaskEditor] = useState(false);
     const [deleting, setDeleting] = useState(false);
     const [lastResult, setLastResult] = useState<{ ok: boolean; message: string } | null>(null);
 
@@ -157,10 +160,15 @@ export default function ExperimentsPage() {
                         Task-config experiments from <code className="text-xs bg-muted px-1 py-0.5 rounded">config/tasks/</code>
                     </p>
                 </div>
-                <Button variant="outline" size="sm" onClick={fetchData} disabled={loading}>
-                    <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
-                    Refresh
-                </Button>
+                <div className="flex gap-2">
+                    <Button variant="outline" size="sm" onClick={fetchData} disabled={loading}>
+                        <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} />
+                        Refresh
+                    </Button>
+                    <Button size="sm" onClick={() => setShowTaskEditor(true)}>
+                        <Plus className="w-4 h-4 mr-1" /> New Task Config
+                    </Button>
+                </div>
             </div>
 
             {lastResult && (
@@ -176,7 +184,7 @@ export default function ExperimentsPage() {
             ) : (
                 <>
                     <section>
-                        <h2 className="text-xl font-semibold mb-4">Available Configs ({experiments.length})</h2>
+                        <h2 className="text-xl font-semibold mb-4">Available Configs ({experiments.length}) <HelpTooltip content="Task configs auto-discovered from config/tasks/ directory. Each defines a repeatable experiment workflow." /></h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                             {experiments.map((exp) => {
                                 const pastRuns = runsForExperiment(exp.name);
@@ -195,7 +203,7 @@ export default function ExperimentsPage() {
                                                     <Clock className="w-3.5 h-3.5" /> {formatDuration(exp.durationSec)}
                                                 </span>
                                                 <span className="flex items-center gap-1">
-                                                    <Bot className="w-3.5 h-3.5" /> {exp.robotModel}
+                                                    <Bot className="w-3.5 h-3.5" /> {exp.robotModel} <HelpTooltip content="Kinematics model (e.g. 'heavy' = full TIAGo with arm). Determines available actions." />
                                                 </span>
                                                 {exp.taskCount > 0 && (
                                                     <span className="flex items-center gap-1">
@@ -236,7 +244,7 @@ export default function ExperimentsPage() {
                     </section>
 
                     <section>
-                        <h2 className="text-xl font-semibold mb-4">Past Runs ({runs.length})</h2>
+                        <h2 className="text-xl font-semibold mb-4">Past Runs ({runs.length}) <HelpTooltip content="Historical execution results with output directories, timestamps, and recorded content." /></h2>
                         {runs.length === 0 ? (
                             <p className="text-muted-foreground text-sm">No past runs found in the output directory.</p>
                         ) : (
@@ -366,6 +374,12 @@ export default function ExperimentsPage() {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            <TaskEditorDialog
+                open={showTaskEditor}
+                onOpenChange={setShowTaskEditor}
+                onSaved={fetchData}
+            />
         </div>
     );
 }

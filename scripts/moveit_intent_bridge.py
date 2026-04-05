@@ -136,18 +136,6 @@ TIAGO_PICK_FRIDGE_JOINTS = {
     "arm_7_joint": -0.20,
 }
 
-# Pick from dishwasher – lower torso, arm reaching forward-low.
-TIAGO_PICK_DISHWASHER_JOINTS = {
-    "torso_lift_joint": 0.10,
-    "arm_1_joint": 1.30,
-    "arm_2_joint": 0.10,
-    "arm_3_joint": -0.75,
-    "arm_4_joint": 2.00,
-    "arm_5_joint": -0.80,
-    "arm_6_joint": 0.50,
-    "arm_7_joint": 0.0,
-}
-
 # Place pose – arm extended to the side at table height.
 TIAGO_PLACE_JOINTS = {
     "torso_lift_joint": 0.25,
@@ -170,18 +158,6 @@ TIAGO_OPEN_CLOSE_FRIDGE_JOINTS = {
     "arm_5_joint": -0.70,
     "arm_6_joint": 0.40,
     "arm_7_joint": 0.50,
-}
-
-# Open/close dishwasher – arm down and forward for low handle.
-TIAGO_OPEN_CLOSE_DISHWASHER_JOINTS = {
-    "torso_lift_joint": 0.10,
-    "arm_1_joint": 1.20,
-    "arm_2_joint": 0.20,
-    "arm_3_joint": -0.75,
-    "arm_4_joint": 2.00,
-    "arm_5_joint": -0.90,
-    "arm_6_joint": 0.30,
-    "arm_7_joint": 0.60,
 }
 
 # Arm fully extended straight forward – shoulder forward, elbow straight.
@@ -436,41 +412,6 @@ TIAGO_FRIDGE_PULL_JOINTS = {
     "arm_6_joint": 0.40,
     "arm_7_joint": 0.50,
 }
-
-# Dishwasher door interaction poses (lower than fridge).
-TIAGO_DW_APPROACH_JOINTS = {
-    "torso_lift_joint": 0.10,
-    "arm_1_joint": 1.10,
-    "arm_2_joint": 0.10,
-    "arm_3_joint": -0.75,
-    "arm_4_joint": 1.80,
-    "arm_5_joint": -0.80,
-    "arm_6_joint": 0.30,
-    "arm_7_joint": 0.0,
-}
-
-TIAGO_DW_HANDLE_JOINTS = {
-    "torso_lift_joint": 0.10,
-    "arm_1_joint": 1.40,
-    "arm_2_joint": 0.30,
-    "arm_3_joint": -0.75,
-    "arm_4_joint": 2.10,
-    "arm_5_joint": -0.70,
-    "arm_6_joint": 0.20,
-    "arm_7_joint": 0.60,
-}
-
-TIAGO_DW_PULL_JOINTS = {
-    "torso_lift_joint": 0.10,
-    "arm_1_joint": 0.70,
-    "arm_2_joint": -0.20,
-    "arm_3_joint": -0.75,
-    "arm_4_joint": 1.40,
-    "arm_5_joint": -0.90,
-    "arm_6_joint": 0.50,
-    "arm_7_joint": 0.60,
-}
-
 
 def build_joint_goal_constraint(joint_values: dict, tolerance: float = 0.001) -> Constraints:
     """Build Constraints with JointConstraints for a joint-space goal."""
@@ -1593,35 +1534,6 @@ class MoveItIntentBridge(Node):
                 ("gripper", GRIPPER_OPEN),
                 ("move", TIAGO_READY_JOINTS),
             ]
-        elif intent == "plan_pick_dishwasher":
-            obj_info = query_object_pose_info(timeout=2.0)
-            if obj_info and obj_info.get("local_position") is not None:
-                obj_pos = obj_info["local_position"]
-                obj_class = obj_info.get("class", "unknown")
-                self._expected_grasp_object = obj_class
-                self._expected_grasp_object_path = obj_info.get("path")
-                self._expected_grasp_world = obj_info.get("world_position")
-                self.get_logger().info(f"Pick target: '{obj_class}' at {[round(v,3) for v in obj_pos]}")
-                ik_seq = self._get_ik_grasp_sequence(
-                    obj_pos, TIAGO_PICK_DISHWASHER_JOINTS,
-                    TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
-                if ik_seq:
-                    return ik_seq
-                pre = adapt_grasp_pose(TIAGO_PRE_GRASP_JOINTS, obj_pos)
-                grasp = adapt_grasp_pose(TIAGO_GRASP_JOINTS, obj_pos)
-            else:
-                pre, grasp = TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS
-            lift = make_lift_from_grasp(grasp)
-            return [
-                ("gripper", GRIPPER_OPEN),
-                ("move", pre),
-                ("move", grasp),
-                ("gripper", GRIPPER_CLOSED),
-                ("move", lift),
-                ("move", TIAGO_PICK_DISHWASHER_JOINTS),
-                ("gripper", GRIPPER_OPEN),
-                ("move", TIAGO_READY_JOINTS),
-            ]
         elif intent == "plan_place":
             return [
                 ("move", TIAGO_PLACE_JOINTS),
@@ -1764,19 +1676,6 @@ class MoveItIntentBridge(Node):
                 ("gripper", GRIPPER_OPEN),
                 ("move", TIAGO_READY_JOINTS),
             ]
-        elif intent == "open_close_dishwasher":
-            return [
-                ("move", TIAGO_DW_APPROACH_JOINTS),
-                ("move", TIAGO_DW_HANDLE_JOINTS),
-                ("gripper", GRIPPER_CLOSED),
-                ("move", TIAGO_DW_PULL_JOINTS),
-                ("gripper", GRIPPER_OPEN),
-                ("move", TIAGO_DW_HANDLE_JOINTS),
-                ("gripper", GRIPPER_CLOSED),
-                ("move", TIAGO_DW_APPROACH_JOINTS),
-                ("gripper", GRIPPER_OPEN),
-                ("move", TIAGO_READY_JOINTS),
-            ]
 
         # Left arm intents
         elif intent == "left_go_home":
@@ -1900,13 +1799,11 @@ class MoveItIntentBridge(Node):
             "plan_pick": PANDA_EXTENDED_JOINTS,
             "plan_pick_sink": PANDA_EXTENDED_JOINTS,
             "plan_pick_fridge": PANDA_EXTENDED_JOINTS,
-            "plan_pick_dishwasher": PANDA_EXTENDED_JOINTS,
             "plan_pick_table": PANDA_EXTENDED_JOINTS,
             "stack_objects": PANDA_EXTENDED_JOINTS,
             "pour": PANDA_EXTENDED_JOINTS,
             "plan_place": PANDA_PLACE_JOINTS,
             "open_close_fridge": PANDA_EXTENDED_JOINTS,
-            "open_close_dishwasher": PANDA_EXTENDED_JOINTS,
         }
         return intent_map.get(intent)
 

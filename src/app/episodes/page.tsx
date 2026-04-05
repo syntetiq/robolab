@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
 import { format } from "date-fns";
 import { Input } from "@/components/ui/input";
+import { HelpTooltip } from "@/components/HelpTooltip";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -68,10 +69,10 @@ export default function EpisodesPage() {
     const getStatusBadge = (status: string) => {
         switch (status) {
             case "created": return <Badge variant="secondary"><Clock className="w-3 h-3 mr-1" />Created</Badge>;
-            case "running": return <Badge className="bg-blue-600"><Play className="w-3 h-3 mr-1" />Running</Badge>;
-            case "stopping": return <Badge className="bg-orange-500"><Square className="w-3 h-3 mr-1" />Stopping</Badge>;
+            case "running": return <Badge variant="outline" className="border-blue-600 text-blue-700 bg-blue-50"><Play className="w-3 h-3 mr-1" />Running</Badge>;
+            case "stopping": return <Badge variant="outline" className="border-orange-500 text-orange-700 bg-orange-50"><Square className="w-3 h-3 mr-1" />Stopping</Badge>;
             case "stopped": return <Badge variant="outline"><Square className="w-3 h-3 mr-1" />Stopped</Badge>;
-            case "completed": return <Badge className="bg-green-600"><CheckCircle2 className="w-3 h-3 mr-1" />Completed</Badge>;
+            case "completed": return <Badge variant="outline" className="border-green-600 text-green-700 bg-green-50"><CheckCircle2 className="w-3 h-3 mr-1" />Completed</Badge>;
             case "failed": return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" />Failed</Badge>;
             default: return <Badge variant="outline">{status}</Badge>;
         }
@@ -107,9 +108,9 @@ export default function EpisodesPage() {
                 <Table>
                     <TableHeader>
                         <TableRow>
-                            <TableHead>Status</TableHead>
-                            <TableHead>Scene</TableHead>
-                            <TableHead>Duration</TableHead>
+                            <TableHead><span className="flex items-center">Status <HelpTooltip content="Created = ready to launch, Running = active, Completed = finished successfully, Failed = error occurred." /></span></TableHead>
+                            <TableHead><span className="flex items-center">Scene <HelpTooltip content="The 3D environment (USD scene) used for this episode." /></span></TableHead>
+                            <TableHead><span className="flex items-center">Duration <HelpTooltip content="Total episode run time in seconds." /></span></TableHead>
                             <TableHead>Created</TableHead>
                             <TableHead className="text-right">Actions</TableHead>
                         </TableRow>

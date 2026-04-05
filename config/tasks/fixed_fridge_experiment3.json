@@ -6,7 +6,6 @@
 
   "scene": {
     "fridge":      true,
-    "dishwasher":  true,
     "sink":        true,
     "plate_fruit": true
   },

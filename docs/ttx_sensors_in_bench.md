@@ -1,45 +1,45 @@
-# Сенсоры по ТТХ в сцене бенча (test_robot_bench)
+# Sensors per Technical Specifications in the Bench Scene (test_robot_bench)
 
-## Какие сенсоры предусмотрены по ТТХ TIAGo (PAL)
+## Which Sensors Are Specified per TIAGo (PAL) Technical Specs
 
-По спецификации и по реализации в `data_collector_tiago.py` у TIAGo в симуляции доступны:
+Per the specification and the implementation in `data_collector_tiago.py`, the following sensors are available for TIAGo in simulation:
 
-| Сенсор | Описание | Данные |
-|--------|----------|--------|
-| **Head camera** | Камера на голове (`head_2_link`) | RGB, depth (distance_to_camera), pointcloud, semantic |
-| **Wrist camera** | Камера на звене руки (`arm_tool_link`) | RGB, depth, pointcloud |
-| **External camera** | Фиксированная камера в мире | RGB, depth (опционально) |
-| **Contact sensors** | На пальцах гриппера (left/right finger link) | Контакты/силы при захвате |
+| Sensor | Description | Data |
+|--------|-------------|------|
+| **Head camera** | Camera on the head (`head_2_link`) | RGB, depth (distance_to_camera), pointcloud, semantic |
+| **Wrist camera** | Camera on the arm link (`arm_tool_link`) | RGB, depth, pointcloud |
+| **External camera** | Fixed camera in the world | RGB, depth (optional) |
+| **Contact sensors** | On gripper fingers (left/right finger link) | Contacts/forces during grasping |
 
-В **test_robot_bench** по умолчанию используются только **фиксированные камеры сцены** (top_kitchen, isometric_kitchen, front_kitchen) и **нет** камер на роботе, depth и контактных сенсоров.
+In **test_robot_bench**, by default only **fixed scene cameras** (top_kitchen, isometric_kitchen, front_kitchen) are used, and there are **no** robot-mounted cameras, depth, or contact sensors.
 
 ---
 
-## Что сделать, чтобы в сцене робот использовал сенсоры по ТТХ
+## How to Enable Robot Sensors per Technical Specs in the Bench Scene
 
-### 1. Включить сенсоры флагами при запуске
+### 1. Enable sensors via launch flags
 
-В `run_task_config.ps1` добавлены ключи (передаются в `test_robot_bench.py`):
+The following keys have been added to `run_task_config.ps1` (passed to `test_robot_bench.py`):
 
-- `-RobotHeadCamera` — камера на `head_2_link`
-- `-WristCamera` — камера на `arm_tool_link`
-- `-ExternalCamera` — фиксированная внешняя камера
-- `-ReplicatorDepth` — писать depth (distance_to_camera) и pointcloud
-- `-ContactSensors` — включить контактные сенсоры на пальцах гриппера
+- `-RobotHeadCamera` — camera on `head_2_link`
+- `-WristCamera` — camera on `arm_tool_link`
+- `-ExternalCamera` — fixed external camera
+- `-ReplicatorDepth` — write depth (distance_to_camera) and pointcloud
+- `-ContactSensors` — enable contact sensors on gripper fingers
 
-Примеры:
+Examples:
 
 ```powershell
-# Камера на голове робота (вид от первого лица) и depth
+# Robot head camera (first-person view) and depth
 .\scripts\run_task_config.ps1 -Config config/tasks/fixed_fridge_experiment3.json -RobotHeadCamera -ReplicatorDepth
 
-# Полный набор по ТТХ: голова + запястье + внешняя камера + depth + контактные сенсоры
+# Full set per technical specs: head + wrist + external camera + depth + contact sensors
 .\scripts\run_task_config.ps1 -Config config/tasks/fixed_fridge_experiment3.json -RobotHeadCamera -WristCamera -ExternalCamera -ReplicatorDepth -ContactSensors
 ```
 
-### 2. Включить сенсоры через конфиг задачи
+### 2. Enable sensors via task configuration
 
-В JSON конфиге задачи (например `fixed_fridge_experiment3.json`) можно добавить секцию `sensors`:
+In the task JSON configuration file (e.g. `fixed_fridge_experiment3.json`) you can add a `sensors` section:
 
 ```json
 {
@@ -53,20 +53,20 @@
 }
 ```
 
-Если секция есть, бенч выставит соответствующие флаги перед запуском камер и сенсоров.
+If this section is present, the bench will set the corresponding flags before initialising cameras and sensors.
 
-### 3. Где лежат данные
+### 3. Where the data is stored
 
-- **Видео:** в папке эпизода `heavy/`:  
-  `head_robot.mp4`, `wrist_robot.mp4`, `external_robot.mp4` (если включены),  
-  плюс по‑прежнему `top_kitchen.mp4`, `isometric_kitchen.mp4`, `front_kitchen.mp4`.
-- **Depth/pointcloud:** в подпапках Replicator, например  
-  `replicator_head_robot/distance_to_camera_*.npy`, `pointcloud_*.npy` (если включён `replicator_depth`).
-- **Контактные сенсоры:** данные доступны через Isaac Sim ContactSensor API во время симуляции; при необходимости их можно логировать в physics_log или отдельный файл.
+- **Video:** in the episode folder `heavy/`:
+  `head_robot.mp4`, `wrist_robot.mp4`, `external_robot.mp4` (if enabled),
+  plus as before `top_kitchen.mp4`, `isometric_kitchen.mp4`, `front_kitchen.mp4`.
+- **Depth/pointcloud:** in Replicator subdirectories, e.g.
+  `replicator_head_robot/distance_to_camera_*.npy`, `pointcloud_*.npy` (if `replicator_depth` is enabled).
+- **Contact sensors:** data is available via the Isaac Sim ContactSensor API during simulation; if needed, it can be logged to physics_log or a separate file.
 
 ---
 
-## Итог
+## Summary
 
-- Чтобы в сцене бенча робот использовал сенсоры по ТТХ: включите **robot-head-camera** (и при необходимости wrist, external, replicator-depth, contact-sensors) через **флаги** или через секцию **sensors** в конфиге задачи.
-- После этого в сцене будут задействованы камера на голове (и опционально на запястье и внешняя), при включённом depth — данные Replicator по глубине/облаку точек, и при включённых contact-sensors — контактные сенсоры на гриппере, как в data_collector и по ТТХ.
+- To enable robot sensors per technical specs in the bench scene: turn on **robot-head-camera** (and optionally wrist, external, replicator-depth, contact-sensors) via **flags** or via the **sensors** section in the task configuration.
+- After that, the scene will utilise the head camera (and optionally the wrist and external cameras); with depth enabled — Replicator depth/pointcloud data; and with contact-sensors enabled — contact sensors on the gripper, as in data_collector and per the technical specifications.

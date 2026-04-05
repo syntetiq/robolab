@@ -127,9 +127,11 @@ export class SshRunner implements Runner {
                 const webrtcFlag = episode.launchProfile?.enableWebRTC ? '--webrtc --ext-folder "C:\\Users\\max\\Documents\\IsaacSim\\extscache" --enable-extension "omni.kit.livestream.webrtc"' : '--headless';
                 const vrFlag = episode.launchProfile?.enableVrTeleop ? " --vr" : "";
                 const moveitFlag = episode.launchProfile?.enableMoveIt ? " --moveit" : "";
+                const wristCamFlag = episode.launchProfile?.enableWristCamera ? " --wrist-camera" : "";
+                const extCamFlag = episode.launchProfile?.enableExternalCamera ? " --external-camera" : "";
                 const povPrim = episode.launchProfile?.robotPovCameraPrim || "/World/Tiago";
                 const povFlag = ` --robot_pov_camera_prim "${povPrim}"`;
-                launchCmd = `"${pyBat}" "${remoteScriptPath}" --env "${envUsd}" --output_dir "${episodeOutDir}" --duration ${episode.durationSec || 60} ${webrtcFlag}${vrFlag}${moveitFlag}${povFlag}`;
+                launchCmd = `"${pyBat}" "${remoteScriptPath}" --env "${envUsd}" --output_dir "${episodeOutDir}" --duration ${episode.durationSec || 60} ${webrtcFlag}${vrFlag}${moveitFlag}${wristCamFlag}${extCamFlag}${povFlag}`;
             }
 
             // Trigger a powershell Invoke-WmiMethod to run detached, forcing python to render unbuffered output
@@ -151,6 +153,23 @@ export class SshRunner implements Runner {
             if (result.code !== 0 && result.code !== null) {
                 await releaseLock(config.isaacHost, episode.id);
                 return { success: false, error: `Launch failed: ${result.stderr}` };
+            }
+
+            // Start ROS bag recording if template is configured
+            const rosbagTemplate = (episode.launchProfile?.rosbagLaunchTemplate || "").trim();
+            if (rosbagTemplate) {
+                const bagDir = `${episodeOutDir}\\rosbag`;
+                const defaultTopics = "/joint_states /tf /tf_static /servo_node/delta_twist_stamped /tiago/moveit/intent";
+                const resolvedCmd = rosbagTemplate
+                    .replace(/\{BAG_PATH\}/g, bagDir)
+                    .replace(/\{TOPICS\}/g, defaultTopics)
+                    .replace(/\{EPISODE_ID\}/g, episode.id)
+                    .replace(/\{OUTPUT_DIR\}/g, episodeOutDir);
+
+                await ssh.execCommand(`powershell -Command "New-Item -ItemType Directory -Force -Path '${bagDir}' -ErrorAction SilentlyContinue"`);
+                const rosbagPsCmd = `powershell -Command "$proc = Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList '${resolvedCmd.replace(/'/g, "''")}'; $proc.ProcessId | Out-File -FilePath '${episodeOutDir}_rosbag_pid.txt' -Encoding ascii"`;
+                await ssh.execCommand(rosbagPsCmd);
+                console.log(`[SshRunner] Started ROS bag recording: ${resolvedCmd}`);
             }
 
             return { success: true };
@@ -185,6 +204,18 @@ export class SshRunner implements Runner {
             `.trim().replace(/\n/g, ';');
 
             const result = await ssh.execCommand(`powershell -Command "${psCmd}"`);
+
+            // Stop ROS bag recording if running
+            const rosbagKillCmd = `
+                $bagPidFile = '${episodeOutDir}_rosbag_pid.txt'
+                if (Test-Path $bagPidFile) {
+                    $bagPid = Get-Content $bagPidFile | ForEach-Object { [int]$_ }
+                    if ($bagPid -gt 0) {
+                        taskkill /F /PID $bagPid /T
+                    }
+                }
+            `.trim().replace(/\n/g, ';');
+            await ssh.execCommand(`powershell -Command "${rosbagKillCmd}"`);
 
             // Release lock regardless of kill success (it might have already died)
             await releaseLock(config.isaacHost, episode.id);
@@ -299,6 +330,7 @@ export class SshRunner implements Runner {
                 "replicator_data",
                 "replicator_wrist",
                 "replicator_external",
+                "rosbag",
             ];
 
             let syncedCount = 0;

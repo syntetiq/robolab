@@ -40,6 +40,30 @@ export async function GET() {
     }
 }
 
+export async function POST(req: NextRequest) {
+    try {
+        const body = await req.json();
+        if (!body.episode_name || typeof body.episode_name !== "string") {
+            return NextResponse.json({ error: "episode_name is required" }, { status: 400 });
+        }
+        const safeName = body.episode_name
+            .toLowerCase()
+            .replace(/[^a-z0-9_]/g, "_")
+            .replace(/_+/g, "_")
+            .slice(0, 80);
+        const fileName = `${safeName}.json`;
+        if (!fs.existsSync(TASKS_DIR)) {
+            fs.mkdirSync(TASKS_DIR, { recursive: true });
+        }
+        const absPath = path.join(TASKS_DIR, fileName);
+        fs.writeFileSync(absPath, JSON.stringify(body, null, 2), "utf-8");
+        return NextResponse.json({ file: fileName, configPath: `config/tasks/${fileName}` }, { status: 201 });
+    } catch (error) {
+        console.error("POST /api/experiments error:", error);
+        return NextResponse.json({ error: "Failed to save task config" }, { status: 500 });
+    }
+}
+
 export async function DELETE(req: NextRequest) {
     try {
         const { file } = await req.json();

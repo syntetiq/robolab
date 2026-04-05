@@ -1,112 +1,112 @@
 > **LEGACY**: These findings are from early grasp tuning. Per-task overrides now live in `config/tasks/*.json`. See experiment docs for current values.
 
-# Результати налаштування top-grasp (березень 2026)
+# Top-Grasp Tuning Results (March 2026)
 
-Документ фіксує знахідки та виправлення, які привели до стабільного захвату та підйому чашки у симуляції Isaac Sim.
+This document records findings and fixes that led to stable grasping and lifting of the mug in the Isaac Sim simulation.
 
 ---
 
-## 1. Критичний баг: торсо не опускалось у `descend_vertical`
+## 1. Critical bug: torso did not descend in `descend_vertical`
 
-### Симптоми
+### Symptoms
 
-- У всіх прогонах `grasp_lift_delta_m` був ~4–5 мм замість потрібних 20+ мм.
-- У логах `TOP_DESCEND` значення **dZ** (tool_z − mug_z) стабілізувалось на **~0.055 м** і ніколи не досягало `top_descend_clearance` (0.045 м).
-- Перехід `descend_vertical → close_gripper_top` відбувався **лише по таймауту** (1500 кроків), а не по умові dZ.
+- In all runs `grasp_lift_delta_m` was ~4–5 mm instead of the required 20+ mm.
+- In the `TOP_DESCEND` logs the **dZ** value (tool_z − mug_z) stabilised at **~0.055 m** and never reached `top_descend_clearance` (0.045 m).
+- The transition `descend_vertical → close_gripper_top` occurred **only on timeout** (1500 steps), not by the dZ condition.
 
-### Причина
+### Cause
 
-При вході в стан `descend_vertical` виконувалась умова:
+Upon entering the `descend_vertical` state the following condition was evaluated:
 
 ```text
 if (tz - mz) <= target_gap  →  _freeze_torso()
 ```
 
-де `target_gap = top_pregrasp_height + retry_z_bias ≈ 0.06`. Оскільки dZ вже було ~0.054 (< 0.06), торсо **одразу заморожувалось** і взагалі не опускалось. Tool залишався на 5.5 см вище чашки, гриппер закривався «в повітрі», а не навколо чашки.
+where `target_gap = top_pregrasp_height + retry_z_bias ≈ 0.06`. Since dZ was already ~0.054 (< 0.06), the torso was **immediately frozen** and did not descend at all. The tool remained 5.5 cm above the mug; the gripper closed "in the air" rather than around the mug.
 
-### Виправлення
+### Fix
 
-- **Прибрано ранню freeze-логіку** при вході в `descend_vertical`.
-- Тепер у цьому стані **завжди** викликається `_set_torso(0.0, top_descend_speed, sim_time)` — торсо опускається до мінімуму.
-- Перехід у `close_gripper_top` відбувається по умові **dZ ≤ top_descend_clearance** (без додаткової перевірки xy в descend).
+- **Removed the early freeze logic** upon entering `descend_vertical`.
+- Now in this state `_set_torso(0.0, top_descend_speed, sim_time)` is **always** called — the torso descends to its minimum.
+- The transition to `close_gripper_top` occurs on the condition **dZ ≤ top_descend_clearance** (without an additional xy check in descend).
 
-**Висновок:** перевіряти dZ і xy варто лише для переходу в `close_gripper_top`. Не слід заморожувати торсо на вході в `descend_vertical`, якщо мета — опустити tool ближче до чашки.
-
----
-
-## 2. XY-перевірка в descend заважала переходу
-
-### Симптоми
-
-Після виправлення п.1 торсо почало опускатись, dZ зменшувалось (0.054 → 0.032 → 0.005), але перехід у `close_gripper_top` знову відбувався по таймауту.
-
-### Причина
-
-Умова переходу включала **xy_ok** (відстань tool–mug по XY ≤ `top_xy_tol`). Через зміщення рамки гриппера відносно центру чашки це зміщення часто 2–3 см, тобто більше за `top_xy_tol = 0.01–0.02`. Поки xy_ok не виконувався, перехід по dZ не робився, tool опускався нижче чашки (dZ ставало від’ємним).
-
-### Виправлення
-
-- У стані `descend_vertical` перехід у `close_gripper_top` тепер **тільки по dZ**: `dz <= (top_descend_clearance + retry_z_bias)`.
-- Перевірку XY залишено лише в **verify_grasp** (з розслабленим `top_verify_xy_tol = 0.03`), де вона має сенс для підтвердження захвату.
+**Conclusion:** dZ and xy should only be checked for the transition into `close_gripper_top`. The torso should not be frozen upon entering `descend_vertical` if the goal is to lower the tool closer to the mug.
 
 ---
 
-## 3. Гриппер: повне закриття для утримання
+## 2. XY check in descend prevented the transition
 
-- Фінальне значення закриття в `close_gripper_top` має бути **GRIPPER_CLOSED (0.0)**, а не 0.02.
-- При 0.02 захват у симуляції виявлявся занадто слабким — чашка не трималась при підйомі.
-- Детальніше: `docs/grasp_lift_tuning_plan.md`.
+### Symptoms
 
----
+After fix #1 the torso began descending, dZ decreased (0.054 → 0.032 → 0.005), but the transition to `close_gripper_top` still occurred on timeout.
 
-## 4. Поточні параметри (стабільний baseline)
+### Cause
 
-| Параметр | Значення | Примітка |
-|----------|----------|----------|
-| `gripper_length_m` | 0.10 | Ефективна довжина гриппера для цілі |
-| `approach_clearance` | 0.13 | Зупинка бази перед чашкою (м) |
-| `top_descend_clearance` | **0.025** | Закривати гриппер, коли tool на 2.5 см вище чашки |
-| `top_xy_tol` | 0.02 | Допуск XY для approach_overhead (м) |
-| `top_verify_xy_tol` | 0.03 | Допуск XY у verify_grasp (рамка гриппера зміщена від центру чашки) |
-| `top_lift_test_height` | 0.015 | Мінімальний підйом чашки для успіху lift-тесту (м) |
-| `top_lift_test_hold_s` | 0.6 | Час утримання підйому для переходу далі |
+The transition condition included **xy_ok** (tool–mug distance in XY ≤ `top_xy_tol`). Due to the gripper frame offset relative to the mug centre, this offset was often 2–3 cm — greater than `top_xy_tol = 0.01–0.02`. While xy_ok was not satisfied the dZ transition was not triggered, and the tool descended below the mug (dZ became negative).
 
-Джерело правди: `config/grasp_tuning.json`, `scripts/run_bench.ps1`, `scripts/test_robot_bench.py`.
+### Fix
+
+- In the `descend_vertical` state the transition to `close_gripper_top` is now **based on dZ only**: `dz <= (top_descend_clearance + retry_z_bias)`.
+- The XY check is retained only in **verify_grasp** (with a relaxed `top_verify_xy_tol = 0.03`), where it makes sense for grasp confirmation.
 
 ---
 
-## 5. Критерій успіху grasp_success
+## 3. Gripper: full closure for retention
 
-Поточна формула (після виправлень):
+- The final closure value in `close_gripper_top` must be **GRIPPER_CLOSED (0.0)**, not 0.02.
+- At 0.02 the grasp in the simulation turned out to be too weak — the mug did not hold during lifting.
+- Details: `docs/grasp_lift_tuning_plan.md`.
+
+---
+
+## 4. Current parameters (stable baseline)
+
+| Parameter | Value | Note |
+|-----------|-------|------|
+| `gripper_length_m` | 0.10 | Effective gripper length for targeting |
+| `approach_clearance` | 0.13 | Base stop distance before mug (m) |
+| `top_descend_clearance` | **0.025** | Close gripper when tool is 2.5 cm above mug |
+| `top_xy_tol` | 0.02 | XY tolerance for approach_overhead (m) |
+| `top_verify_xy_tol` | 0.03 | XY tolerance in verify_grasp (gripper frame offset from mug centre) |
+| `top_lift_test_height` | 0.015 | Minimum mug lift for lift-test success (m) |
+| `top_lift_test_hold_s` | 0.6 | Hold time for lift before proceeding |
+
+Source of truth: `config/grasp_tuning.json`, `scripts/run_bench.ps1`, `scripts/test_robot_bench.py`.
+
+---
+
+## 5. grasp_success criterion
+
+Current formula (after fixes):
 
 ```text
 grasp_success = (lift_delta >= 0.02  AND  mug_final_z <= mug_z0 + 0.05)
 ```
 
-- **lift_delta** — різниця між максимальною висотою чашки під час підйому та початковою (м).
-- Поріг підйому знижено з 0.03 до **0.02 м** (2 см) як реалістичний для top-grasp.
-- Обмеження на **final_tilt** прибрано для фінального success: чашка може перекинутись при розміщенні (place_mug/release) — це окрема задача; захват і підйом вважаються успішними за lift_delta та mug_final_z.
+- **lift_delta** — the difference between the maximum mug height during lifting and the initial height (m).
+- The lift threshold was lowered from 0.03 to **0.02 m** (2 cm) as a realistic value for top-grasp.
+- The **final_tilt** constraint was removed from the final success check: the mug may tip over during placement (place_mug/release) — that is a separate task; the grasp and lift are considered successful based on lift_delta and mug_final_z.
 
 ---
 
-## 6. Скрипти та прогони
+## 6. Scripts and runs
 
-- **Швидкі тести без відео:** `scripts/run_quick_grasp_test.ps1` — кілька clearance (3, 8, 13 см); при першому success перезапуск **з відео**.
-- **Повний sweep по approach_clearance:** `scripts/run_approach_sweep_then_video.ps1` (без відео, при success — один прогон з відео).
-- Епізоди з відео зберігаються в `C:\RoboLab_Data\episodes\<uuid>\` (camera_0/1/2.mp4, metadata, telemetry, physics_log).
-
----
-
-## 7. Що логувати для подальшої діагностики
-
-- У логах вже є: `TOP_DESCEND` (tool, mug, dZ), переходи станів, `LIFT t=...`, `verify failed` / `mug did not pass lift-test`.
-- Корисно перевіряти: чи перехід `descend_vertical → close_gripper_top` відбувається **до** таймауту 1500 і при dZ у розумних межах (наприклад 0.02–0.04 м), а не при від’ємному dZ.
+- **Quick tests without video:** `scripts/run_quick_grasp_test.ps1` — several clearance values (3, 8, 13 cm); on first success a rerun **with video**.
+- **Full approach_clearance sweep:** `scripts/run_approach_sweep_then_video.ps1` (without video; on success — one run with video).
+- Episodes with video are saved in `C:\RoboLab_Data\episodes\<uuid>\` (camera_0/1/2.mp4, metadata, telemetry, physics_log).
 
 ---
 
-## Підсумок
+## 7. What to log for further diagnostics
 
-1. **Descend:** торсо має опускатись у `descend_vertical`; не заморожувати його на вході по target_gap.
-2. **Перехід у close_gripper_top:** тільки по dZ, без xy в descend; xy перевіряти в verify_grasp.
-3. **Гриппер:** повне закриття (0.0) для надійного утримання при підйомі.
-4. **Параметри та success:** використовувати значення з `grasp_tuning.json` і формулу success вище; зміни фіксувати в цьому документі та в конфигу.
+- The logs already contain: `TOP_DESCEND` (tool, mug, dZ), state transitions, `LIFT t=...`, `verify failed` / `mug did not pass lift-test`.
+- It is useful to check: whether the transition `descend_vertical → close_gripper_top` occurs **before** the 1500-step timeout and with dZ in a reasonable range (e.g. 0.02–0.04 m), rather than with a negative dZ.
+
+---
+
+## Summary
+
+1. **Descend:** the torso must descend in `descend_vertical`; do not freeze it on entry based on target_gap.
+2. **Transition to close_gripper_top:** based on dZ only, without xy in descend; check xy in verify_grasp.
+3. **Gripper:** full closure (0.0) for reliable retention during lifting.
+4. **Parameters and success:** use values from `grasp_tuning.json` and the success formula above; record changes in this document and in the config.

@@ -153,9 +153,9 @@ def check_intent_coverage():
 
     expected_intents = [
         "go_home", "approach_workzone",
-        "plan_pick_sink", "plan_pick_fridge", "plan_pick_dishwasher",
+        "plan_pick_sink", "plan_pick_fridge",
         "plan_pick_table", "stack_objects", "pour",
-        "plan_place", "open_close_fridge", "open_close_dishwasher",
+        "plan_place", "open_close_fridge",
         "left_go_home", "left_plan_pick_sink", "left_plan_place",
         "bimanual_pick_sink",
         "nav_forward", "nav_backward", "nav_rotate_left", "nav_rotate_right",

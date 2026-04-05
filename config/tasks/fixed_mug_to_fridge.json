@@ -5,7 +5,6 @@
   "simulation_duration_s": 320,
   "scene": {
     "fridge": true,
-    "dishwasher": true,
     "sink": true,
     "plate_fruit": true
   },

@@ -1,97 +1,97 @@
-# Анализ эпизода fixed_fridge_experiment3_20260317_110723
+# Episode Analysis: fixed_fridge_experiment3_20260317_110723
 
-## Итог по задачам
+## Task Summary
 
-| Задача | Успех | Время (сим) | Примечание |
-|--------|--------|-------------|------------|
-| T1 drive_to_fridge | ✅ | 4.7 с | Подъезд к холодильнику выполнен |
-| T2 open_fridge | ❌ | 52.4 с | Дверь не открылась (угол остался ~0°) |
-| T3 close_fridge | ✅ | 23.2 с | Дверь закрыта (угол ≤ 20°) |
-| T4 return_to_start | ❌ | 60 с (таймаут) | Робот застрял, до (0,0) не доехал |
+| Task | Success | Time (sim) | Note |
+|------|---------|------------|------|
+| T1 drive_to_fridge | ✅ | 4.7 s | Approach to the fridge completed |
+| T2 open_fridge | ❌ | 52.4 s | Door did not open (angle remained ~0°) |
+| T3 close_fridge | ✅ | 23.2 s | Door closed (angle ≤ 20°) |
+| T4 return_to_start | ❌ | 60 s (timeout) | Robot got stuck, did not reach (0,0) |
 
 ---
 
-## 1. T2 open_fridge — почему дверь не открылась
+## 1. T2 open_fridge — why the door did not open
 
-### Что произошло по логам
+### What happened according to the logs
 
-- **Подъезд:** base дошёл до target (-1.31, 2.21), handle на (-1.65, 2.96), angle=0°.
-- **approach_and_grasp:** база не ползла вперёд (creep=0), только рука. Tool приблизился к handle (от ~(-1.77,2.93) до ~(-1.67,2.89)).
-- **retreat_2cm:** отъехали на 2 см назад: base_y с 2.130 до ~2.083 ✅.
-- **pull_or_push:** база начала двигаться. Угол двери всё время **~0.04°** (фактически 0). Через ~51 с — TIMEOUT, success=False.
+- **Approach:** base reached the target (-1.31, 2.21), handle at (-1.65, 2.96), angle=0°.
+- **approach_and_grasp:** the base did not creep forward (creep=0), only the arm moved. The tool approached the handle (from ~(-1.77,2.93) to ~(-1.67,2.89)).
+- **retreat_2cm:** reversed 2 cm: base_y from 2.130 to ~2.083 ✅.
+- **pull_or_push:** the base started moving. The door angle remained at **~0.04°** (effectively 0) throughout. After ~51 s — TIMEOUT, success=False.
 
-### Траектория базы при «тяни»
+### Base trajectory during the pull
 
 - t=12 s: base=(-1.17, 2.08)
 - t=29 s: base=(-3.45, 1.85)
-- Дальше base застряла около (-3.55, 1.85).
+- Afterwards the base got stuck near (-3.55, 1.85).
 
-То есть робот уехал влево (по X на ~2.4 м) и чуть вниз по Y (на ~0.2 м), а угол двери не изменился.
+In other words, the robot moved to the left (along X by ~2.4 m) and slightly downward along Y (by ~0.2 m), but the door angle did not change.
 
-### Причина: неверное направление тяги
+### Root cause: incorrect pull direction
 
-В коде для **открытия** использовалась «касательная» как направление **радиуса** от петли к ручке:
+In the code for **opening**, the "tangent" was computed as the direction of the **radius** from the hinge to the handle:
 
-- Петля (hinge): (-0.95, 3.05)  
-- Ручка (handle): (-1.65, 2.96)  
-- Радиус: `(rx, ry) = (hx - hgx, hy - hgy) = (-0.7, -0.09)`  
-- В коде: `tang_wx = rx/r_len`, `tang_wy = ry/r_len` → направление **(-0.99, -0.13)** в мире.
+- Hinge: (-0.95, 3.05)
+- Handle: (-1.65, 2.96)
+- Radius: `(rx, ry) = (hx - hgx, hy - hgy) = (-0.7, -0.09)`
+- In the code: `tang_wx = rx/r_len`, `tang_wy = ry/r_len` → direction **(-0.99, -0.13)** in world coordinates.
 
-Это направление **от петли к ручке** (вправо-вниз в мире), а не по дуге двери. Дверь открывается, когда ручка движется **по дуге** вокруг петли — то есть по **настоящей касательной** к окружности (перпендикуляр к радиусу).
+This direction is **from the hinge to the handle** (right-downward in world coordinates), not along the door arc. The door opens when the handle moves **along the arc** around the hinge — that is, along the **true tangent** to the circle (perpendicular to the radius).
 
-Для открытия в сторону комнаты (ручка идёт вниз по Y) нужна касательная к окружности, например:
+To open the door into the room (handle moves downward along Y), the tangent to the circle is needed, for example:
 
-- Касательная (направление движения ручки): `(-ry, rx)` в мире → **(0.09, -0.7)** → в основном **-Y** (на юг).
+- Tangent (handle movement direction): `(-ry, rx)` in world coordinates → **(0.09, -0.7)** → predominantly **-Y** (southward).
 
-Итого: робот ехал в направлении **(-0.99, -0.13)** (почти по -X), а должен был ехать в направлении **касательной к дуге**, в основном **-Y** (на юг), чтобы тянуть ручку и открывать дверь.
+Summary: the robot was moving in the direction **(-0.99, -0.13)** (nearly along -X), whereas it should have been moving in the **tangent-to-arc** direction, predominantly **-Y** (southward), to pull the handle and open the door.
 
-Дополнительно: при такой «не той» тяге могло не быть надёжного контакта гриппер–ручка (или ручка выскальзывала), поэтому дверь и не повернулась.
-
----
-
-## 2. T3 close_fridge — почему засчиталось как успех
-
-- После T2 база стояла около (-3.55, 1.85), угол двери ~0°.
-- T3 начинает с **waypoints** для close: база едет обратно к холодильнику (к точке перед ручкой).
-- По пути: в логах видно, что angle ненадолго становится ~9.3° и ~11.76° — это, скорее всего, артефакт или небольшое движение двери при проезде/контакте.
-- К моменту перехода в **approach_and_grasp** для close: base около (-0.69, 3.13), angle уже ~11.5°.
-- В **pull_or_push** для close: angle=11.97° ≤ 20° → сразу **close SUCCESS**.
-
-То есть дверь изначально была почти закрыта (~0° после T2); критерий «angle ≤ 20°» для close уже выполнялся, поэтому T3 корректно засчитан как успех без реального «закрытия» открытой двери.
+Additionally: with this incorrect pull direction there may not have been a reliable gripper–handle contact (or the handle was slipping out), which is why the door did not rotate.
 
 ---
 
-## 3. T4 return_to_start — почему застрял
+## 2. T3 close_fridge — why it was counted as a success
 
-- Старт T4: base=(-0.70, 2.73), цель (0, 0), dist≈2.82 м.
-- Почти сразу: base=(-0.696, 2.726), дальше позиция **не меняется**, в логах — «STUCK» (phase 0,1,2,3), счётчик stuck растёт.
-- Итог: за 60 с робот не сдвинулся к (0,0), таймаут, success=False.
+- After T2 the base was near (-3.55, 1.85), door angle ~0°.
+- T3 begins with **waypoints** for close: the base drives back to the fridge (to the point in front of the handle).
+- Along the way: the logs show the angle briefly reaching ~9.3° and ~11.76° — this is most likely an artefact or slight door movement during transit/contact.
+- By the time **approach_and_grasp** for close starts: base near (-0.69, 3.13), angle already ~11.5°.
+- In **pull_or_push** for close: angle=11.97° ≤ 20° → immediate **close SUCCESS**.
 
-Вероятные причины:
-
-- Навигация считает, что робот застрял (нет прогресса по расстоянию до цели), и включает анти-застревание (латеральные/назад манёвры), но они не помогают.
-- Возможны коллизия с мебелью/дверью, неверная оценка препятствий или слишком агрессивный детект застревания.
-
-Требуется отдельный разбор навигации (зоны, маршрут, параметры stuck).
+In other words, the door was already nearly closed (~0° after T2); the criterion "angle ≤ 20°" for close was already satisfied, so T3 was correctly counted as a success without actually "closing" an open door.
 
 ---
 
-## 4. Что уже сделано правильно
+## 3. T4 return_to_start — why the robot got stuck
 
-- Подъезд (T1) и фиксация **approach_base_y** (не ехать вперёд за точку подъезда).
-- Отключён creep к холодильнику в approach_and_grasp при открытии.
-- Фаза **retreat_2cm** после захвата отработала (отъезд на 2 см назад).
-- Ограничение «не ехать вперёд за approach» в pull (vwy не даём в плюс при by ≥ approach_base_y).
+- T4 start: base=(-0.70, 2.73), target (0, 0), dist≈2.82 m.
+- Almost immediately: base=(-0.696, 2.726), then the position **does not change**, the logs show "STUCK" (phase 0,1,2,3), the stuck counter increases.
+- Result: over 60 s the robot did not move towards (0,0), timeout, success=False.
+
+Probable causes:
+
+- Navigation considers the robot stuck (no progress towards the target distance), and activates anti-stuck manoeuvres (lateral/reverse), but they do not help.
+- Possible collision with furniture/door, incorrect obstacle estimation, or overly aggressive stuck detection.
+
+A separate investigation of navigation (zones, route, stuck parameters) is required.
 
 ---
 
-## 5. Рекомендуемое исправление для T2 (открытие)
+## 4. What was already done correctly
 
-Использовать для **открытия** направление по **касательной к дуге** (ручка движется по окружности вокруг петли), а не по радиусу:
+- Approach (T1) and locking **approach_base_y** (do not drive forward past the approach point).
+- Creep towards the fridge disabled in approach_and_grasp during opening.
+- The **retreat_2cm** phase after grasping worked correctly (reversed 2 cm).
+- Restriction "do not drive forward past approach" in pull (vwy is not allowed to go positive when by ≥ approach_base_y).
 
-- Радиус: `(rx, ry) = (hx - hgx, hy - hgy)`.
-- Касательная (например, для открытия «в комнату»): `tang_wx = -ry / r_len`, `tang_wy = rx / r_len` (или наоборот знак, в зависимости от того, в какую сторону открывается дверь).
+---
 
-Так база будет тянуть ручку вдоль дуги, дверь сможет поворачиваться вокруг петли, и T2 имеет шанс стать успешным.
+## 5. Recommended fix for T2 (opening)
 
-После исправления касательной имеет смысл перезапустить один прогон и проверить по логам/видео: угол двери при pull_or_push должен расти, база — двигаться в основном по -Y (юг).
+Use the **tangent-to-arc** direction for **opening** (the handle moves along a circle around the hinge), rather than the radius direction:
+
+- Radius: `(rx, ry) = (hx - hgx, hy - hgy)`.
+- Tangent (e.g. for opening "into the room"): `tang_wx = -ry / r_len`, `tang_wy = rx / r_len` (or the opposite sign, depending on which direction the door opens).
+
+This way the base will pull the handle along the arc, the door will be able to rotate around the hinge, and T2 has a chance of succeeding.
+
+After fixing the tangent, it is worth re-running a single episode and checking the logs/video: the door angle during pull_or_push should increase, and the base should move predominantly along -Y (southward).

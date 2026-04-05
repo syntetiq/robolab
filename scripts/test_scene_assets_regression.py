@@ -29,9 +29,7 @@ def main() -> int:
     for fixed_cfg in [
         "fixed_banana_to_sink.json",
         "fixed_mug_to_fridge.json",
-        "fixed_mug_to_dishwasher.json",
         "fixed_fridge_open_close.json",
-        "fixed_dishwasher_open_close.json",
     ]:
         cfg_path = REPO_ROOT / "config/tasks" / fixed_cfg
         expect(cfg_path, errors, "fixed task config")

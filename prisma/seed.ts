@@ -48,7 +48,7 @@ async function main() {
       name: "Office",
       type: "office",
       stageUsdPath: "C:\\RoboLab_Data\\scenes\\Office_Interactive.usd",
-      capabilities: JSON.stringify(["pick_place_sink", "open_close_dishwasher"]),
+      capabilities: JSON.stringify(["pick_place_sink"]),
       tags: JSON.stringify(["office", "desk", "interactive"]),
       robotSpawnPose: JSON.stringify({ x: 0, y: 0, z: 0, yaw: 0 }),
     }
@@ -59,7 +59,7 @@ async function main() {
       name: "Home Kitchen",
       type: "home",
       stageUsdPath: "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd",
-      capabilities: JSON.stringify(["pick_place_sink", "pick_place_fridge", "pick_place_dishwasher", "open_close_fridge", "open_close_dishwasher"]),
+      capabilities: JSON.stringify(["pick_place_sink", "pick_place_fridge", "open_close_fridge"]),
       tags: JSON.stringify(["home", "kitchen", "interactive"]),
       robotSpawnPose: JSON.stringify({ x: 1.0, y: -1.0, z: 0, yaw: 1.57 }),
     }

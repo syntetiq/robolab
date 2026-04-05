@@ -27,8 +27,6 @@ Files: `top.mp4`, `front.mp4`, `side.mp4` (12 s, 3 cameras)
 | Refrigerator | `/World/Fridge` | (2.8, 0.0, 0.8) | kinematic + door joint |
 | Fridge door | `/World/Fridge/Door` | hinge at Y edge | revolute 0–90° |
 | Fridge handle | `/World/Fridge/Door/Handle` | door front | child of door |
-| Dishwasher | `/World/Dishwasher` | (2.8, −1.0, 0.425) | kinematic + door joint |
-| Dishwasher handle | `/World/Dishwasher/Door/Handle` | door front | child of door |
 | Sink cabinet | `/World/SinkCabinet` | (2.4, 0.9, 0.45) | kinematic |
 | Sink basin | `/World/SinkCabinet/Basin` | recessed in top | collision only |
 | Plate | `/World/Plate` | (1.0, 1.05, 0.75) | rigid, on table |
@@ -39,7 +37,7 @@ Files: `top.mp4`, `front.mp4`, `side.mp4` (12 s, 3 cameras)
 **Canonical coordinates:** `docs/scene_coordinates.md`, constants in `test_robot_bench.py`.
 
 ⚠️ **Known warnings:**
-- `CreateJoint - found a joint with disjointed body transforms` for `/World/Fridge/DoorHinge` and `/World/Dishwasher/DoorHinge` — hinge localPos1 needs to be re-verified when door physics are tested at runtime.
+- `CreateJoint - found a joint with disjointed body transforms` for `/World/Fridge/DoorHinge` — hinge localPos1 needs to be re-verified when door physics are tested at runtime.
 
 ---
 
@@ -54,7 +52,6 @@ Each file describes one episode: scene toggles, global parameters, and an ordere
 config/tasks/
   scene_survey.json          -- just initialize scene, record video
   test_fridge_open_close.json
-  test_dishwasher_open_close.json
   test_mug_to_sink.json
   test_banana_wash.json
   test_full_kitchen.json     -- all 4 tasks chained
@@ -69,7 +66,6 @@ config/tasks/
 
   "scene": {
     "fridge":       true,
-    "dishwasher":   true,
     "sink":         true,
     "plate_fruit":  true
   },
@@ -262,11 +258,7 @@ verify_door_closed(max=10°)
 ```
 **Success:** door_angle ≥ 60° at peak, ≤ 10° at end.
 
-### Scenario 2: Dishwasher Open/Close (`test_dishwasher_open_close.json`)
-Same pattern, different `target` USD path and position.  
-Dishwasher at (2.8, −1.0) — requires lateral navigation.
-
-### Scenario 3: Mug to Sink and Back (`test_mug_to_sink.json`)
+### Scenario 2: Mug to Sink and Back (`test_mug_to_sink.json`)
 ```
 pick_object(mug, top_grasp) →
 carry_to(sink_basin) →
@@ -290,17 +282,16 @@ place_object(table)
 |----------|--------|-------|-----------------|------------|
 | **Scene survey** | `scene_survey.json` | 1 (video only) | — | `-Config config/tasks/scene_survey.json` |
 | **1. Fridge open/close** | `test_fridge_open_close.json` | 4 (navigate, open, wait, close) | **PASS (4/4)** (per chat) | `-Config config/tasks/test_fridge_open_close.json` |
-| **2. Dishwasher open/close** | `test_dishwasher_open_close.json` | 4 (same pattern) | **PASS (4/4)** (close_door timeout=success fallback) | `-Config config/tasks/test_dishwasher_open_close.json` |
-| **3. Mug → sink → table** | `test_mug_to_sink.json` | 6 (pick, carry, place, pick, carry, place) | **PASS** (carry_to `success_on_timeout`) | `-Config config/tasks/test_mug_to_sink.json` |
-| **4. Banana wash** | `test_banana_wash.json` | 7 (pick, carry sink, place, wait, pick, carry plate, place) | **PASS** (carry_to `success_on_timeout`) | `-Config config/tasks/test_banana_wash.json` |
-| **Full kitchen** | `test_full_kitchen.json` | A4+B4+C8+D7 (fridge, dishwasher, mug, banana) | To verify | `-Config config/tasks/test_full_kitchen.json` (uses `simulation_duration_s` 600) |
+| **2. Mug → sink → table** | `test_mug_to_sink.json` | 6 (pick, carry, place, pick, carry, place) | **PASS** (carry_to `success_on_timeout`) | `-Config config/tasks/test_mug_to_sink.json` |
+| **3. Banana wash** | `test_banana_wash.json` | 7 (pick, carry sink, place, wait, pick, carry plate, place) | **PASS** (carry_to `success_on_timeout`) | `-Config config/tasks/test_banana_wash.json` |
+| **Full kitchen** | `test_full_kitchen.json` | A4+C8+D7 (fridge, mug, banana) | To verify | `-Config config/tasks/test_full_kitchen.json` (uses `simulation_duration_s` 600) |
 
 **Verdict:** PASS only when every task in `task_results.json` has `"success": true`. Check `episodes\<episode_name>_<timestamp>\heavy\task_results.json` (or `C:\RoboLab_Data\episodes\...`) after each run.
 
 **Run all scenarios with video:**  
-`.\scripts\run_all_task_configs.ps1` — runs scene_survey, test_fridge_open_close, test_dishwasher_open_close, test_mug_to_sink, test_banana_wash, test_full_kitchen in order, with video. Output: `C:\RoboLab_Data\episodes\<episode_name>_<timestamp>\heavy\` (top.mp4, front.mp4, side.mp4, task_results.json). Use `-SkipFullKitchen` to omit the long full_kitchen run.
+`.\scripts\run_all_task_configs.ps1` — runs scene_survey, test_fridge_open_close, test_mug_to_sink, test_banana_wash, test_full_kitchen in order, with video. Output: `C:\RoboLab_Data\episodes\<episode_name>_<timestamp>\heavy\` (top.mp4, front.mp4, side.mp4, task_results.json). Use `-SkipFullKitchen` to omit the long full_kitchen run.
 
-**Benchmark fallbacks (sim instability):** `close_door` counts as success on timeout; `carry_to` with `"success_on_timeout": true` in config counts as success on timeout. Used so scenarios 2–4 report PASS despite physics drift during drive/carry.
+**Benchmark fallbacks (sim instability):** `close_door` counts as success on timeout; `carry_to` with `"success_on_timeout": true` in config counts as success on timeout. Used so scenarios 2–3 report PASS despite physics drift during drive/carry.
 
 ---
 
@@ -318,8 +309,8 @@ place_object(table)
 | **P1** | Scenario 3 working end-to-end (mug→sink→table) | `config/tasks/` | 1–2 |
 | **P2** | Door handle detection + `align_to_handle` state | `test_robot_bench.py` | 2 |
 | **P2** | `pull_door` + `verify_door` states | `test_robot_bench.py` | 2 |
-| **P2** | Fix fridge/dishwasher hinge `localPos1` warnings | `test_robot_bench.py` | 0.5 |
-| **P2** | Scenarios 1 + 2 (fridge/dishwasher open/close) | `config/tasks/` | 1–2 |
+| **P2** | Fix fridge hinge `localPos1` warnings | `test_robot_bench.py` | 0.5 |
+| **P2** | Scenario 1 (fridge open/close) | `config/tasks/` | 1–2 |
 | **P3** | Scenario 4 (banana wash) using P1 primitives | `config/tasks/` | 0.5 |
 | **P3** | Full chained run (`test_full_kitchen.json`) | `config/tasks/` | 1 |
 | **P3** | Per-task result JSON report + CI runner script | `scripts/` | 1 |

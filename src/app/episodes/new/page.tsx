@@ -34,7 +34,11 @@ export default function NewEpisodeWizard() {
         sensors: [] as string[],
         seed: "42",
         durationSec: "60",
-        notes: ""
+        notes: "",
+        randomizeObjectLayout: true,
+        randomizeObjectTypes: false,
+        spawnObjectCount: "4",
+        objectCategories: ["mug_or_cup", "bottle_or_container", "fruit", "container_or_dish"] as string[],
     });
 
     const [submitting, setSubmitting] = useState(false);
@@ -79,12 +83,19 @@ export default function NewEpisodeWizard() {
     const handleSubmit = async () => {
         setSubmitting(true);
         try {
+            const randomizationConfig = JSON.stringify({
+                randomizeObjectLayout: formData.randomizeObjectLayout,
+                randomizeObjectTypes: formData.randomizeObjectTypes,
+                spawnObjectCount: parseInt(formData.spawnObjectCount, 10) || 4,
+                objectCategories: formData.objectCategories,
+            });
             const payload = {
                 sceneId: formData.sceneId,
                 objectSetId: null,
                 launchProfileId: formData.launchProfileId || null,
                 tasks: JSON.stringify([]),
                 sensors: JSON.stringify(formData.sensors),
+                randomizationConfig,
                 seed: parseInt(formData.seed, 10),
                 durationSec: parseInt(formData.durationSec, 10),
                 notes: formData.notes
@@ -181,7 +192,7 @@ export default function NewEpisodeWizard() {
                         <div className="space-y-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
-                                    <Label className="flex items-center">Random Seed <HelpTooltip content="Integer seed used for deterministic physical randomization across the scene." /></Label>
+                                    <Label className="flex items-center">Random Seed <HelpTooltip content="Integer seed used for deterministic physical randomization across the scene. Changing the seed produces different object layouts." /></Label>
                                     <Input type="number" value={formData.seed} onChange={e => setFormData(p => ({ ...p, seed: e.target.value }))} />
                                 </div>
                                 <div className="space-y-2">
@@ -189,6 +200,58 @@ export default function NewEpisodeWizard() {
                                     <Input type="number" value={formData.durationSec} onChange={e => setFormData(p => ({ ...p, durationSec: e.target.value }))} />
                                 </div>
                             </div>
+
+                            <div className="border rounded-md p-4 space-y-3">
+                                <Label className="text-base font-semibold">Object Randomization</Label>
+                                <div className="flex items-center space-x-3">
+                                    <Checkbox
+                                        checked={formData.randomizeObjectLayout}
+                                        onCheckedChange={(v) => setFormData(p => ({ ...p, randomizeObjectLayout: !!v }))}
+                                    />
+                                    <Label className="cursor-pointer" onClick={() => setFormData(p => ({ ...p, randomizeObjectLayout: !p.randomizeObjectLayout }))}>
+                                        Randomize object placement positions (uses seed)
+                                    </Label>
+                                    <HelpTooltip content="Varies where objects spawn within allowed zones using the seed value." />
+                                </div>
+                                <div className="flex items-center space-x-3">
+                                    <Checkbox
+                                        checked={formData.randomizeObjectTypes}
+                                        onCheckedChange={(v) => setFormData(p => ({ ...p, randomizeObjectTypes: !!v }))}
+                                    />
+                                    <Label className="cursor-pointer" onClick={() => setFormData(p => ({ ...p, randomizeObjectTypes: !p.randomizeObjectTypes }))}>
+                                        Randomize object types (shuffle available assets)
+                                    </Label>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label className="text-sm">Number of objects to spawn</Label>
+                                    <Input type="number" min="1" max="12" className="w-24" value={formData.spawnObjectCount}
+                                        onChange={e => setFormData(p => ({ ...p, spawnObjectCount: e.target.value }))} />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label className="text-sm">Object categories</Label>
+                                    <HelpTooltip content="Which types of items to include for spawning. Uncheck to exclude a category." />
+                                    <div className="flex flex-wrap gap-3">
+                                        {["mug_or_cup", "bottle_or_container", "fruit", "container_or_dish", "other"].map(cat => (
+                                            <label key={cat} className="flex items-center gap-1.5 text-sm">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={formData.objectCategories.includes(cat)}
+                                                    onChange={(e) => {
+                                                        setFormData(p => ({
+                                                            ...p,
+                                                            objectCategories: e.target.checked
+                                                                ? [...p.objectCategories, cat]
+                                                                : p.objectCategories.filter(c => c !== cat),
+                                                        }));
+                                                    }}
+                                                />
+                                                {cat.replace(/_/g, " ")}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
                             <div className="space-y-2">
                                 <Label>Notes</Label>
                                 <Textarea value={formData.notes} onChange={e => setFormData(p => ({ ...p, notes: e.target.value }))} />
@@ -210,6 +273,18 @@ export default function NewEpisodeWizard() {
 
                                 <div className="text-muted-foreground">Duration:</div>
                                 <div>{formData.durationSec}s</div>
+
+                                <div className="text-muted-foreground">Object Layout:</div>
+                                <div>{formData.randomizeObjectLayout ? "Randomized" : "Fixed"}</div>
+
+                                <div className="text-muted-foreground">Object Types:</div>
+                                <div>{formData.randomizeObjectTypes ? "Shuffled" : "Default order"}</div>
+
+                                <div className="text-muted-foreground">Spawn Count:</div>
+                                <div>{formData.spawnObjectCount} objects</div>
+
+                                <div className="text-muted-foreground">Categories:</div>
+                                <div>{formData.objectCategories.map(c => c.replace(/_/g, " ")).join(", ") || "All"}</div>
 
                                 <div className="text-muted-foreground mt-4 col-span-2 border-b border-border pb-1">Environment Config</div>
                                 <div className="text-muted-foreground">Output Dir:</div>

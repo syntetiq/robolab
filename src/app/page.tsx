@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Activity, Cpu, Server, PlayCircle, Layers, Package, Settings } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { HelpTooltip } from "@/components/HelpTooltip";
 
 export default function Dashboard() {
   const [health, setHealth] = useState({ cpu: 0, memory: 0 });
@@ -32,13 +33,13 @@ export default function Dashboard() {
           <CardHeader>
             <CardTitle className="flex items-center text-lg">
               <Activity className="w-5 h-5 mr-2 text-blue-500" />
-              Instance Health
+              Instance Health <HelpTooltip content="Real-time system resource usage of the simulation host machine." />
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
               <div className="flex justify-between text-sm mb-1">
-                <span className="flex items-center"><Cpu className="w-4 h-4 mr-1" /> CPU Load</span>
+                <span className="flex items-center"><Cpu className="w-4 h-4 mr-1" /> CPU Load <HelpTooltip content="Percentage of CPU cores in use. Sustained high usage may impact simulation performance." /></span>
                 <span>{health.cpu}%</span>
               </div>
               <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -48,7 +49,7 @@ export default function Dashboard() {
 
             <div>
               <div className="flex justify-between text-sm mb-1">
-                <span className="flex items-center"><Server className="w-4 h-4 mr-1" /> Memory Usage</span>
+                <span className="flex items-center"><Server className="w-4 h-4 mr-1" /> Memory Usage <HelpTooltip content="Percentage of system RAM allocated. Exceeding 85% may cause slowdowns." /></span>
                 <span>{health.memory}%</span>
               </div>
               <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -60,7 +61,7 @@ export default function Dashboard() {
               Host: <span className="font-mono text-foreground">{config?.isaacHost || "Connecting..."}</span>
             </div>
             <div className="text-sm text-muted-foreground">
-              Runner: <span className="font-mono text-foreground">{config?.runnerMode || "..."}</span>
+              Runner <HelpTooltip content="Where Isaac Sim executes: LOCAL_RUNNER (this machine), SSH_RUNNER (remote via SSH), AGENT_RUNNER (orchestrator)." />: <span className="font-mono text-foreground">{config?.runnerMode || "..."}</span>
             </div>
           </CardContent>
         </Card>

@@ -28,9 +28,7 @@ if (-not $OrchestratorScript) {
 $intents = @(
     "plan_pick_sink",
     "plan_pick_fridge",
-    "plan_pick_dishwasher",
-    "open_close_fridge",
-    "open_close_dishwasher"
+    "open_close_fridge"
 )
 
 $scenes = @(

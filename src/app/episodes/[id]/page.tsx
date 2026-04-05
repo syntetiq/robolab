@@ -80,6 +80,7 @@ export default function EpisodeDetailPage() {
     const [streamRefreshToken, setStreamRefreshToken] = useState(0);
     const [streamTransport, setStreamTransport] = useState<"webrtc" | "frame_fallback">("webrtc");
     const [frameTick, setFrameTick] = useState(0);
+    const [activeCamera, setActiveCamera] = useState("camera_0");
     const [deadmanPressed, setDeadmanPressed] = useState(false);
     const [pressedDirections, setPressedDirections] = useState<Record<string, boolean>>({});
     const teleopLoopRef = useRef<NodeJS.Timeout | null>(null);
@@ -213,7 +214,7 @@ export default function EpisodeDetailPage() {
         "open_gripper", "close_gripper", "torso_up", "torso_down",
         "arm_up", "arm_down", "arm_forward", "arm_back",
         "wrist_cw", "wrist_ccw", "wrist_90_cw", "wrist_90_ccw",
-        "moveit_approach_workzone", "moveit_open_close_fridge", "moveit_open_close_dishwasher",
+        "moveit_approach_workzone", "moveit_open_close_fridge",
         "arm_extend", "arm_extend_low", "arm_raise_high", "arm_home", "pre_grasp", "grasp_pose",
     ];
 
@@ -254,10 +255,10 @@ export default function EpisodeDetailPage() {
     const getStatusBadge = (status: string) => {
         const map: Record<string, JSX.Element> = {
             created: <Badge variant="secondary">Created</Badge>,
-            running: <Badge className="bg-blue-600">Running</Badge>,
-            stopping: <Badge className="bg-orange-500">Stopping</Badge>,
+            running: <Badge variant="outline" className="border-blue-600 text-blue-700 bg-blue-50">Running</Badge>,
+            stopping: <Badge variant="outline" className="border-orange-500 text-orange-700 bg-orange-50">Stopping</Badge>,
             stopped: <Badge variant="outline">Stopped</Badge>,
-            completed: <Badge className="bg-green-600">Completed</Badge>,
+            completed: <Badge variant="outline" className="border-green-600 text-green-700 bg-green-50">Completed</Badge>,
             failed: <Badge variant="destructive">Failed</Badge>,
         };
         return map[status] || <Badge variant="outline">{status}</Badge>;
@@ -291,10 +292,10 @@ export default function EpisodeDetailPage() {
     const moveitActive = !!teleopStatus?.moveitSessionActive;
 
     return (
-        <div className="p-8 max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-5 gap-6">
+        <div className="p-6 max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
 
             {/* ─── LEFT COLUMN ─── */}
-            <div className="lg:col-span-2 space-y-4">
+            <div className="lg:col-span-1 space-y-4 min-w-0">
                 {/* Actions */}
                 <Card>
                     <CardHeader className="pb-2"><CardTitle className="text-sm">Actions</CardTitle></CardHeader>
@@ -304,7 +305,7 @@ export default function EpisodeDetailPage() {
                             {getStatusBadge(episode.status)}
                         </div>
                         {canStart && (
-                            <Button onClick={() => handleAction("start")} variant="secondary" className="w-full h-11 text-base !bg-blue-600 !text-white hover:!bg-blue-700 font-bold">
+                            <Button onClick={() => handleAction("start")} variant="default" className="w-full h-11 text-base font-bold">
                                 <Play className="w-5 h-5 mr-2" /> Start Episode
                             </Button>
                         )}
@@ -344,11 +345,20 @@ export default function EpisodeDetailPage() {
                 <Card>
                     <CardHeader className="pb-2"><CardTitle className="text-sm">Episode Details</CardTitle></CardHeader>
                     <CardContent className="text-sm space-y-1.5">
-                        <div className="flex justify-between"><span className="text-muted-foreground">ID:</span><span className="font-mono text-xs truncate max-w-[150px]" title={episode.id}>{episode.id}</span></div>
-                        <div className="flex items-center justify-between"><span className="flex items-center text-muted-foreground">Scene <HelpTooltip content="The loaded USD stage environment." />:</span><span className="font-medium">{episode.scene?.name}</span></div>
-                        <div className="flex items-center justify-between"><span className="flex items-center text-muted-foreground">Object Set <HelpTooltip content="The collection of items spawned into the environment." />:</span><span>{episode.objectSet?.name || "None"}</span></div>
-                        <div className="flex items-center justify-between"><span className="flex items-center text-muted-foreground">Seed <HelpTooltip content="RNG seed for determinism." />:</span><span>{episode.seed}</span></div>
-                        <div className="flex items-center justify-between"><span className="flex items-center text-muted-foreground">Output Dir <HelpTooltip content="Where logs/videos will be saved." />:</span><span className="font-mono text-xs truncate max-w-[120px]" title={episode.outputDir || "Pending"}>{episode.outputDir || "Pending"}</span></div>
+                        <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+                            <span className="text-muted-foreground">ID:</span>
+                            <span className="font-mono text-xs truncate" title={episode.id}>{episode.id}</span>
+                            <span className="flex items-center text-muted-foreground">Scene <HelpTooltip content="The loaded USD stage environment." />:</span>
+                            <span className="font-medium">{episode.scene?.name}</span>
+                            <span className="flex items-center text-muted-foreground">Object Set <HelpTooltip content="The collection of items spawned into the environment." />:</span>
+                            <span>{episode.objectSet?.name || "None"}</span>
+                            <span className="flex items-center text-muted-foreground">Seed <HelpTooltip content="RNG seed for determinism." />:</span>
+                            <span>{episode.seed}</span>
+                            <span className="flex items-center text-muted-foreground">Duration:</span>
+                            <span>{episode.durationSec}s</span>
+                            <span className="flex items-center text-muted-foreground col-span-2 mt-1">Output Dir <HelpTooltip content="Where logs/videos will be saved." />:</span>
+                            <span className="font-mono text-xs break-all col-span-2">{episode.outputDir || "Pending"}</span>
+                        </div>
                     </CardContent>
                 </Card>
 
@@ -366,7 +376,7 @@ export default function EpisodeDetailPage() {
                             <SectionHead label="Base Movement" help={HELP.baseMovement} />
                             <div className="grid grid-cols-3 gap-1.5">
                                 <TBtn cmd="rotate_left" label="↺ Rot L" />
-                                <TBtn cmd="move_forward" label="↑ Forward" variant="secondary" className="!bg-purple-600 !text-white hover:!bg-purple-700" />
+                                <TBtn cmd="move_forward" label="↑ Forward" variant="default" />
                                 <TBtn cmd="rotate_right" label="↻ Rot R" />
                                 <TBtn cmd="move_left" label="← Left" />
                                 <TBtn cmd="move_backward" label="↓ Back" />
@@ -476,28 +486,39 @@ export default function EpisodeDetailPage() {
             </div>
 
             {/* ─── RIGHT COLUMN ─── */}
-            <div className="lg:col-span-3 space-y-6">
-                {/* WebRTC Stream */}
-                {config?.streamingMode === "browser_embedded_optional" && (
+            <div className="lg:col-span-2 space-y-6 min-w-0">
+                {/* WebRTC Stream — only shown when running */}
+                {isCurrentlyRunning && config?.streamingMode === "browser_embedded_optional" && (
                     <Card className="h-[400px] flex flex-col overflow-hidden">
                         <CardHeader className="pb-2 space-y-2">
                             <CardTitle className="flex items-center text-sm justify-between">
                                 <span>Live Stream</span>
                                 <span className="text-xs font-normal">State: {streamState}</span>
                             </CardTitle>
-                            <div className="flex gap-2">
+                            <div className="flex gap-2 flex-wrap">
                                 <Button size="sm" variant="outline" onClick={() => setStreamLayout((p) => (p === "fit" ? "fill" : "fit"))}>Layout: {streamLayout}</Button>
                                 <Button size="sm" variant="outline" onClick={() => { setStreamTransport("webrtc"); setStreamRefreshToken((p) => p + 1); }}><RefreshCcw className="w-4 h-4 mr-1" /> Reconnect</Button>
                                 <Button size="sm" variant="outline" onClick={() => setStreamTransport((p) => (p === "webrtc" ? "frame_fallback" : "webrtc"))}>Transport: {streamTransport === "webrtc" ? "WebRTC" : "Frame"}</Button>
                                 {config?.isaacHost && <Button size="sm" variant="outline" asChild><a href={streamHintUrl} target="_blank" rel="noreferrer">Open tab</a></Button>}
                             </div>
+                            {streamTransport === "frame_fallback" && (
+                                <div className="flex gap-1.5">
+                                    <Button size="sm" variant={activeCamera === "camera_0" ? "default" : "outline"} onClick={() => setActiveCamera("camera_0")}>Head</Button>
+                                    {episode?.launchProfile?.enableWristCamera && (
+                                        <Button size="sm" variant={activeCamera === "camera_1_wrist" ? "default" : "outline"} onClick={() => setActiveCamera("camera_1_wrist")}>Wrist</Button>
+                                    )}
+                                    {episode?.launchProfile?.enableExternalCamera && (
+                                        <Button size="sm" variant={activeCamera === "camera_2_external" ? "default" : "outline"} onClick={() => setActiveCamera("camera_2_external")}>External</Button>
+                                    )}
+                                </div>
+                            )}
                         </CardHeader>
                         <CardContent className="flex-1 p-0 bg-black">
                             {isRunning ? (
                                 streamTransport === "webrtc" ? (
                                     <iframe key={streamRefreshToken} src={streamHintUrl} className={`w-full h-full border-0 ${streamLayout === "fill" ? "object-cover" : "object-contain"}`} sandbox="allow-scripts allow-same-origin" title="Isaac WebRTC Stream" onLoad={() => setStreamState((p) => (p === "offline" ? "offline" : "connecting"))} onError={() => { setStreamState("reconnecting"); setStreamTransport("frame_fallback"); }} />
                                 ) : (
-                                    <img src={`/api/episodes/${id}/stream/frame?refresh=${streamRefreshToken}&tick=${frameTick}`} alt="Live frame stream" className={`w-full h-full ${streamLayout === "fill" ? "object-cover" : "object-contain"}`} onLoad={() => setStreamState("live")} onError={() => setStreamState("reconnecting")} />
+                                    <img src={`/api/episodes/${id}/stream/frame?camera=${activeCamera}&refresh=${streamRefreshToken}&tick=${frameTick}`} alt="Live frame stream" className={`w-full h-full ${streamLayout === "fill" ? "object-cover" : "object-contain"}`} onLoad={() => setStreamState("live")} onError={() => setStreamState("reconnecting")} />
                                 )
                             ) : (
                                 <div className="h-full w-full flex items-center justify-center text-muted-foreground text-sm">Start episode to connect stream.</div>

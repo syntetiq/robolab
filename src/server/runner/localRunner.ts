@@ -172,6 +172,12 @@ export class LocalRunner implements Runner {
                     psCmd += " --moveit";
                     psCmd += " --mobile-base";
                 }
+                if (episode.launchProfile?.enableWristCamera) {
+                    psCmd += " --wrist-camera";
+                }
+                if (episode.launchProfile?.enableExternalCamera) {
+                    psCmd += " --external-camera";
+                }
                 if (episode.objectSetId && episode.objectSet) {
                     psCmd += " --spawn-objects";
                     try {
@@ -187,6 +193,16 @@ export class LocalRunner implements Runner {
                 if (episode.launchProfile?.robotPovCameraPrim) {
                     const escapedPov = String(episode.launchProfile.robotPovCameraPrim).replace(/'/g, "''");
                     psCmd += ` --robot_pov_camera_prim '${escapedPov}'`;
+                }
+
+                // Parse randomization config and pass relevant flags
+                try {
+                    const randConfig = JSON.parse(episode.randomizationConfig || "{}");
+                    if (randConfig.randomizeObjectLayout || randConfig.randomizeObjectTypes) {
+                        psCmd += " --spawn-objects";
+                    }
+                } catch {
+                    // invalid JSON, skip
                 }
 
                 detachedCommand = `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${psCmd}"`;
@@ -215,6 +231,53 @@ export class LocalRunner implements Runner {
             }
             child.unref();
             fs.writeFileSync(pidFile, String(child.pid), "utf8");
+
+            // Auto-start ROS bag recording if template is configured
+            const rosbagTemplate = (episode.launchProfile?.rosbagLaunchTemplate || "").trim();
+            if (rosbagTemplate) {
+                const bagDir = path.join(episodeOutDir, "rosbag");
+                fs.mkdirSync(bagDir, { recursive: true });
+                const defaultTopics = "/joint_states /tf /tf_static /servo_node/delta_twist_stamped /tiago/moveit/intent";
+                const resolvedCmd = rosbagTemplate
+                    .replace(/\{BAG_PATH\}/g, bagDir.replace(/'/g, "''"))
+                    .replace(/\{TOPICS\}/g, defaultTopics)
+                    .replace(/\{EPISODE_ID\}/g, episode.id)
+                    .replace(/\{OUTPUT_DIR\}/g, episodeOutDir.replace(/'/g, "''"));
+
+                // Delay to allow ROS2 nodes to initialize
+                setTimeout(() => {
+                    const rosbagLog = path.join(episodeOutDir, "_rosbag_stdout.log");
+                    const rosbagErrLog = path.join(episodeOutDir, "_rosbag_stderr.log");
+                    const rosbagCmd = `${resolvedCmd} 1> "${rosbagLog}" 2> "${rosbagErrLog}"`;
+                    const bagChild = spawn(rosbagCmd, {
+                        detached: true,
+                        windowsHide: true,
+                        shell: true,
+                        stdio: "ignore",
+                    });
+                    bagChild.unref();
+                    const rosbagPidFile = `${episodeOutDir}_rosbag_pid.txt`;
+                    fs.writeFileSync(rosbagPidFile, String(bagChild.pid), "utf8");
+                    console.log(`[LocalRunner] Started ROS bag recording (PID ${bagChild.pid}): ${resolvedCmd}`);
+                }, 10_000);
+            }
+
+            // Auto-open WebRTC stream in default browser for VR passthrough
+            if (episode.launchProfile?.enableVrPassthrough && episode.launchProfile?.enableWebRTC) {
+                const webrtcPort = 8211;
+                const streamUrl = `http://localhost:${webrtcPort}/streaming/webrtc-demo/`;
+                // Delay opening to give Isaac Sim time to initialize WebRTC
+                setTimeout(() => {
+                    const browser = spawn(`start "" "${streamUrl}"`, {
+                        detached: true,
+                        shell: true,
+                        stdio: "ignore",
+                    });
+                    browser.unref();
+                    console.log(`[LocalRunner] Opened VR passthrough stream: ${streamUrl}`);
+                }, 15_000);
+            }
+
             return { success: true };
         } catch (e: any) {
             await releaseLock(config.isaacHost, episode.id);
@@ -233,6 +296,17 @@ export class LocalRunner implements Runner {
                 const pid = Number(rawPid);
                 if (this.isPidRunning(pid)) {
                     await this.execFileAsync("taskkill", ["/F", "/T", "/PID", String(pid)]);
+                }
+            }
+
+            // Stop ROS bag recording if running
+            const rosbagPidFile = `${episodeOutDir}_rosbag_pid.txt`;
+            if (fs.existsSync(rosbagPidFile)) {
+                const rawBagPid = fs.readFileSync(rosbagPidFile, "utf8").trim();
+                const bagPid = Number(rawBagPid);
+                if (this.isPidRunning(bagPid)) {
+                    await this.execFileAsync("taskkill", ["/F", "/T", "/PID", String(bagPid)]);
+                    console.log(`[LocalRunner] Stopped ROS bag recording (PID ${bagPid})`);
                 }
             }
 
@@ -343,6 +417,7 @@ export class LocalRunner implements Runner {
                 "replicator_data",
                 "replicator_wrist",
                 "replicator_external",
+                "rosbag",
             ];
 
             let copied = 0;

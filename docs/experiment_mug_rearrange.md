@@ -19,7 +19,6 @@ Verdict: **PASS (task config)** -- all 5 tasks succeed
 | Item         | Center X | Center Y | Width | Depth | Height |
 |--------------|----------|----------|-------|-------|--------|
 | Fridge       | -1.35    | 3.45     | 0.80  | 0.80  | 2.00   |
-| Dishwasher   | -0.45    | 3.45     | 0.80  | 0.80  | 0.80   |
 | Sink cabinet |  0.45    | 3.45     | 0.80  | 0.80  | 0.90   |
 | **Table**    |  **1.35**| **3.45** | **0.80**|**0.80**|**0.80**|
 

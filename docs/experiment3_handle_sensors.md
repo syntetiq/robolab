@@ -1,81 +1,81 @@
-# Experiment 3: габариты ручки холодильника и сенсоры симуляции
+# Experiment 3: fridge handle dimensions and simulation sensors
 
-## 1. Габариты ручки холодильника (fixed kitchen)
+## 1. Fridge handle dimensions (fixed kitchen)
 
-Источник: `scenes/kitchen_fixed/kitchen_fixed_config.yaml` → `furniture.fridge.handle`.
+Source: `scenes/kitchen_fixed/kitchen_fixed_config.yaml` → `furniture.fridge.handle`.
 
-| Параметр | Значение | Описание |
-|----------|----------|----------|
-| **type** | vertical | Вертикальная ручка |
-| **length** | **0.50 м** | Высота ручки (по вертикали) |
-| **width** | **0.06 м** | Ширина (по горизонтали вдоль двери) |
-| **depth** | **0.06 м** | Глубина (выступ от двери) |
-| **standoff** | 0.06 м | Зазор между дверью и ручкой |
-| **center_height** | 1.10 м | Высота центра ручки над полом |
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| **type** | vertical | Vertical handle |
+| **length** | **0.50 m** | Handle height (vertical) |
+| **width** | **0.06 m** | Width (horizontal along the door) |
+| **depth** | **0.06 m** | Depth (protrusion from the door) |
+| **standoff** | 0.06 m | Gap between the door and the handle |
+| **center_height** | 1.10 m | Height of the handle centre above the floor |
 
-В коде (`kitchen_fixed_builder.py`) ручка собирается как куб `Bar` с размерами **depth × width × length** = **0.06 × 0.06 × 0.50 м** и двумя скобами (Bracket0, Bracket1). Путь в сцене: `/World/Kitchen/Furniture/Fridge/Door/Handle`.
+In the code (`kitchen_fixed_builder.py`) the handle is assembled as a `Bar` cuboid with dimensions **depth × width × length** = **0.06 × 0.06 × 0.50 m** and two brackets (Bracket0, Bracket1). Scene path: `/World/Kitchen/Furniture/Fridge/Door/Handle`.
 
-**Итого габариты ручки:** 6 см × 6 см × 50 см (глубина × ширина × высота).
-
----
-
-## 2. Сенсоры, используемые во время симуляции (test_robot_bench)
-
-### 2.1 Камеры (Replicator, запись видео)
-
-При запуске с видео (`run_task_config.ps1` без `-NoVideo`) создаются 3 камеры:
-
-| Камера | Позиция (примерно) | Направление | Данные |
-|--------|--------------------|-------------|--------|
-| **top_kitchen** | (0, 1.7, 7) | Вниз на кухню | RGB, каждый кадр → `replicator_top_kitchen/rgb_*.png` → кодируется в `top_kitchen.mp4` |
-| **isometric_kitchen** | (-3.5, -2, 3.5) | На центр кухни | То же → `isometric_kitchen.mp4` |
-| **front_kitchen** | (0, -2, 1.5) | Спереди на кухню | То же → `front_kitchen.mp4` |
-
-Разрешение задаётся аргументами `--width`, `--height` (по умолчанию 640×480). **Данные:** только RGB-изображения; в логику управления роботом не подаются (только запись для анализа и датасетов).
-
-### 2.2 Состояние робота (логирование и управление)
-
-Используются данные из **Articulation** (Isaac Sim):
-
-| Данные | Источник | Использование |
-|--------|----------|----------------|
-| **Позиция и ориентация базы** | `articulation.get_world_pose()` | Навигация, расчёт целевой точки подъезда, расчёт yaw |
-| **Позиции суставов (DOF)** | `articulation.get_joint_positions()` | Управление рукой/гриппером, проверка позы (pre_grasp_handle, handle_reach_left и т.д.) |
-| **Скорости суставов** | `articulation.get_joint_velocities()` | Опционально в логере (physics_log), не в управлении дверью |
-| **Позиция звена EE (tool/gripper)** | Через `get_prim_world_pose(ee_link_path)` по USD | Расстояние до ручки, переход в pull_or_push |
-
-Точные имена DOF задаются в `resolve_dof_names(articulation)` (все револьютные и призматические суставы робота, включая колёса, торс, руки, гриппер).
-
-### 2.3 Сцена (для логики двери)
-
-| Данные | Источник | Использование |
-|--------|----------|----------------|
-| **Позиция ручки в мире** | `get_prim_world_position(handle_usd_path)` | Цель подъезда (drive_to_handle), расстояние до гриппера |
-| **Угол двери** | RevoluteJoint или ориентация примитива двери | Критерий успеха open/close (min_angle_deg / max_angle_deg) |
-| **Позиция петли (hinge_world_xy)** | Из конфига задачи | Направление pull/push по касательной к дуге двери |
-
-### 2.4 Чего нет в test_robot_bench
-
-- **Тактильные/контактные сенсоры** в bench не используются. В `data_collector_tiago.py` для реального/VR сценария есть контактные сенсоры на пальцах гриппера (Contact_Sensor на left/right finger link) — в симуляции bench их нет.
-- **Depth/Lidar** не используются.
-- **Силы/моменты** с суставов не считываются для управления.
+**Handle dimensions summary:** 6 cm × 6 cm × 50 cm (depth × width × height).
 
 ---
 
-## 3. Сохранение видео с эпизода
+## 2. Sensors used during simulation (test_robot_bench)
 
-При запуске **с видео** (без `-NoVideo`):
+### 2.1 Cameras (Replicator, video recording)
 
-- Выходная папка: `C:\RoboLab_Data\episodes\fixed_fridge_experiment3_<timestamp>\`
-- Видео лежат в подпапке `heavy\`:
+When launched with video (`run_task_config.ps1` without `-NoVideo`) 3 cameras are created:
+
+| Camera | Position (approximate) | Direction | Data |
+|--------|----------------------|-----------|------|
+| **top_kitchen** | (0, 1.7, 7) | Down onto the kitchen | RGB, every frame → `replicator_top_kitchen/rgb_*.png` → encoded as `top_kitchen.mp4` |
+| **isometric_kitchen** | (-3.5, -2, 3.5) | Towards the kitchen centre | Same → `isometric_kitchen.mp4` |
+| **front_kitchen** | (0, -2, 1.5) | Front view of the kitchen | Same → `front_kitchen.mp4` |
+
+Resolution is set via the arguments `--width`, `--height` (default 640×480). **Data:** RGB images only; they are not fed into the robot control logic (recording only, for analysis and datasets).
+
+### 2.2 Robot state (logging and control)
+
+Data from **Articulation** (Isaac Sim) is used:
+
+| Data | Source | Usage |
+|------|--------|-------|
+| **Base position and orientation** | `articulation.get_world_pose()` | Navigation, approach target point calculation, yaw calculation |
+| **Joint positions (DOF)** | `articulation.get_joint_positions()` | Arm/gripper control, pose checking (pre_grasp_handle, handle_reach_left, etc.) |
+| **Joint velocities** | `articulation.get_joint_velocities()` | Optionally in the logger (physics_log), not in door control |
+| **EE (tool/gripper) link position** | Via `get_prim_world_pose(ee_link_path)` over USD | Distance to handle, transition to pull_or_push |
+
+The exact DOF names are defined in `resolve_dof_names(articulation)` (all revolute and prismatic joints of the robot, including wheels, torso, arms, gripper).
+
+### 2.3 Scene (for door logic)
+
+| Data | Source | Usage |
+|------|--------|-------|
+| **Handle position in world** | `get_prim_world_position(handle_usd_path)` | Approach target (drive_to_handle), distance to gripper |
+| **Door angle** | RevoluteJoint or door primitive orientation | Success criterion for open/close (min_angle_deg / max_angle_deg) |
+| **Hinge position (hinge_world_xy)** | From the task configuration | Pull/push direction along the tangent to the door arc |
+
+### 2.4 What is absent from test_robot_bench
+
+- **Tactile/contact sensors** are not used in the bench. In `data_collector_tiago.py` for the real/VR scenario there are contact sensors on the gripper fingers (Contact_Sensor on the left/right finger link) — they are absent in the bench simulation.
+- **Depth/Lidar** are not used.
+- **Joint forces/torques** are not read for control purposes.
+
+---
+
+## 3. Saving episode video
+
+When launched **with video** (without `-NoVideo`):
+
+- Output folder: `C:\RoboLab_Data\episodes\fixed_fridge_experiment3_<timestamp>\`
+- Videos are located in the `heavy\` subfolder:
   - `top_kitchen.mp4`
   - `isometric_kitchen.mp4`
   - `front_kitchen.mp4`
 
-Команда одного прогона с видео:
+Command for a single run with video:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/run_task_config.ps1 -Config config/tasks/fixed_fridge_experiment3.json
 ```
 
-Видео кодируются после симуляции из PNG-кадров Replicator и сохраняются автоматически.
+Videos are encoded from Replicator PNG frames after the simulation and saved automatically.

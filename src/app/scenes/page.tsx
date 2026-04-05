@@ -7,6 +7,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Edit2, MoreVertical, Plus, Trash2 } from "lucide-react";
 import SceneDialog from "./SceneDialog";
 import { Badge } from "@/components/ui/badge";
+import { HelpTooltip } from "@/components/HelpTooltip";
 
 export default function ScenesPage() {
     const [scenes, setScenes] = useState<any[]>([]);
@@ -71,9 +72,9 @@ export default function ScenesPage() {
                     <TableHeader>
                         <TableRow>
                             <TableHead>Name</TableHead>
-                            <TableHead>Type</TableHead>
-                            <TableHead>Stage USD Path</TableHead>
-                            <TableHead>Capabilities</TableHead>
+                            <TableHead><span className="flex items-center">Type <HelpTooltip content="Environment category: home (residential kitchen), office (workspace)." /></span></TableHead>
+                            <TableHead><span className="flex items-center">Stage USD Path <HelpTooltip content="Path to the USD file defining this 3D environment. Loaded by Isaac Sim at episode start." /></span></TableHead>
+                            <TableHead><span className="flex items-center">Capabilities <HelpTooltip content="Supported features (e.g. pick_place_table, open_close_fridge). Required by certain task types." /></span></TableHead>
                             <TableHead className="w-[80px] text-right">Actions</TableHead>
                         </TableRow>
                     </TableHeader>

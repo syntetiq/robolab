@@ -23,9 +23,7 @@ $scenarios = @(
     "approach_workzone",
     "plan_pick_sink",
     "plan_pick_fridge",
-    "plan_pick_dishwasher",
-    "open_close_fridge",
-    "open_close_dishwasher"
+    "open_close_fridge"
 )
 
 # Duration map: simpler scenarios need less time.
@@ -33,9 +31,7 @@ $durationMap = @{
     "approach_workzone"    = 180
     "plan_pick_sink"       = 300
     "plan_pick_fridge"     = 480
-    "plan_pick_dishwasher" = 480
     "open_close_fridge"    = 480
-    "open_close_dishwasher"= 480
 }
 
 $totalRuns = $scenarios.Count * $EpisodesPerScenario

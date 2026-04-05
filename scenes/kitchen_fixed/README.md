@@ -38,7 +38,6 @@ Left-to-right along the north wall:
 | Item           | Center X | Center Y | Width | Depth | Height | Top Z |
 | -------------- | -------- | -------- | ----- | ----- | ------ | ----- |
 | Refrigerator   | -1.35    | +3.45    | 0.80  | 0.80  | 2.00   | 2.00  |
-| Dishwasher     | -0.45    | +3.45    | 0.80  | 0.80  | 0.80   | 0.80  |
 | Sink Cabinet   | +0.45    | +3.45    | 0.80  | 0.80  | 0.90   | 0.93  |
 | Table          | +1.35    | +3.45    | 0.80  | 0.80  | 0.80   | 0.80  |
 
@@ -73,10 +72,6 @@ Objects are placed on the table (center at X=1.35, Y=3.45, top at Z=0.80):
       Cabinet/Body, Shelf0..3
       Door/Panel, Handle/Bar, Handle/Bracket0, Handle/Bracket1
       DoorHinge                   # RevoluteJoint 0-90°
-    Dishwasher/
-      Cabinet/Body, Rack0..1
-      Door/Panel, Handle/Bar, Handle/Bracket0, Handle/Bracket1
-      DoorHinge                   # RevoluteJoint 0-90°
     SinkCabinet/
       Cabinet/Body
       CounterTop/Slab
@@ -105,23 +100,13 @@ Objects are placed on the table (center at X=1.35, Y=3.45, top at Z=0.80):
 
 The 0.04 m standoff provides sufficient clearance for TIAGo's parallel gripper fingers to wrap around the bar from the front approach direction (-Y).
 
-### Dishwasher Handle (horizontal)
-
-- **Bar:** 0.50 m wide × 0.02 m × 0.02 m
-- **Standoff:** 0.04 m from door surface
-- **Center height:** 0.70 m above floor
-- **Graspable section:** 0.15 m (center portion)
-- **Mounting:** Two brackets at left and right ends
-- **Collision:** Dedicated box collider on the bar
-
 ## Articulation
 
-Both fridge and dishwasher doors use `RevoluteJoint` (USD Physics):
+The fridge door uses `RevoluteJoint` (USD Physics):
 
 | Appliance   | Joint Path                                        | Axis | Range   | Door Mass |
 | ----------- | ------------------------------------------------- | ---- | ------- | --------- |
 | Fridge      | /World/Kitchen/Furniture/Fridge/DoorHinge         | Y    | 0-90°   | 8 kg      |
-| Dishwasher  | /World/Kitchen/Furniture/Dishwasher/DoorHinge     | Y    | 0-90°   | 5 kg      |
 
 Body0 = Cabinet (kinematic), Body1 = Door (dynamic).
 
@@ -156,8 +141,6 @@ For higher visual fidelity, replace diffuse colors with texture maps (albedo, no
 | Table, Sink Cab.   | CollisionAPI only (static)      | Stable surfaces                    |
 | Fridge Cabinet     | RigidBody + kinematicEnabled    | Anchor for door joint              |
 | Fridge Door        | RigidBody (dynamic, 8 kg)       | RevoluteJoint to cabinet           |
-| Dishwasher Cabinet | RigidBody + kinematicEnabled    | Anchor for door joint              |
-| Dishwasher Door    | RigidBody (dynamic, 5 kg)       | RevoluteJoint to cabinet           |
 | Plate              | RigidBody (dynamic, 0.25 kg)    | Cylinder collider                  |
 | Apple              | RigidBody (dynamic, 0.20 kg)    | Sphere collider                    |
 | Banana             | RigidBody (dynamic, 0.05 kg)    | Cylinder collider                  |
@@ -214,7 +197,6 @@ New task configs with `"kitchen_scene": "fixed"` are in `config/tasks/`:
 | ------------------------------- | ------------------------------- |
 | fixed_scene_survey.json         | 15s video survey, no manipulation |
 | fixed_fridge_open_close.json    | Open/close fridge door          |
-| fixed_dishwasher_open_close.json| Open/close dishwasher door      |
 | fixed_mug_to_sink.json          | Mug: table → sink → table      |
 | fixed_banana_wash.json          | Banana: plate → sink → plate   |
 | fixed_full_kitchen.json         | All tasks chained               |
@@ -225,8 +207,6 @@ New task configs with `"kitchen_scene": "fixed"` are in `config/tasks/`:
 | ------------------------------- | ------------------------------------------------- |
 | /World/Fridge/Door/Handle       | /World/Kitchen/Furniture/Fridge/Door/Handle        |
 | /World/Fridge/DoorHinge         | /World/Kitchen/Furniture/Fridge/DoorHinge          |
-| /World/Dishwasher/Door/Handle   | /World/Kitchen/Furniture/Dishwasher/Door/Handle    |
-| /World/Dishwasher/DoorHinge     | /World/Kitchen/Furniture/Dishwasher/DoorHinge      |
 | /World/Mug                      | /World/Kitchen/Objects/Mug                         |
 | /World/Table                    | /World/Kitchen/Furniture/Table                     |
 | /World/SinkCabinet/Basin        | /World/Kitchen/Furniture/SinkCabinet/Basin          |

@@ -254,8 +254,8 @@ cfg = SimpleNamespace(**DEFAULTS)
 
 # ---------------------------------------------------------------------------
 # Scene constants (needed for grasp CLI defaults)
-# Table against wall (Y=1.5) so it does not block access to fridge/sink/dishwasher.
-# Robot at (0,0) can reach fridge (2.8,0), dishwasher (2.8,-1), sink (2.4,0.9) freely.
+# Table against wall (Y=1.5) so it does not block access to fridge/sink.
+# Robot at (0,0) can reach fridge (2.8,0), sink (2.4,0.9) freely.
 # ---------------------------------------------------------------------------
 GRASP_TABLE_X = 1.0
 GRASP_TABLE_Y = 1.2     # table center; back edge at Y=1.5 (against wall)
@@ -269,15 +269,6 @@ FRIDGE_DEPTH_X = 0.7   # depth (X)
 FRIDGE_HEIGHT = 1.6
 FRIDGE_DOOR_DEPTH = 0.03
 FRIDGE_DOOR_OPEN_DEG = 90.0   # max opening angle (degrees)
-
-# Dishwasher (in grasp scene): same idea as fridge — door, handle, shelves
-DISHWASHER_X = 2.8
-DISHWASHER_Y = -1.0
-DISHWASHER_WIDTH_Y = 0.6
-DISHWASHER_DEPTH_X = 0.6
-DISHWASHER_HEIGHT = 0.85
-DISHWASHER_DOOR_DEPTH = 0.025
-DISHWASHER_DOOR_OPEN_DEG = 90.0
 
 # Sink cabinet with basin (in grasp scene): place objects in sink
 SINK_CABINET_X = 2.4
@@ -412,7 +403,6 @@ if getattr(args, "task_config", None):
     args.drive_base = True
     scene = _tcfg.get("scene", {})
     args.fridge = scene.get("fridge", True)
-    args.dishwasher = scene.get("dishwasher", True)
     args.sink = scene.get("sink", True)
     args.plate_fruit = scene.get("plate_fruit", True)
     robot_cfg = _tcfg.get("robot", {})
@@ -454,16 +444,13 @@ if getattr(args, "task_config", None):
             print(f"[Bench] WARNING: robot_profile not found: {_profile_path}, using defaults")
     cfg = build_config(DEFAULTS, _robot_profile, _tcfg)
     print(f"[Bench] Task config loaded: {task_config_path}")
-    print(f"[Bench]   episode_name={_tcfg.get('episode_name', '')} scene: fridge={args.fridge} dishwasher={args.dishwasher} sink={args.sink} plate_fruit={args.plate_fruit}"
+    print(f"[Bench]   episode_name={_tcfg.get('episode_name', '')} scene: fridge={args.fridge} sink={args.sink} plate_fruit={args.plate_fruit}"
           + (f" kitchen_scene={args.kitchen_scene}" if getattr(args, "kitchen_scene", None) else ""))
 else:
     args._task_config_dict = None
     cfg = build_config(DEFAULTS)
-    args.dishwasher = getattr(args, "dishwasher", None)
     args.sink = getattr(args, "sink", None)
     args.plate_fruit = getattr(args, "plate_fruit", None)
-    if args.dishwasher is None:
-        args.dishwasher = bool(getattr(args, "grasp", False))
     if args.sink is None:
         args.sink = bool(getattr(args, "grasp", False))
     if args.plate_fruit is None:
@@ -775,86 +762,6 @@ def _spawn_procedural_refrigerator(stage, base_path, pos_x, pos_y):
     print(f"[Bench] Refrigerator at ({pos_x}, {pos_y}): door hinge left, handle right, {4} shelves")
 
 
-def _spawn_procedural_dishwasher(stage, base_path, pos_x, pos_y):
-    """Dishwasher with openable door (revolute joint), handle, and racks (shelves). Same pattern as fridge."""
-    root = UsdGeom.Xform.Define(stage, base_path)
-    UsdGeom.Xformable(root.GetPrim()).AddTranslateOp().Set(Gf.Vec3d(pos_x, pos_y, 0))
-
-    w = DISHWASHER_WIDTH_Y
-    d = DISHWASHER_DEPTH_X
-    h = DISHWASHER_HEIGHT
-    door_d = DISHWASHER_DOOR_DEPTH
-    half_d, half_w, half_h = d / 2.0, w / 2.0, h / 2.0
-    hinge_y_local = -half_w
-
-    cabinet_path = f"{base_path}/Cabinet"
-    cab_xf = UsdGeom.Xform.Define(stage, cabinet_path)
-    UsdGeom.Xformable(cab_xf.GetPrim()).AddTranslateOp().Set(Gf.Vec3d(0, 0, half_h))
-    cab_box_path = f"{cabinet_path}/Body"
-    cab_box = UsdGeom.Cube.Define(stage, cab_box_path)
-    cab_box.CreateSizeAttr(1.0)
-    cab_box.AddScaleOp().Set(Gf.Vec3f(d, w, h))
-    cab_box.CreateDisplayColorAttr([(0.75, 0.75, 0.78)])
-    UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(cab_box_path))
-    if PhysxSchema:
-        PhysxSchema.PhysxCollisionAPI.Apply(stage.GetPrimAtPath(cab_box_path))
-    cab_prim = stage.GetPrimAtPath(cabinet_path)
-    UsdPhysics.RigidBodyAPI.Apply(cab_prim)
-    cab_prim.CreateAttribute("physics:kinematicEnabled", Sdf.ValueTypeNames.Bool).Set(True)
-
-    door_center_x = -half_d + door_d / 2.0
-    door_path = f"{base_path}/Door"
-    door_xf = UsdGeom.Xform.Define(stage, door_path)
-    UsdGeom.Xformable(door_xf.GetPrim()).AddTranslateOp().Set(Gf.Vec3d(door_center_x, 0, half_h))
-    door_box_path = f"{door_path}/Panel"
-    door_box = UsdGeom.Cube.Define(stage, door_box_path)
-    door_box.CreateSizeAttr(1.0)
-    door_box.AddScaleOp().Set(Gf.Vec3f(door_d, w, h))
-    door_box.CreateDisplayColorAttr([(0.72, 0.74, 0.78)])
-    UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(door_box_path))
-    if PhysxSchema:
-        PhysxSchema.PhysxCollisionAPI.Apply(stage.GetPrimAtPath(door_box_path))
-    door_prim = stage.GetPrimAtPath(door_path)
-    UsdPhysics.RigidBodyAPI.Apply(door_prim)
-    door_prim.CreateAttribute("physics:mass", Sdf.ValueTypeNames.Float).Set(5.0)
-    handle_path = f"{door_path}/Handle"
-    handle_xf = UsdGeom.Xform.Define(stage, handle_path)
-    UsdGeom.Xformable(handle_xf.GetPrim()).AddTranslateOp().Set(Gf.Vec3d(-0.02, half_w - 0.06, 0))
-    handle_box = UsdGeom.Cube.Define(stage, f"{handle_path}/Bar")
-    handle_box.CreateSizeAttr(1.0)
-    handle_box.AddScaleOp().Set(Gf.Vec3f(0.05, 0.10, 0.025))
-    handle_box.CreateDisplayColorAttr([(0.25, 0.25, 0.3)])
-    UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(f"{handle_path}/Bar"))
-    if PhysxSchema:
-        PhysxSchema.PhysxCollisionAPI.Apply(stage.GetPrimAtPath(f"{handle_path}/Bar"))
-
-    hinge_path = f"{base_path}/DoorHinge"
-    rev = UsdPhysics.RevoluteJoint.Define(stage, hinge_path)
-    rev.GetBody0Rel().SetTargets([Sdf.Path(cabinet_path)])
-    rev.GetBody1Rel().SetTargets([Sdf.Path(door_path)])
-    rev.CreateAxisAttr("Y")
-    rev.CreateLowerLimitAttr(0.0)
-    rev.CreateUpperLimitAttr(DISHWASHER_DOOR_OPEN_DEG)
-    rev.CreateLocalPos0Attr().Set(Gf.Vec3f(-half_d, hinge_y_local, 0.0))
-    rev.CreateLocalPos1Attr().Set(Gf.Vec3f(-door_d / 2.0, hinge_y_local, 0.0))
-
-    shelf_h = 0.015
-    shelf_dx, shelf_dy = d - 0.08, w - 0.08
-    for i, z_frac in enumerate([0.35, 0.65]):
-        z_pos = h * z_frac
-        shelf_path = f"{cabinet_path}/Rack{i}"
-        shelf_xf = UsdGeom.Xform.Define(stage, shelf_path)
-        UsdGeom.Xformable(shelf_xf.GetPrim()).AddTranslateOp().Set(Gf.Vec3d(0, 0, z_pos - half_h))
-        shelf_box = UsdGeom.Cube.Define(stage, f"{shelf_path}/Plane")
-        shelf_box.CreateSizeAttr(1.0)
-        shelf_box.AddScaleOp().Set(Gf.Vec3f(shelf_dx, shelf_dy, shelf_h))
-        shelf_box.CreateDisplayColorAttr([(0.6, 0.6, 0.65)])
-        UsdPhysics.CollisionAPI.Apply(stage.GetPrimAtPath(f"{shelf_path}/Plane"))
-        if PhysxSchema:
-            PhysxSchema.PhysxCollisionAPI.Apply(stage.GetPrimAtPath(f"{shelf_path}/Plane"))
-    print(f"[Bench] Dishwasher at ({pos_x}, {pos_y}): door hinge left, handle right, 2 racks")
-
-
 def _spawn_sink_cabinet(stage, base_path, pos_x, pos_y):
     """Cabinet with sink basin — collision surface inside basin so objects can be placed in the sink."""
     root = UsdGeom.Xform.Define(stage, base_path)
@@ -1112,8 +1019,6 @@ def build_clean_scene():
         extras = ["table", "mug"]
         if getattr(args, "fridge", False):
             extras.append("fridge")
-        if getattr(args, "dishwasher", True):
-            extras.append("dishwasher")
         if getattr(args, "sink", True):
             extras.append("sink cabinet")
         if getattr(args, "plate_fruit", True):
@@ -1216,28 +1121,6 @@ def _build_grasp_objects(stage):
                     UsdShade.MaterialBindingAPI.Apply(sp).Bind(
                         UsdShade.Material(stage.GetPrimAtPath(fridge_mat_path)))
 
-    # -- Dishwasher (openable door, handle, racks) --
-    if getattr(args, "dishwasher", True):
-        dishwasher_path = "/World/Dishwasher"
-        if not stage.GetPrimAtPath(dishwasher_path).IsValid():
-            _spawn_procedural_dishwasher(stage, dishwasher_path, DISHWASHER_X, DISHWASHER_Y)
-            app_mat_path = "/World/ApplianceFriction"
-            if not stage.GetPrimAtPath(app_mat_path).IsValid():
-                UsdShade.Material.Define(stage, app_mat_path)
-                ap = stage.GetPrimAtPath(app_mat_path)
-                UsdPhysics.MaterialAPI.Apply(ap)
-                ap.CreateAttribute("physics:staticFriction", Sdf.ValueTypeNames.Float).Set(0.8)
-                ap.CreateAttribute("physics:dynamicFriction", Sdf.ValueTypeNames.Float).Set(0.6)
-                ap.CreateAttribute("physics:restitution", Sdf.ValueTypeNames.Float).Set(0.01)
-            for prim_path in [f"{dishwasher_path}/Cabinet/Body", f"{dishwasher_path}/Door/Panel", f"{dishwasher_path}/Door/Handle/Bar"]:
-                p = stage.GetPrimAtPath(prim_path)
-                if p.IsValid() and not p.HasRelationship("material:binding"):
-                    UsdShade.MaterialBindingAPI.Apply(p).Bind(UsdShade.Material(stage.GetPrimAtPath(app_mat_path)))
-            for i in range(2):
-                rp = stage.GetPrimAtPath(f"{dishwasher_path}/Cabinet/Rack{i}/Plane")
-                if rp.IsValid() and not rp.HasRelationship("material:binding"):
-                    UsdShade.MaterialBindingAPI.Apply(rp).Bind(UsdShade.Material(stage.GetPrimAtPath(app_mat_path)))
-
     # -- Sink cabinet with basin (place objects in sink) --
     if getattr(args, "sink", True):
         sink_path = "/World/SinkCabinet"
@@ -1305,7 +1188,7 @@ def setup_cameras(output_dir, width, height, robot_prim_path=None):
             ),
         }
     elif args.grasp or getattr(args, "task_config", None):
-        # Legacy kitchen: table (1, 1.2), fridge (2.8, 0), dishwasher (2.8, -1), sink (2.4, 0.9)
+        # Legacy kitchen: table (1, 1.2), fridge (2.8, 0), sink (2.4, 0.9)
         kitchen_center_x = 1.4
         kitchen_center_y = 0.35
         kitchen_look_z = 0.8

@@ -1,61 +1,61 @@
-# Аналіз епізоду: чому гриппер не підняв чашку
+# Episode Analysis: Why the Gripper Did Not Lift the Mug
 
-## Що ви побачили
+## What you observed
 
-- Наведення було **хорошим**, чашка **між пальцями**.
-- Гриппер **не затиснув** (або система вважала, що не затиснув), чашка **не піднялась**, **не переставлена**.
+- Alignment was **good**, the mug was **between the fingers**.
+- The gripper **did not clamp** (or the system considered it unclamped), the mug **was not lifted** and **not relocated**.
 
-## Що насправді відбувалось
+## What actually happened
 
-### 1. Гриппер закрився і чашка була між пальцями
+### 1. The gripper closed and the mug was between the fingers
 
-У лозі епізоду в момент verify:
+In the episode log at the moment of verify:
 
 ```
 TOP retry 2/2: verify failed: xy_ok=False opening=0.041248979046940804
 ```
 
-- **opening ≈ 0.041 м (4.1 см)** — це типова ширина, коли пальці стиснуті на чашці (діаметр чашки між пальцями). Тобто **захват фізично був**: гриппер закрився, чашка між пальцями.
+- **opening ≈ 0.041 m (4.1 cm)** — this is the typical width when the fingers are clamped on the mug (the mug diameter between the fingers). In other words, **the grasp physically occurred**: the gripper closed, the mug was between the fingers.
 
-### 2. Чому тоді «verify failed»?
+### 2. Why then "verify failed"?
 
-У коді перехід з `verify_grasp` в `lift_mug` дозволений тільки якщо виконуються **обидві** умови:
+In the code the transition from `verify_grasp` to `lift_mug` is permitted only if **both** conditions are met:
 
-- **xy_ok** — відстань у горизонталі між **tool** (рамка гриппера, база пальців) і **центром чашки** ≤ `top_xy_tol` (за замовчуванням **0.01 м = 1 см**).
-- **hold_ok** — гриппер «тримає» щось: `opening >= 0.01` (у вас 0.041 — умова виконана).
+- **xy_ok** — horizontal distance between **tool** (gripper frame, finger base) and **mug centre** ≤ `top_xy_tol` (default **0.01 m = 1 cm**).
+- **hold_ok** — the gripper is "holding" something: `opening >= 0.01` (in your case 0.041 — condition satisfied).
 
-У вашому епізоді в момент verify було приблизно:
+In your episode at the moment of verify the values were approximately:
 
-- **tool** ≈ (1.997, -0.018, 0.867)  
-- **mug**   ≈ (2.018, -0.022, 0.814)  
+- **tool** ≈ (1.997, -0.018, 0.867)
+- **mug**   ≈ (2.018, -0.022, 0.814)
 
-Відстань по XY: √((2.018−1.997)² + (−0.022+0.018)²) ≈ **0.021 м ≈ 2.1 см**.
+XY distance: sqrt((2.018−1.997)² + (−0.022+0.018)²) ≈ **0.021 m ≈ 2.1 cm**.
 
-Тобто **xy_ok = False**, бо 2.1 см > 1 см. Тому система вважала verify невдалим, хоча візуально наведення було хорошим і чашка була між пальцями.
+So **xy_ok = False**, because 2.1 cm > 1 cm. Therefore the system considered the verify unsuccessful, even though visually the alignment was good and the mug was between the fingers.
 
-### 3. Чому tool і mug в XY різняться на 1–2 см при «хорошому» наведенні?
+### 3. Why do tool and mug differ by 1–2 cm in XY with "good" alignment?
 
-- **Tool** у коді — це позиція рамки **gripper_right_grasping_frame** (база гриппера / зап’ястя), а не кінчики пальців.
-- При вертикальному захваті **центр чашки** знаходиться перед і трохи нижче цієї рамки; плюс після контакту чашка трохи зміщується.
-- Тому навіть при ідеальному наведенні **відстань tool–mug по XY** часто буде **1.5–3 см**. Поріг 1 см занадто жорсткий і дає хибні «verify failed».
+- **Tool** in the code refers to the position of the **gripper_right_grasping_frame** (gripper base / wrist), not the fingertips.
+- During a vertical grasp the **mug centre** is in front of and slightly below this frame; additionally, after contact the mug shifts slightly.
+- Therefore, even with ideal alignment the **tool–mug XY distance** is often **1.5–3 cm**. A 1 cm threshold is too strict and produces false "verify failed" results.
 
-### 4. Наслідок
+### 4. Consequence
 
-- Verify вважається невдалим → спрацьовує **retry** (рука піднімається, знову наводиться, опускається, знову закриває).
-- Після двох retry система все одно переходить у `lift_mug`, але:
-  - або фізично захват уже гірший після двох «відпускань»,
-  - або таймаут/умови lift не виконуються.
-- У підсумку: **grasp_success = False**, чашка по суті не піднята і не переставлена, хоча в один з моментів вона була між пальцями.
+- Verify is considered unsuccessful → a **retry** fires (the arm rises, re-aligns, descends, closes again).
+- After two retries the system transitions to `lift_mug` anyway, but:
+  - either the grasp is physically worse after two "releases",
+  - or the timeout/lift conditions are not met.
+- The result: **grasp_success = False**, the mug is essentially not lifted and not relocated, even though at one point it was between the fingers.
 
-## Висновок
+## Conclusion
 
-- **Причина**: умова **xy_ok** у `verify_grasp` використовує **дуже жорсткий** допуск 1 см між позицією **рамки гриппера** і **центром чашки**, що не відповідає геометрії top-grasp (рамка завжди трохи зміщена відносно центру чашки).
-- **Наслідок**: навіть коли наведення хороше і чашка між пальцями (opening показує захват), verify дає **xy_ok=False** → retry → нестабільний/неповний цикл підйому та перестановки.
+- **Cause**: the **xy_ok** condition in `verify_grasp` uses a **very strict** tolerance of 1 cm between the **gripper frame** position and the **mug centre**, which does not match the top-grasp geometry (the frame is always slightly offset from the mug centre).
+- **Consequence**: even when alignment is good and the mug is between the fingers (opening indicates a grasp), verify returns **xy_ok=False** → retry → unstable/incomplete lift and relocation cycle.
 
-## Виправлення (зроблено в коді)
+## Fix (applied in code)
 
-- Додано окремий допуск **тільки для verify**: `--top-verify-xy-tol` (за замовчуванням **0.03 м**).
-- У стані `verify_grasp` для перевірки **xy_ok** використовується саме **top_verify_xy_tol**, а не `top_xy_tol` (0.01 м).
-- Так зберігається точне наведення перед спуском (top_xy_tol = 0.01), але після закриття гриппера не відхиляються хороші захвати через 1–2 см зміщення tool–mug.
+- A separate tolerance **for verify only** has been added: `--top-verify-xy-tol` (default **0.03 m**).
+- In the `verify_grasp` state the **xy_ok** check now uses **top_verify_xy_tol** rather than `top_xy_tol` (0.01 m).
+- This preserves precise alignment before descent (top_xy_tol = 0.01) but prevents good grasps from being rejected due to 1–2 cm tool–mug offset after gripper closure.
 
-Після цього при хорошому наведенні і чашці між пальцями verify має проходити, і цикл «затиснути → підняти → переставити» виконуватиметься коректно.
+After this fix, with good alignment and the mug between the fingers, verify should pass, and the "clamp → lift → relocate" cycle will execute correctly.

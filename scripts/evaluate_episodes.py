@@ -380,7 +380,7 @@ def compute_metrics(ep_dir: Path, dataset: dict) -> EpisodeMetrics:
     # Furniture (fridge, table, sink, etc.) is environment geometry that
     # may have unstable physics but should NOT cause episode failure.
     _FURNITURE_KEYWORDS = frozenset((
-        "fridge", "refrigerator", "dishwasher", "sink", "counter", "table",
+        "fridge", "refrigerator", "sink", "counter", "table",
         "shelf", "cabinet", "oven", "microwave", "door", "wall", "floor",
         "ceiling", "tiago", "light", "lamp",
     ))
