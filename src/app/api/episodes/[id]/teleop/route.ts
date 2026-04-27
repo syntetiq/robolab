@@ -15,6 +15,8 @@ const SUPPORTED_COMMANDS = new Set([
     "move_backward",
     "move_left",
     "move_right",
+    "rotate_left",
+    "rotate_right",
     "stop_motion",
     "grasp_mug",
     "go_home",
@@ -31,6 +33,24 @@ const SUPPORTED_COMMANDS = new Set([
     "moveit_open_close_fridge",
     "moveit_open_close_dishwasher",
     "moveit_go_home",
+    "open_gripper",
+    "close_gripper",
+    "torso_up",
+    "torso_down",
+    "arm_up",
+    "arm_down",
+    "arm_forward",
+    "arm_back",
+    "wrist_cw",
+    "wrist_ccw",
+    "wrist_90_cw",
+    "wrist_90_ccw",
+    "arm_extend",
+    "arm_extend_low",
+    "arm_raise_high",
+    "arm_home",
+    "pre_grasp",
+    "grasp_pose",
 ]);
 
 const RATE_LIMIT_WINDOW_MS = 1000;
@@ -87,10 +107,12 @@ async function appendLogLocal(logPath: string, line: string) {
 
 function getPaths(outputRoot: string, episodeId: string) {
     const base = path.join(outputRoot, "episodes");
+    const episodeDir = path.join(base, episodeId);
     return {
         state: path.join(base, `${episodeId}_teleop_state.json`),
         vrPid: path.join(base, `${episodeId}_vr.pid`),
         moveitPid: path.join(base, `${episodeId}_moveit.pid`),
+        moveitStackPids: path.join(episodeDir, "moveit_stack.pids"),
     };
 }
 
@@ -148,9 +170,11 @@ async function stopPid(pid: number) {
 
 function resolveCondaPython(): string {
     const home = os.homedir();
+    // Prefer lowercase 'mambaforge' -- local_setup.bat uses that casing in
+    // PYTHONPATH/AMENT_PREFIX_PATH, and WDAC may block DLLs if casing differs.
     const candidates = [
-        path.join(home, "Mambaforge", "envs", "ros2_humble", "python.exe"),
         path.join(home, "mambaforge", "envs", "ros2_humble", "python.exe"),
+        path.join(home, "Mambaforge", "envs", "ros2_humble", "python.exe"),
     ];
     for (const p of candidates) {
         if (fs.existsSync(p)) return p;
@@ -162,12 +186,12 @@ function resolveRos2ScriptInvoker() {
     const home = os.homedir();
     const candidates = [
         {
-            python: path.join(home, "Mambaforge", "envs", "ros2_humble", "python.exe"),
-            script: path.join(home, "Mambaforge", "envs", "ros2_humble", "Library", "bin", "ros2-script.py"),
-        },
-        {
             python: path.join(home, "mambaforge", "envs", "ros2_humble", "python.exe"),
             script: path.join(home, "mambaforge", "envs", "ros2_humble", "Library", "bin", "ros2-script.py"),
+        },
+        {
+            python: path.join(home, "Mambaforge", "envs", "ros2_humble", "python.exe"),
+            script: path.join(home, "Mambaforge", "envs", "ros2_humble", "Library", "bin", "ros2-script.py"),
         },
     ];
     for (const c of candidates) {
@@ -224,23 +248,26 @@ async function execMoveitIntentPub(
     rosNamespace: string,
     _ros2Invoker: string,
     ros2SetupCommand: string,
+    rosDomainId?: number,
 ): Promise<void> {
     const ns = normalizeNamespace(rosNamespace);
     const topic = `${ns}/moveit/intent`;
-    await execRos2StringPub(topic, intentValue, ros2SetupCommand);
+    await execRos2StringPub(topic, intentValue, ros2SetupCommand, rosDomainId);
 }
 
 async function execRos2StringPub(
     topic: string,
     value: string,
     ros2SetupCommand: string,
+    rosDomainId?: number,
 ): Promise<void> {
     const py = resolveCondaPython();
     const scriptPath = path.join(process.cwd(), "scripts", "ros2_pub_string.py");
     if (!py || !fs.existsSync(scriptPath)) {
         throw new Error("Conda python or ros2_pub_string.py not found");
     }
-    const cmd = `${py} ${scriptPath} ${topic} ${value}`;
+    const domainEnv = rosDomainId != null ? `set ROS_DOMAIN_ID=${rosDomainId}&& set ROS_LOCALHOST_ONLY=1&& ` : "";
+    const cmd = `${domainEnv}${py} ${scriptPath} ${topic} ${value}`;
     await execAsync(wrapWithSetup(cmd, ros2SetupCommand), { timeout: 10000 });
 }
 
@@ -371,6 +398,7 @@ export async function POST(
             ACTION: command,
             ROS2_SETUP: ros2SetupCommand,
             INPUT_SOURCE: resolvedInput.source,
+            PROJECT: process.cwd(),
         };
 
         const teleopTemplate = (episode.launchProfile?.teleopLaunchTemplate || "").trim();
@@ -427,9 +455,26 @@ export async function POST(
                 state.moveitSessionActive = true;
                 state.bridgeMode = "template_session";
             } else if (command === "stop_moveit_session") {
+                // Kill the launcher PID
                 if (fs.existsSync(outputPaths.moveitPid)) {
                     const pid = Number(fs.readFileSync(outputPaths.moveitPid, "utf8").trim());
                     try { await stopPid(pid); } catch {}
+                }
+                // Kill all child PIDs written by start_moveit_stack.ps1
+                if (fs.existsSync(outputPaths.moveitStackPids)) {
+                    const pids = fs.readFileSync(outputPaths.moveitStackPids, "utf8")
+                        .split(/\r?\n/)
+                        .map(s => Number(s.trim()))
+                        .filter(n => Number.isInteger(n) && n > 0);
+                    for (const pid of pids) {
+                        try { await stopPid(pid); } catch {}
+                    }
+                }
+                // Also run the -Stop flag to clean up by process pattern
+                const stopTemplate = (episode.launchProfile?.stopTemplate || "").trim();
+                if (stopTemplate) {
+                    const resolvedStop = templateWithTokens(stopTemplate, tokenMap);
+                    try { await execAsync(resolvedStop, { timeout: 10000 }); } catch {}
                 }
                 state.moveitSessionActive = false;
                 state.bridgeMode = "template_session";
@@ -447,12 +492,32 @@ export async function POST(
                     moveit_open_close_fridge: "open_close_fridge",
                     moveit_open_close_dishwasher: "open_close_dishwasher",
                     moveit_go_home: "go_home",
+                    open_gripper: "open_gripper",
+                    close_gripper: "close_gripper",
+                    torso_up: "torso_up",
+                    torso_down: "torso_down",
+                    arm_up: "arm_up",
+                    arm_down: "arm_down",
+                    arm_forward: "arm_forward",
+                    arm_back: "arm_back",
+                    wrist_cw: "wrist_cw",
+                    wrist_ccw: "wrist_ccw",
+                    wrist_90_cw: "wrist_90_cw",
+                    wrist_90_ccw: "wrist_90_ccw",
+                    arm_extend: "arm_extend",
+                    arm_extend_low: "arm_extend_low",
+                    arm_raise_high: "arm_raise_high",
+                    arm_home: "arm_home",
+                    pre_grasp: "pre_grasp",
+                    grasp_pose: "grasp_pose",
                 };
                 const teleopIntentMap: Record<string, string> = {
                     move_forward: "move_forward",
                     move_backward: "move_backward",
                     move_left: "move_left",
                     move_right: "move_right",
+                    rotate_left: "rotate_left",
+                    rotate_right: "rotate_right",
                     stop_motion: "stop_motion",
                     grasp_mug: "grasp_mug",
                     go_home: "go_home",
@@ -469,6 +534,7 @@ export async function POST(
                             config.rosNamespace,
                             ros2Probe.ros2Invoker,
                             ros2SetupCommand,
+                            config.rosDomainId,
                         );
                         state.bridgeMode = "ros2_default";
                     } catch (err: any) {
@@ -476,18 +542,38 @@ export async function POST(
                         state.lastError = err?.message || "ROS2 moveit intent pub failed.";
                         await appendLogLocal(logPath, `[Teleop] ROS2 moveit intent failed for ${command}: ${state.lastError}`);
                     }
-                } else if (isTeleopIntent && teleopIntentValue && ros2Probe.ros2Available) {
-                    try {
-                        await execRos2StringPub(
-                            `${normalizeNamespace(config.rosNamespace)}/teleop/intent`,
-                            teleopIntentValue,
-                            ros2SetupCommand,
-                        );
-                        state.bridgeMode = "ros2_default";
-                    } catch (err: any) {
-                        state.bridgeMode = "ros2_failed";
-                        state.lastError = err?.message || "ROS2 teleop intent pub failed.";
-                        await appendLogLocal(logPath, `[Teleop] ROS2 teleop intent failed for ${command}: ${state.lastError}`);
+                } else if (isTeleopIntent && teleopIntentValue) {
+                    const baseCmdMap: Record<string, { vx: number; vy: number; vyaw: number }> = {
+                        move_forward:  { vx:  0.3, vy: 0.0, vyaw: 0.0 },
+                        move_backward: { vx: -0.3, vy: 0.0, vyaw: 0.0 },
+                        move_left:     { vx: 0.0, vy:  0.3, vyaw: 0.0 },
+                        move_right:    { vx: 0.0, vy: -0.3, vyaw: 0.0 },
+                        rotate_left:   { vx: 0.0, vy: 0.0, vyaw:  0.5 },
+                        rotate_right:  { vx: 0.0, vy: 0.0, vyaw: -0.5 },
+                        stop_motion:   { vx: 0.0, vy: 0.0, vyaw: 0.0 },
+                    };
+                    const baseCmd = baseCmdMap[teleopIntentValue];
+                    if (baseCmd) {
+                        const baseCmdFile = path.join(config.defaultOutputDir || "C:\\RoboLab_Data", "fjt_proxy", "base_cmd.json");
+                        fs.mkdirSync(path.dirname(baseCmdFile), { recursive: true });
+                        fs.writeFileSync(baseCmdFile, JSON.stringify(baseCmd), "utf8");
+                        state.bridgeMode = "ipc_base_cmd";
+                    } else if (teleopIntentValue === "go_home" && ros2Probe.ros2Available) {
+                        try {
+                            await execMoveitIntentPub("go_home", config.rosNamespace, ros2Probe.ros2Invoker, ros2SetupCommand, config.rosDomainId);
+                            state.bridgeMode = "ros2_default";
+                        } catch (err: any) {
+                            state.bridgeMode = "ros2_failed";
+                            state.lastError = err?.message || "ROS2 go_home failed.";
+                        }
+                    } else if (teleopIntentValue === "grasp_mug" && ros2Probe.ros2Available) {
+                        try {
+                            await execMoveitIntentPub("grasp_mug", config.rosNamespace, ros2Probe.ros2Invoker, ros2SetupCommand, config.rosDomainId);
+                            state.bridgeMode = "ros2_default";
+                        } catch (err: any) {
+                            state.bridgeMode = "ros2_failed";
+                            state.lastError = err?.message || "ROS2 grasp_mug failed.";
+                        }
                     }
                 } else {
                     const defaultCommand = buildDefaultRos2Command(command, config.rosNamespace, ros2Probe.ros2Invoker);

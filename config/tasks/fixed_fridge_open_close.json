@@ -1,0 +1,85 @@
+{
+  "episode_name": "fixed_fridge_open_close",
+  "description": "Drive to fridge, open door, close door, return to start",
+  "kitchen_scene": "fixed",
+  "simulation_duration_s": 320,
+  "scene": {
+    "fridge": true,
+    "sink": true,
+    "plate_fruit": true
+  },
+  "robot": {
+    "start_pose": [0.0, 0.0, 90],
+    "model": "heavy",
+    "gripper_length_m": 0.10,
+    "robot_profile": "config/robots/tiago_heavy.yaml"
+  },
+  "global": {
+    "drive_speed_ms": 0.3,
+    "approach_clearance_m": 0.10,
+    "torso_speed": 0.05,
+    "on_task_failure": "abort"
+  },
+  "sensors": {
+    "robot_head_camera": true,
+    "wrist_camera": true,
+    "external_camera": true,
+    "replicator_depth": true,
+    "contact_sensors": true
+  },
+  "tasks": [
+    {
+      "id": "T1_drive_to_fridge",
+      "type": "navigate_to",
+      "target_xy": [-1.25, 2.10],
+      "tolerance_m": 0.30,
+      "timeout_s": 50,
+      "drive_speed_ms": 0.4
+    },
+    {
+      "id": "T2_open_fridge",
+      "type": "open_door",
+      "handle_usd_path": "/World/Kitchen/Furniture/Fridge/Door/Handle",
+      "target_angle_deg": 90,
+      "approach_axis": "y",
+      "arm_reach_m": 0.75,
+      "base_lateral_offset_m": 0.34,
+      "arm_pose": "handle_reach_right",
+      "use_arm": "right",
+      "pull_speed_ms": 0.12,
+      "timeout_s": 90,
+      "hinge_world_xy": [-1.75, 3.05],
+      "success_criteria": {
+        "door_joint_path": "/World/Kitchen/Furniture/Fridge/DoorHinge",
+        "min_angle_deg": 30,
+        "hinge_world_xy": [-1.75, 3.05]
+      }
+    },
+    {
+      "id": "T3_close_fridge",
+      "type": "close_door",
+      "handle_usd_path": "/World/Kitchen/Furniture/Fridge/Door/Handle",
+      "approach_axis": "y",
+      "arm_reach_m": 0.75,
+      "base_lateral_offset_m": 0.34,
+      "arm_pose": "handle_reach_right",
+      "use_arm": "right",
+      "push_speed_ms": 0.10,
+      "timeout_s": 90,
+      "hinge_world_xy": [-1.75, 3.05],
+      "success_criteria": {
+        "door_joint_path": "/World/Kitchen/Furniture/Fridge/DoorHinge",
+        "max_angle_deg": 10,
+        "hinge_world_xy": [-1.75, 3.05]
+      }
+    },
+    {
+      "id": "T4_return_to_start",
+      "type": "navigate_to",
+      "target_xy": [0.0, 0.0],
+      "tolerance_m": 0.30,
+      "timeout_s": 60,
+      "drive_speed_ms": 0.4
+    }
+  ]
+}

@@ -1,0 +1,161 @@
+{
+  "episode_name": "fixed_fridge_experiment3",
+  "description": "Drive to fridge, grasp handle with right arm, pull door open, return to center",
+  "kitchen_scene": "fixed",
+  "simulation_duration_s": 300,
+
+  "scene": {
+    "fridge":      true,
+    "sink":        true,
+    "plate_fruit": true
+  },
+
+  "robot": {
+    "start_pose": [0.0, 0.0, 90],
+    "model": "heavy",
+    "gripper_length_m": 0.10,
+    "robot_profile": "config/robots/tiago_heavy.yaml"
+  },
+
+  "global": {
+    "drive_speed_ms": 0.3,
+    "approach_clearance_m": 0.10,
+    "torso_speed": 0.05,
+    "on_task_failure": "abort"
+  },
+
+  "safety": {
+    "table_south_boundary_y": 2.75,
+    "furniture_zones": [
+      {"name": "fridge",       "cx": -1.35, "cy": 3.45, "hw": 0.50, "hd": 0.50},
+      {"name": "sink_cabinet", "cx":  0.45, "cy": 3.60, "hw": 0.50, "hd": 0.40},
+      {"name": "table",        "cx":  1.35, "cy": 3.55, "hw": 0.50, "hd": 0.50}
+    ],
+    "nav_margin": 0.35
+  },
+
+  "control": {
+    "grasp_settle_steps": 120,
+    "settle_steps": 240,
+    "extend_arm_steps": 300,
+    "rotate_timeout_steps": 1200,
+    "drive_to_mug_timeout_steps": 1800,
+    "settle_at_table_steps": 360,
+    "approach_timeout_steps": 1800,
+    "descend_timeout_steps": 3000,
+    "close_gripper_step": 45,
+    "close_gripper_timeout": 270,
+    "verify_grasp_min_steps": 60,
+    "lift_interpolation_steps": 600,
+    "lift_verify_steps": 240,
+    "lift_timeout_steps": 1500,
+    "place_descent_steps": 600
+  },
+
+  "grasp": {
+    "pre_grasp_pose": "pre_grasp_top",
+    "j4_extended": -0.35,
+    "j4_retracted": 0.30,
+    "torso_approach": 0.35,
+    "torso_settle": 0.15,
+    "torso_hold": 0.35,
+    "top_xy_tol": 0.01,
+    "top_descend_clearance": 0.04,
+    "top_descend_speed": 0.03,
+    "top_verify_xy_tol": 0.05,
+    "gripper_close_value": 0.015,
+    "gripper_final_close_value": 0.010,
+    "gripper_hold_threshold": 0.005
+  },
+
+  "navigation": {
+    "rotate_tolerance_deg": 5.0,
+    "rotate_speed_fast": 0.3,
+    "rotate_speed_slow": 0.15,
+    "rotate_speed_threshold_deg": 20.0,
+    "drive_speed_cap": 0.12,
+    "y_align_tolerance": 0.005,
+    "y_align_speed": 0.06,
+    "approach_speed": 0.02,
+    "x_guard_extra": 0.20,
+    "stuck_threshold": 0.002,
+    "stuck_trigger_steps": 600,
+    "stuck_phase_steps": 300,
+    "stuck_lateral_factor": 0.3,
+    "stuck_backward_factor": 0.4,
+    "velocity_norm_scale": 2.0,
+    "velocity_min_dist": 0.01
+  },
+
+  "placement": {
+    "table_top_z": 0.80,
+    "table_cx": 1.35,
+    "table_cy": 3.45,
+    "table_half_w": 0.40,
+    "table_half_d": 0.40,
+    "bounds_margin": 0.05,
+    "abort_below_z_offset": -0.05,
+    "release_z_offset": 0.02,
+    "success_z_offset": 0.15
+  },
+
+  "physics": {
+    "physics_dt": 0.008333333333333333,
+    "rendering_dt": 0.016666666666666666,
+    "log_every": 6,
+    "console_every": 60,
+    "render_every": 2
+  },
+
+  "tasks": [
+    {
+      "id": "T1_drive_to_fridge",
+      "type": "navigate_to",
+      "target_xy": [-1.25, 2.10],
+      "tolerance_m": 0.30,
+      "timeout_s": 50,
+      "drive_speed_ms": 0.4,
+      "annotation": "Drive south of fridge handle (handle closed at -1.65, 2.96; robot positions south with left arm reaching north-west)"
+    },
+    {
+      "id": "T2_open_fridge",
+      "type": "open_door",
+      "handle_usd_path": "/World/Kitchen/Furniture/Fridge/Door/Handle",
+      "target_angle_deg": 90,
+      "approach_axis": "y",
+      "arm_reach_m": 0.75,
+      "base_lateral_offset_m": 0.34,
+      "arm_pose": "handle_reach_right",
+      "use_arm": "right",
+      "pull_speed_ms": 0.12,
+      "timeout_s": 80,
+      "hinge_world_xy": [-1.75, 3.05],
+      "success_criteria": {
+        "door_joint_path": "/World/Kitchen/Furniture/Fridge/DoorHinge",
+        "min_angle_deg": 30,
+        "hinge_world_xy": [-1.75, 3.05]
+      },
+      "retreat_after_grasp_m": 0.02,
+      "retreat_only": true,
+      "retreat_second_m": 0.10,
+      "base_stop_short_m": 0.30,
+      "base_left_shift_m": 0.16,
+      "approach_creep_forward_m": 0.12,
+      "handle_gripper_close_m": 0.010,
+      "door_torso_height": 0.35,
+      "door_settle_steps": 240,
+      "door_creep_speed": 0.03,
+      "door_retreat_speed": 0.03,
+      "annotation": "Stop 30 cm short, 16 cm left; creep 12 cm, close gripper to 0.010; retreat 2+10 cm south with grip; return to center"
+    },
+    {
+      "id": "T4_return_to_start",
+      "type": "navigate_to",
+      "target_xy": [0.0, 0.0],
+      "tolerance_m": 0.30,
+      "timeout_s": 60,
+      "drive_speed_ms": 0.4,
+      "annotation": "Return to center of room (0, 0) - mandatory"
+    }
+  ]
+}

@@ -29,12 +29,22 @@ function findLatestRgbFrame(rootDir: string): string | null {
     return latestPath;
 }
 
+const CAMERA_DIR_MAP: Record<string, string> = {
+    camera_0: "replicator_data",
+    camera_1_wrist: "replicator_wrist",
+    camera_2_external: "replicator_external",
+};
+
 export async function GET(
-    _request: Request,
+    request: Request,
     { params }: { params: Promise<{ id: string }> },
 ) {
     try {
         const { id } = await params;
+        const url = new URL(request.url);
+        const cameraParam = url.searchParams.get("camera") || "camera_0";
+        const cameraDir = CAMERA_DIR_MAP[cameraParam] || "replicator_data";
+
         const episode = await prisma.episode.findUnique({ where: { id } });
         if (!episode) {
             return NextResponse.json({ error: "Episode not found" }, { status: 404 });
@@ -44,7 +54,11 @@ export async function GET(
         }
 
         const outputDir = path.resolve(process.cwd(), episode.outputDir);
-        const replicatorDir = path.join(outputDir, "replicator_data");
+        let replicatorDir = path.join(outputDir, cameraDir);
+        // Fallback to default camera if requested camera dir doesn't exist
+        if (!fs.existsSync(replicatorDir)) {
+            replicatorDir = path.join(outputDir, "replicator_data");
+        }
         const latestFrame = findLatestRgbFrame(replicatorDir);
         if (!latestFrame || !fs.existsSync(latestFrame)) {
             return NextResponse.json({ error: "No live frame available yet" }, { status: 404 });

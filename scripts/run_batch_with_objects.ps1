@@ -32,7 +32,7 @@ $scenarios = @(
     "plan_pick_fridge"
 )
 
-# Single scene selected: Small_House has fridge, dishwasher, sink, table, large navigable floor.
+# Single scene selected: Small_House has fridge, sink, table, large navigable floor.
 $scenes = @(
     @{ Name = "Small_House"; Path = "C:\RoboLab_Data\scenes\Small_House_Interactive.usd" }
 )

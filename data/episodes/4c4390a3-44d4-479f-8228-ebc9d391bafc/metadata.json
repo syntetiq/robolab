@@ -1,0 +1,20 @@
+{
+  "id": "4c4390a3-44d4-479f-8228-ebc9d391bafc",
+  "sceneId": null,
+  "objectSetId": null,
+  "launchProfileId": null,
+  "tasks": "[\"choreography\"]",
+  "sensors": "[\"RGB_front\", \"RGB_side\", \"RGB_top\"]",
+  "randomizationConfig": "{}",
+  "seed": 42,
+  "durationSec": 49,
+  "status": "completed",
+  "startedAt": "2026-03-12T20:57:21.272963+00:00",
+  "stoppedAt": "2026-03-12T20:57:21.272963+00:00",
+  "outputDir": "data\\episodes\\4c4390a3-44d4-479f-8228-ebc9d391bafc",
+  "bagPath": "",
+  "metadataPath": "data\\episodes\\4c4390a3-44d4-479f-8228-ebc9d391bafc\\metadata.json",
+  "notes": "Choreography: fwd 1m arms-forward, right 1m arms-down, right 1m Y-pose, rotate 90 CW heart-pose",
+  "createdAt": "2026-03-12T20:57:21.272963+00:00",
+  "updatedAt": "2026-03-12T20:57:21.272963+00:00"
+}

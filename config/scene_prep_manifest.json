@@ -1,0 +1,52 @@
+{
+  "defaults": {
+    "floor": {
+      "halfHeightM": 0.1,
+      "sizeXYM": 100.0,
+      "topZ": 0.0,
+      "contactOffset": 0.02,
+      "restOffset": 0.0
+    },
+    "spawnPose": {
+      "x": 1.0,
+      "y": -1.0,
+      "z": 0.03
+    },
+    "spawnPad": {
+      "sizeX": 2.0,
+      "sizeY": 2.0,
+      "heightM": 0.2
+    },
+    "fitProbes": {
+      "navProbeTargets": [
+        [1.4, -1.0],
+        [1.0, -0.6]
+      ],
+      "manipProbeJointTargets": [1.5, 0.0, 0.0, 0.0, -1.57, 0.0, 0.0]
+    }
+  },
+  "profiles": [
+    {
+      "id": "office",
+      "patterns": ["*Office*", "*Meeting*", "*Canonical*"],
+      "spawnPose": { "x": 0.8, "y": 0.0, "z": 0.03 },
+      "fitProbes": {
+        "navProbeTargets": [
+          [1.2, 0.0],
+          [0.8, 0.4]
+        ]
+      }
+    },
+    {
+      "id": "kitchen",
+      "patterns": ["*Kitchen*"],
+      "spawnPose": { "x": 0.8, "y": 0.0, "z": 0.03 },
+      "fitProbes": {
+        "navProbeTargets": [
+          [1.0, 0.0],
+          [0.8, 0.4]
+        ]
+      }
+    }
+  ]
+}

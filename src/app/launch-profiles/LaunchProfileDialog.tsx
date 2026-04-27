@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { HelpTooltip } from "@/components/HelpTooltip";
 
 export default function LaunchProfileDialog({
     open,
@@ -19,14 +20,25 @@ export default function LaunchProfileDialog({
     profile?: any;
     onSaved: () => void;
 }) {
+    const scenePresets = [
+        { id: "kitchen_fixed", label: "Kitchen Fixed (stable)", path: "C:\\RoboLab_Data\\scenes\\kitchen_fixed.usd" },
+        { id: "small_house", label: "Small House", path: "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd" },
+        { id: "office_interactive", label: "Office Interactive", path: "C:\\RoboLab_Data\\scenes\\Office_Interactive.usd" },
+        { id: "office_studio_exp", label: "Office Studio (experimental)", path: "C:\\RoboLab_Data\\scenes\\Office_Studio_TiagoCompatible.usda" },
+        { id: "office_fixed", label: "Office Fixed (open-space)", path: "C:\\RoboLab_Data\\scenes\\office_fixed.usd" },
+    ];
     const [formData, setFormData] = useState({
         name: "",
         runnerMode: "SSH_RUNNER",
         scriptName: "data_collector_tiago.py",
         environmentUsd: "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd",
         enableWebRTC: false,
+        enableGuiMode: false,
         enableVrTeleop: false,
+        enableVrPassthrough: false,
         enableMoveIt: false,
+        enableWristCamera: false,
+        enableExternalCamera: false,
         robotPovCameraPrim: "/World/Tiago",
         ros2SetupCommand: "",
         isaacLaunchTemplate: "",
@@ -46,8 +58,12 @@ export default function LaunchProfileDialog({
                     scriptName: profile.scriptName || "data_collector_tiago.py",
                     environmentUsd: profile.environmentUsd || "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd",
                     enableWebRTC: !!profile.enableWebRTC,
+                    enableGuiMode: !!profile.enableGuiMode,
                     enableVrTeleop: !!profile.enableVrTeleop,
+                    enableVrPassthrough: !!profile.enableVrPassthrough,
                     enableMoveIt: !!profile.enableMoveIt,
+                    enableWristCamera: !!profile.enableWristCamera,
+                    enableExternalCamera: !!profile.enableExternalCamera,
                     robotPovCameraPrim: profile.robotPovCameraPrim || "/World/Tiago",
                     ros2SetupCommand: profile.ros2SetupCommand || "",
                     isaacLaunchTemplate: profile.isaacLaunchTemplate,
@@ -63,8 +79,12 @@ export default function LaunchProfileDialog({
                     scriptName: "data_collector_tiago.py",
                     environmentUsd: "C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd",
                     enableWebRTC: false,
+                    enableGuiMode: false,
                     enableVrTeleop: false,
+                    enableVrPassthrough: false,
                     enableMoveIt: false,
+                    enableWristCamera: false,
+                    enableExternalCamera: false,
                     robotPovCameraPrim: "/World/Tiago",
                     ros2SetupCommand: "",
                     isaacLaunchTemplate: "",
@@ -146,6 +166,19 @@ export default function LaunchProfileDialog({
                                 className="font-mono text-xs"
                                 placeholder="C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd"
                             />
+                            <Select
+                                onValueChange={(presetId) => {
+                                    const preset = scenePresets.find((p) => p.id === presetId);
+                                    if (preset) setFormData({ ...formData, environmentUsd: preset.path });
+                                }}
+                            >
+                                <SelectTrigger><SelectValue placeholder="Quick preset (optional)" /></SelectTrigger>
+                                <SelectContent>
+                                    {scenePresets.map((preset) => (
+                                        <SelectItem key={preset.id} value={preset.id}>{preset.label}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
                         </div>
                         <div className="flex items-center space-x-2">
                             <input
@@ -155,6 +188,16 @@ export default function LaunchProfileDialog({
                                 onChange={(e) => setFormData({ ...formData, enableWebRTC: e.target.checked })}
                             />
                             <Label htmlFor="enableWebRTC">Enable WebRTC livestream</Label>
+                            <HelpTooltip content="Stream live video from Isaac Sim to the browser via WebRTC." />
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <input
+                                id="enableGuiMode"
+                                type="checkbox"
+                                checked={formData.enableGuiMode}
+                                onChange={(e) => setFormData({ ...formData, enableGuiMode: e.target.checked })}
+                            />
+                            <Label htmlFor="enableGuiMode">GUI mode (Isaac Sim visible window, no streaming)</Label>
                         </div>
                         <div className="flex items-center space-x-2">
                             <input
@@ -165,6 +208,18 @@ export default function LaunchProfileDialog({
                             />
                             <Label htmlFor="enableVrTeleop">Enable VR teleoperation mode (Vive/OpenXR)</Label>
                         </div>
+                        <div className="flex items-center space-x-2 ml-6">
+                            <input
+                                id="enableVrPassthrough"
+                                type="checkbox"
+                                checked={formData.enableVrPassthrough}
+                                onChange={(e) => setFormData({ ...formData, enableVrPassthrough: e.target.checked })}
+                                disabled={!formData.enableVrTeleop}
+                            />
+                            <Label htmlFor="enableVrPassthrough" className={!formData.enableVrTeleop ? "text-muted-foreground" : ""}>
+                                VR Passthrough (auto-open robot POV stream in SteamVR overlay)
+                            </Label>
+                        </div>
                         <div className="flex items-center space-x-2">
                             <input
                                 id="enableMoveIt"
@@ -173,6 +228,25 @@ export default function LaunchProfileDialog({
                                 onChange={(e) => setFormData({ ...formData, enableMoveIt: e.target.checked })}
                             />
                             <Label htmlFor="enableMoveIt">Enable MoveIt integration mode</Label>
+                            <HelpTooltip content="Start MoveIt motion planning stack for arm manipulation tasks." />
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <input
+                                id="enableWristCamera"
+                                type="checkbox"
+                                checked={formData.enableWristCamera}
+                                onChange={(e) => setFormData({ ...formData, enableWristCamera: e.target.checked })}
+                            />
+                            <Label htmlFor="enableWristCamera">Wrist camera (gripper close-up)</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                            <input
+                                id="enableExternalCamera"
+                                type="checkbox"
+                                checked={formData.enableExternalCamera}
+                                onChange={(e) => setFormData({ ...formData, enableExternalCamera: e.target.checked })}
+                            />
+                            <Label htmlFor="enableExternalCamera">External camera (third-person view)</Label>
                         </div>
                         <div className="space-y-2">
                             <Label>Robot POV Camera Prim</Label>

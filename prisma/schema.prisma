@@ -40,7 +40,7 @@ model Scene {
   stageUsdPath     String
   mapPath          String?
   robotSpawnPose   String    @default("{}") // Json string
-  capabilities     String    @default("[]") // Json string (e.g. ["hasFridge", "hasDishwasher"])
+  capabilities     String    @default("[]") // Json string (e.g. ["hasFridge", "hasSink"])
   notes            String    @default("")
   tags             String    @default("[]") // Json string
   enabled          Boolean   @default(true)
@@ -68,8 +68,12 @@ model LaunchProfile {
   scriptName             String    @default("data_collector_tiago.py")
   environmentUsd         String    @default("C:\\RoboLab_Data\\scenes\\Small_House_Interactive.usd")
   enableWebRTC           Boolean   @default(false)
+  enableGuiMode          Boolean   @default(false)
   enableVrTeleop         Boolean   @default(false)
+  enableVrPassthrough    Boolean   @default(false)
   enableMoveIt           Boolean   @default(false)
+  enableWristCamera      Boolean   @default(false)
+  enableExternalCamera   Boolean   @default(false)
   robotPovCameraPrim     String    @default("/World/Tiago")
   ros2SetupCommand       String    @default("")
   isaacLaunchTemplate    String    @default("")
@@ -89,6 +93,9 @@ model Episode {
   objectSet            ObjectSet? @relation(fields: [objectSetId], references: [id])
   launchProfileId      String?
   launchProfile        LaunchProfile? @relation(fields: [launchProfileId], references: [id])
+  batchId              String?
+  batch                EpisodeBatch? @relation(fields: [batchId], references: [id])
+  batchIndex           Int?
   tasks                String    @default("[]") // Json string
   sensors              String    @default("[]") // Json string
   randomizationConfig  String    @default("{}") // Json string
@@ -104,6 +111,27 @@ model Episode {
   notes                String    @default("")
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
+}
+
+model EpisodeBatch {
+  id              String    @id @default(uuid())
+  name            String
+  description     String    @default("")
+  status          String    @default("created") // created|running|paused|completed|failed
+  sceneId         String
+  launchProfileId String?
+  objectSetId     String?
+  taskConfigPath  String    @default("") // path to config/tasks/*.json
+  durationSec     Int       @default(60)
+  totalEpisodes   Int       @default(1)
+  completedCount  Int       @default(0)
+  failedCount     Int       @default(0)
+  baseSeed        Int       @default(42)
+  variationConfig String    @default("{}") // Json: which params vary per episode
+  currentIndex    Int       @default(0)
+  episodes        Episode[]
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 }
 
 model HostLock {

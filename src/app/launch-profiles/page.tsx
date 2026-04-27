@@ -7,6 +7,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Edit2, MoreVertical, Plus, Trash2 } from "lucide-react";
 import LaunchProfileDialog from "./LaunchProfileDialog";
 import { Badge } from "@/components/ui/badge";
+import { HelpTooltip } from "@/components/HelpTooltip";
 
 export default function LaunchProfilesPage() {
     const [profiles, setProfiles] = useState<any[]>([]);
@@ -69,9 +70,9 @@ export default function LaunchProfilesPage() {
                     <TableHeader>
                         <TableRow>
                             <TableHead>Name</TableHead>
-                            <TableHead>Runner Mode</TableHead>
-                            <TableHead>Isaac Template</TableHead>
-                            <TableHead>rosbag Template</TableHead>
+                            <TableHead><span className="flex items-center">Runner Mode <HelpTooltip content="LOCAL_RUNNER = execute on this PC, SSH_RUNNER = remote via SSH." /></span></TableHead>
+                            <TableHead><span className="flex items-center">Isaac Template <HelpTooltip content="Command template for launching Isaac Sim." /></span></TableHead>
+                            <TableHead><span className="flex items-center">rosbag Template <HelpTooltip content="Command template for starting ROS 2 bag recording." /></span></TableHead>
                             <TableHead className="w-[80px] text-right">Actions</TableHead>
                         </TableRow>
                     </TableHeader>

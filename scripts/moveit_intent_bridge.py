@@ -9,6 +9,7 @@ Run alongside move_group.
 """
 
 import argparse
+import collections
 import json
 import os
 import sys
@@ -116,7 +117,7 @@ TIAGO_PICK_SINK_JOINTS = {
     "torso_lift_joint": 0.25,
     "arm_1_joint": 1.50,
     "arm_2_joint": -0.30,
-    "arm_3_joint": -1.80,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.80,
     "arm_5_joint": -1.00,
     "arm_6_joint": 0.50,
@@ -128,23 +129,11 @@ TIAGO_PICK_FRIDGE_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 1.20,
     "arm_2_joint": -0.60,
-    "arm_3_joint": -1.50,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.60,
     "arm_5_joint": -0.50,
     "arm_6_joint": 0.30,
     "arm_7_joint": -0.20,
-}
-
-# Pick from dishwasher – lower torso, arm reaching forward-low.
-TIAGO_PICK_DISHWASHER_JOINTS = {
-    "torso_lift_joint": 0.10,
-    "arm_1_joint": 1.30,
-    "arm_2_joint": 0.10,
-    "arm_3_joint": -1.60,
-    "arm_4_joint": 2.00,
-    "arm_5_joint": -0.80,
-    "arm_6_joint": 0.50,
-    "arm_7_joint": 0.0,
 }
 
 # Place pose – arm extended to the side at table height.
@@ -152,7 +141,7 @@ TIAGO_PLACE_JOINTS = {
     "torso_lift_joint": 0.25,
     "arm_1_joint": 0.80,
     "arm_2_joint": -0.20,
-    "arm_3_joint": -1.40,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.90,
     "arm_5_joint": -1.20,
     "arm_6_joint": 0.60,
@@ -164,23 +153,47 @@ TIAGO_OPEN_CLOSE_FRIDGE_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 1.00,
     "arm_2_joint": -0.80,
-    "arm_3_joint": -1.30,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.50,
     "arm_5_joint": -0.70,
     "arm_6_joint": 0.40,
     "arm_7_joint": 0.50,
 }
 
-# Open/close dishwasher – arm down and forward for low handle.
-TIAGO_OPEN_CLOSE_DISHWASHER_JOINTS = {
-    "torso_lift_joint": 0.10,
-    "arm_1_joint": 1.20,
-    "arm_2_joint": 0.20,
-    "arm_3_joint": -1.50,
-    "arm_4_joint": 2.00,
-    "arm_5_joint": -0.90,
-    "arm_6_joint": 0.30,
-    "arm_7_joint": 0.60,
+# Arm fully extended straight forward – shoulder forward, elbow straight.
+TIAGO_ARM_EXTEND_FORWARD_JOINTS = {
+    "torso_lift_joint": 0.25,
+    "arm_1_joint": 1.57,
+    "arm_2_joint": 0.0,
+    "arm_3_joint": 0.0,
+    "arm_4_joint": 0.0,
+    "arm_5_joint": 0.0,
+    "arm_6_joint": 0.0,
+    "arm_7_joint": 0.0,
+}
+
+# Arm extended forward low – shoulder forward, elbow slightly bent down.
+TIAGO_ARM_EXTEND_LOW_JOINTS = {
+    "torso_lift_joint": 0.15,
+    "arm_1_joint": 1.57,
+    "arm_2_joint": 0.40,
+    "arm_3_joint": 0.0,
+    "arm_4_joint": 0.20,
+    "arm_5_joint": 0.0,
+    "arm_6_joint": 0.0,
+    "arm_7_joint": 0.0,
+}
+
+# Arm raised high – shoulder forward and up, elbow straight.
+TIAGO_ARM_RAISE_HIGH_JOINTS = {
+    "torso_lift_joint": 0.35,
+    "arm_1_joint": 1.57,
+    "arm_2_joint": -1.10,
+    "arm_3_joint": 0.0,
+    "arm_4_joint": 0.0,
+    "arm_5_joint": 0.0,
+    "arm_6_joint": 0.0,
+    "arm_7_joint": 0.0,
 }
 
 # Pre-grasp: arm extended forward, wrist aligned for top-down approach.
@@ -200,7 +213,7 @@ TIAGO_GRASP_JOINTS = {
     "torso_lift_joint": 0.20,
     "arm_1_joint": 1.30,
     "arm_2_joint": 0.10,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 2.10,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.80,
@@ -212,7 +225,7 @@ TIAGO_LIFT_JOINTS = {
     "torso_lift_joint": 0.35,
     "arm_1_joint": 1.30,
     "arm_2_joint": -0.80,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.40,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.30,
@@ -302,15 +315,15 @@ TIAGO_LEFT_PLACE_JOINTS = {
     "arm_left_7_joint": 0.30,
 }
 
-# Place back on table: same height as grasp but offset laterally.
+# Place back on table: lower from lift pose.
 TIAGO_PLACE_TABLE_JOINTS = {
     "torso_lift_joint": 0.20,
-    "arm_1_joint": 0.90,
-    "arm_2_joint": 0.10,
-    "arm_3_joint": -1.60,
-    "arm_4_joint": 2.10,
+    "arm_1_joint": 1.20,
+    "arm_2_joint": -0.30,
+    "arm_3_joint": -0.75,
+    "arm_4_joint": 1.80,
     "arm_5_joint": -0.80,
-    "arm_6_joint": -0.80,
+    "arm_6_joint": -0.50,
     "arm_7_joint": 0.0,
 }
 
@@ -319,7 +332,7 @@ TIAGO_STACK_HOVER_JOINTS = {
     "torso_lift_joint": 0.35,
     "arm_1_joint": 0.90,
     "arm_2_joint": -0.20,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.70,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.50,
@@ -330,7 +343,7 @@ TIAGO_STACK_LOWER_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 0.90,
     "arm_2_joint": 0.0,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.90,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.70,
@@ -342,7 +355,7 @@ TIAGO_POUR_TILT_JOINTS = {
     "torso_lift_joint": 0.35,
     "arm_1_joint": 1.30,
     "arm_2_joint": -0.80,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.40,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.30,
@@ -354,7 +367,7 @@ TIAGO_POUR_UPRIGHT_JOINTS = {
     "torso_lift_joint": 0.35,
     "arm_1_joint": 1.30,
     "arm_2_joint": -0.80,
-    "arm_3_joint": -1.60,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.40,
     "arm_5_joint": -0.80,
     "arm_6_joint": -0.30,
@@ -371,7 +384,7 @@ TIAGO_FRIDGE_APPROACH_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 0.90,
     "arm_2_joint": -0.70,
-    "arm_3_joint": -1.20,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.40,
     "arm_5_joint": -0.60,
     "arm_6_joint": 0.30,
@@ -382,7 +395,7 @@ TIAGO_FRIDGE_HANDLE_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 1.30,
     "arm_2_joint": -0.60,
-    "arm_3_joint": -1.50,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.70,
     "arm_5_joint": -0.50,
     "arm_6_joint": 0.20,
@@ -393,47 +406,12 @@ TIAGO_FRIDGE_PULL_JOINTS = {
     "torso_lift_joint": 0.30,
     "arm_1_joint": 0.60,
     "arm_2_joint": -0.90,
-    "arm_3_joint": -0.80,
+    "arm_3_joint": -0.75,
     "arm_4_joint": 1.20,
     "arm_5_joint": -0.70,
     "arm_6_joint": 0.40,
     "arm_7_joint": 0.50,
 }
-
-# Dishwasher door interaction poses (lower than fridge).
-TIAGO_DW_APPROACH_JOINTS = {
-    "torso_lift_joint": 0.10,
-    "arm_1_joint": 1.10,
-    "arm_2_joint": 0.10,
-    "arm_3_joint": -1.40,
-    "arm_4_joint": 1.80,
-    "arm_5_joint": -0.80,
-    "arm_6_joint": 0.30,
-    "arm_7_joint": 0.0,
-}
-
-TIAGO_DW_HANDLE_JOINTS = {
-    "torso_lift_joint": 0.10,
-    "arm_1_joint": 1.40,
-    "arm_2_joint": 0.30,
-    "arm_3_joint": -1.60,
-    "arm_4_joint": 2.10,
-    "arm_5_joint": -0.70,
-    "arm_6_joint": 0.20,
-    "arm_7_joint": 0.60,
-}
-
-TIAGO_DW_PULL_JOINTS = {
-    "torso_lift_joint": 0.10,
-    "arm_1_joint": 0.70,
-    "arm_2_joint": -0.20,
-    "arm_3_joint": -1.00,
-    "arm_4_joint": 1.40,
-    "arm_5_joint": -0.90,
-    "arm_6_joint": 0.50,
-    "arm_7_joint": 0.60,
-}
-
 
 def build_joint_goal_constraint(joint_values: dict, tolerance: float = 0.001) -> Constraints:
     """Build Constraints with JointConstraints for a joint-space goal."""
@@ -486,13 +464,13 @@ _ENABLE_RETRIES = os.environ.get("ROBOLAB_ENABLE_RETRIES", "0").lower() in ("1",
 
 JOINT_LIMITS = {
     "torso_lift_joint": (0.0, 0.35),
-    "arm_1_joint": (-1.18, 1.57),
-    "arm_2_joint": (-1.18, 1.57),
-    "arm_3_joint": (-0.785, 3.927),
-    "arm_4_joint": (-0.393, 2.356),
-    "arm_5_joint": (-2.094, 2.094),
-    "arm_6_joint": (0.0, 1.414),
-    "arm_7_joint": (-2.094, 2.094),
+    "arm_1_joint": (0.0, 1.57),
+    "arm_2_joint": (-1.18, 1.02),
+    "arm_3_joint": (-0.785, 1.57),
+    "arm_4_joint": (-0.32, 2.27),
+    "arm_5_joint": (-2.07, 2.07),
+    "arm_6_joint": (-1.39, 1.39),
+    "arm_7_joint": (-2.07, 2.07),
 }
 
 REFERENCE_OBJECT_XYZ = (0.6, 0.0, 0.77)
@@ -990,6 +968,8 @@ class MoveItIntentBridge(Node):
             10,
         )
         self._executing = False
+        self._intent_queue = collections.deque(maxlen=8)
+        self._queue_worker_running = False
         self._expected_grasp_object = None
         self._expected_grasp_object_path = None
         self._expected_grasp_world = None
@@ -1014,12 +994,26 @@ class MoveItIntentBridge(Node):
                 f"CORRECTIONS DISABLED (ROBOLAB_DISABLE_CORRECTIONS=1){_override_str}"
             )
 
+    _QUEUEABLE_INTENTS = frozenset([
+        "open_gripper", "close_gripper",
+        "torso_up", "torso_down",
+        "arm_up", "arm_down", "arm_forward", "arm_back",
+        "wrist_cw", "wrist_ccw", "wrist_90_cw", "wrist_90_ccw",
+        "arm_extend", "arm_extend_low", "arm_raise_high",
+        "arm_home", "pre_grasp", "grasp_pose",
+    ])
+
     def _on_intent(self, msg: String):
         data = (msg.data or "").strip().lower()
         if not data:
             return
         if self._executing:
-            self.get_logger().warn(f"Sequence in progress, ignoring intent: {data}")
+            if data in self._QUEUEABLE_INTENTS:
+                self._intent_queue.append(data)
+                self.get_logger().info(f"Queued intent: {data} (queue size: {len(self._intent_queue)})")
+                self._start_queue_worker()
+            else:
+                self.get_logger().warn(f"Sequence in progress, ignoring intent: {data}")
             return
         self.get_logger().info(f"Intent received: {data}")
         sequence = self._resolve_intent_sequence(data)
@@ -1031,6 +1025,29 @@ class MoveItIntentBridge(Node):
             ).start()
         else:
             self.get_logger().warn(f"Unknown intent: {data}")
+
+    def _start_queue_worker(self):
+        if self._queue_worker_running:
+            return
+        self._queue_worker_running = True
+        import threading
+        threading.Thread(target=self._process_intent_queue, daemon=True).start()
+
+    def _process_intent_queue(self):
+        try:
+            while True:
+                while self._executing:
+                    _time.sleep(0.1)
+                if not self._intent_queue:
+                    break
+                data = self._intent_queue.popleft()
+                self.get_logger().info(f"Dequeued intent: {data} (remaining: {len(self._intent_queue)})")
+                sequence = self._resolve_intent_sequence(data)
+                if sequence is not None:
+                    self._executing = True
+                    self._execute_sequence(data, sequence)
+        finally:
+            self._queue_worker_running = False
 
     # Top-down gripper orientation: 180° around Y so tool Z points down (-Z world).
     _TOP_DOWN_QUAT = Quaternion(x=0.0, y=1.0, z=0.0, w=0.0)
@@ -1118,12 +1135,13 @@ class MoveItIntentBridge(Node):
         "side":      (0.0,  0.0, 0.05),
     }
 
-    # Empirical FK offset: MoveIt IK solutions place the gripper ~6cm short
-    # in X and ~10cm too high in Z compared to Isaac Sim PhysX FK.
-    # Compensate by shifting the IK target in the opposite direction.
-    _FK_COMP_X = 0.12
-    _FK_COMP_Y = -0.02
-    _FK_COMP_Z = -0.28
+    # Empirical FK offset between MoveIt IK and Isaac Sim PhysX FK.
+    # Set to zero after base stability fix (2026-03-12) — the previous
+    # large offsets were compensating for backward tilt during torso lift.
+    # With a stable base, MoveIt FK and Isaac Sim FK should agree.
+    _FK_COMP_X = 0.0
+    _FK_COMP_Y = 0.0
+    _FK_COMP_Z = 0.0
 
     def _get_ik_grasp_sequence(self, object_xyz, destination_joints, base_pre=None, base_grasp=None):
         """Build a full grasp sequence using IK for the given object position.
@@ -1411,6 +1429,52 @@ class MoveItIntentBridge(Node):
             return [("move_direct", TIAGO_READY_JOINTS)]
         elif intent == "approach_workzone":
             return [("move_direct", TIAGO_APPROACH_WORKZONE_JOINTS)]
+        elif intent == "open_gripper":
+            return [("gripper", GRIPPER_OPEN)]
+        elif intent == "close_gripper":
+            return [("gripper", GRIPPER_CLOSED)]
+        elif intent == "torso_up":
+            return [("incremental", {"torso_lift_joint": +0.05})]
+        elif intent == "torso_down":
+            return [("incremental", {"torso_lift_joint": -0.05})]
+        elif intent == "arm_up":
+            return [("incremental", {"arm_2_joint": -0.10})]
+        elif intent == "arm_down":
+            return [("incremental", {"arm_2_joint": +0.10})]
+        elif intent == "arm_forward":
+            return [("incremental", {"arm_1_joint": +0.10})]
+        elif intent == "arm_back":
+            return [("incremental", {"arm_1_joint": -0.10})]
+        elif intent == "wrist_cw":
+            return [("incremental", {"arm_7_joint": +0.15})]
+        elif intent == "wrist_ccw":
+            return [("incremental", {"arm_7_joint": -0.15})]
+        elif intent == "wrist_90_cw":
+            return [("incremental", {"arm_7_joint": +1.5708})]
+        elif intent == "wrist_90_ccw":
+            return [("incremental", {"arm_7_joint": -1.5708})]
+        elif intent == "arm_extend":
+            _mid = {
+                "torso_lift_joint": 0.25,
+                "arm_1_joint": 1.57,
+                "arm_2_joint": 0.0,
+                "arm_3_joint": 0.0,
+                "arm_4_joint": 1.00,
+                "arm_5_joint": 0.0,
+                "arm_6_joint": 0.0,
+                "arm_7_joint": 0.0,
+            }
+            return [("move_direct", _mid), ("move_direct", TIAGO_ARM_EXTEND_FORWARD_JOINTS)]
+        elif intent == "arm_extend_low":
+            return [("move_direct", TIAGO_APPROACH_WORKZONE_JOINTS), ("move_direct", TIAGO_ARM_EXTEND_LOW_JOINTS)]
+        elif intent == "arm_raise_high":
+            return [("move_direct", TIAGO_APPROACH_WORKZONE_JOINTS), ("move_direct", TIAGO_ARM_RAISE_HIGH_JOINTS)]
+        elif intent == "arm_home":
+            return [("move_direct", TIAGO_READY_JOINTS)]
+        elif intent == "pre_grasp":
+            return [("move_direct", TIAGO_APPROACH_WORKZONE_JOINTS), ("move_direct", TIAGO_PRE_GRASP_JOINTS)]
+        elif intent == "grasp_pose":
+            return [("move_direct", TIAGO_PRE_GRASP_JOINTS), ("move_direct", TIAGO_GRASP_JOINTS)]
 
         elif intent in ("plan_pick", "plan_pick_sink"):
             obj_info = query_object_pose_info(timeout=2.0)
@@ -1467,35 +1531,6 @@ class MoveItIntentBridge(Node):
                 ("gripper", GRIPPER_CLOSED),
                 ("move", lift),
                 ("move", TIAGO_PICK_FRIDGE_JOINTS),
-                ("gripper", GRIPPER_OPEN),
-                ("move", TIAGO_READY_JOINTS),
-            ]
-        elif intent == "plan_pick_dishwasher":
-            obj_info = query_object_pose_info(timeout=2.0)
-            if obj_info and obj_info.get("local_position") is not None:
-                obj_pos = obj_info["local_position"]
-                obj_class = obj_info.get("class", "unknown")
-                self._expected_grasp_object = obj_class
-                self._expected_grasp_object_path = obj_info.get("path")
-                self._expected_grasp_world = obj_info.get("world_position")
-                self.get_logger().info(f"Pick target: '{obj_class}' at {[round(v,3) for v in obj_pos]}")
-                ik_seq = self._get_ik_grasp_sequence(
-                    obj_pos, TIAGO_PICK_DISHWASHER_JOINTS,
-                    TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS)
-                if ik_seq:
-                    return ik_seq
-                pre = adapt_grasp_pose(TIAGO_PRE_GRASP_JOINTS, obj_pos)
-                grasp = adapt_grasp_pose(TIAGO_GRASP_JOINTS, obj_pos)
-            else:
-                pre, grasp = TIAGO_PRE_GRASP_JOINTS, TIAGO_GRASP_JOINTS
-            lift = make_lift_from_grasp(grasp)
-            return [
-                ("gripper", GRIPPER_OPEN),
-                ("move", pre),
-                ("move", grasp),
-                ("gripper", GRIPPER_CLOSED),
-                ("move", lift),
-                ("move", TIAGO_PICK_DISHWASHER_JOINTS),
                 ("gripper", GRIPPER_OPEN),
                 ("move", TIAGO_READY_JOINTS),
             ]
@@ -1641,19 +1676,6 @@ class MoveItIntentBridge(Node):
                 ("gripper", GRIPPER_OPEN),
                 ("move", TIAGO_READY_JOINTS),
             ]
-        elif intent == "open_close_dishwasher":
-            return [
-                ("move", TIAGO_DW_APPROACH_JOINTS),
-                ("move", TIAGO_DW_HANDLE_JOINTS),
-                ("gripper", GRIPPER_CLOSED),
-                ("move", TIAGO_DW_PULL_JOINTS),
-                ("gripper", GRIPPER_OPEN),
-                ("move", TIAGO_DW_HANDLE_JOINTS),
-                ("gripper", GRIPPER_CLOSED),
-                ("move", TIAGO_DW_APPROACH_JOINTS),
-                ("gripper", GRIPPER_OPEN),
-                ("move", TIAGO_READY_JOINTS),
-            ]
 
         # Left arm intents
         elif intent == "left_go_home":
@@ -1759,6 +1781,15 @@ class MoveItIntentBridge(Node):
                 ("move", TIAGO_READY_JOINTS),
             ]
 
+        elif intent == "torso_test":
+            _TORSO_LOW = dict(TIAGO_READY_JOINTS, torso_lift_joint=0.0)
+            _TORSO_HIGH = dict(TIAGO_READY_JOINTS, torso_lift_joint=0.35)
+            return [
+                ("move_direct", _TORSO_LOW),
+                ("move", _TORSO_HIGH),
+                ("move", _TORSO_LOW),
+            ]
+
         return None
 
     def _resolve_simple_intent(self, intent: str) -> dict | None:
@@ -1768,13 +1799,11 @@ class MoveItIntentBridge(Node):
             "plan_pick": PANDA_EXTENDED_JOINTS,
             "plan_pick_sink": PANDA_EXTENDED_JOINTS,
             "plan_pick_fridge": PANDA_EXTENDED_JOINTS,
-            "plan_pick_dishwasher": PANDA_EXTENDED_JOINTS,
             "plan_pick_table": PANDA_EXTENDED_JOINTS,
             "stack_objects": PANDA_EXTENDED_JOINTS,
             "pour": PANDA_EXTENDED_JOINTS,
             "plan_place": PANDA_PLACE_JOINTS,
             "open_close_fridge": PANDA_EXTENDED_JOINTS,
-            "open_close_dishwasher": PANDA_EXTENDED_JOINTS,
         }
         return intent_map.get(intent)
 
@@ -2254,10 +2283,10 @@ class MoveItIntentBridge(Node):
                 if action_type == "move_direct":
                     self.get_logger().info(f"  Direct trajectory: {list(value.keys())[:3]}...")
                     direct_targets = clamp_joints(value)
-                    snapped = send_direct_trajectory(direct_targets, duration=2.0, timeout=15.0)
+                    snapped = send_direct_trajectory(direct_targets, duration=3.0, timeout=25.0)
                     if not snapped:
                         self.get_logger().warn(f"  Step {i+1}: trajectory failed, falling back to direct_set")
-                        snapped = send_direct_set(direct_targets, timeout=6.0)
+                        snapped = send_direct_set(direct_targets, timeout=8.0)
                     if not snapped:
                         self.get_logger().error(f"  Step {i+1} direct move failed, aborting")
                         break
@@ -2796,6 +2825,25 @@ class MoveItIntentBridge(Node):
                                     _last_grasp_move = _prev_joints
                         else:
                             self.get_logger().warn("  Closed-loop grasp refinement move failed, continuing")
+                elif action_type == "incremental":
+                    js_data = _read_joint_state_snapshot()
+                    _all_arm_joints = ["torso_lift_joint"] + [f"arm_{i}_joint" for i in range(1, 8)]
+                    inc_targets = {}
+                    for jn in _all_arm_joints:
+                        if jn in js_data and isinstance(js_data[jn], dict):
+                            inc_targets[jn] = float(js_data[jn].get("position", 0.0))
+                        elif jn in js_data and isinstance(js_data[jn], (int, float)):
+                            inc_targets[jn] = float(js_data[jn])
+                    for jn, delta in value.items():
+                        cur = inc_targets.get(jn, 0.0)
+                        inc_targets[jn] = cur + delta
+                    inc_targets = clamp_joints(inc_targets)
+                    self.get_logger().info(f"  Incremental: {value} -> targets {inc_targets}")
+                    ok = send_direct_trajectory(inc_targets, duration=1.5, timeout=15.0)
+                    if not ok:
+                        ok = send_direct_set(inc_targets, timeout=5.0)
+                    if not ok:
+                        self.get_logger().warn(f"  Incremental move failed")
                 elif action_type == "wait":
                     self.get_logger().info(f"  Waiting {value}s...")
                     _time.sleep(float(value))

@@ -6,7 +6,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'RoboLab MVP Console',
+  title: 'RoboLab Console',
   description: 'Operator console for Isaac Sim teleoperation',
 };
 

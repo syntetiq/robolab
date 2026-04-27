@@ -20,7 +20,7 @@ export default async function ConfigPage() {
             <div className="flex justify-between items-center mb-6">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Configuration</h1>
-                    <p className="text-muted-foreground">Manage RoboLab MVP Console settings.</p>
+                    <p className="text-muted-foreground">Manage RoboLab Console settings.</p>
                 </div>
             </div>
 

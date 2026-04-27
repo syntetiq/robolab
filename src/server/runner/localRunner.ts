@@ -129,9 +129,11 @@ export class LocalRunner implements Runner {
 
             const launchFromProfile = episode.launchProfile?.isaacLaunchTemplate?.trim();
             let detachedCommand = "";
+            let psCmd = "";
 
             if (launchFromProfile) {
                 detachedCommand = launchFromProfile;
+                psCmd = launchFromProfile;
                 console.log(`[LocalRunner] Executing template: ${launchFromProfile}`);
             } else {
                 const isaacDir = config.isaacInstallPath || "C:\\Users\\max\\Documents\\IsaacSim";
@@ -145,8 +147,9 @@ export class LocalRunner implements Runner {
                 const envUsd = this.resolveEnvironmentUsd(episode);
                 const escapedEnvUsd = envUsd.replace(/'/g, "''");
                 const wantsWebRTC = !!episode.launchProfile?.enableWebRTC;
-                let psCmd = `& '${escapedPyBat}' '${escapedScriptPath}' --env '${escapedEnvUsd}' --output_dir '${escapedOutputDir}' --duration ${duration}`;
-                if (!wantsWebRTC) {
+                const wantsGui = !!episode.launchProfile?.enableGuiMode;
+                psCmd = `& '${escapedPyBat}' '${escapedScriptPath}' --env '${escapedEnvUsd}' --output_dir '${escapedOutputDir}' --duration ${duration}`;
+                if (!wantsWebRTC && !wantsGui) {
                     psCmd += " --headless";
                 }
 
@@ -159,11 +162,21 @@ export class LocalRunner implements Runner {
                 if (wantsWebRTC) {
                     psCmd += " --webrtc";
                 }
+                if (wantsGui && !wantsWebRTC) {
+                    psCmd += " --gui";
+                }
                 if (episode.launchProfile?.enableVrTeleop) {
                     psCmd += " --vr";
                 }
                 if (episode.launchProfile?.enableMoveIt) {
                     psCmd += " --moveit";
+                    psCmd += " --mobile-base";
+                }
+                if (episode.launchProfile?.enableWristCamera) {
+                    psCmd += " --wrist-camera";
+                }
+                if (episode.launchProfile?.enableExternalCamera) {
+                    psCmd += " --external-camera";
                 }
                 if (episode.objectSetId && episode.objectSet) {
                     psCmd += " --spawn-objects";
@@ -182,22 +195,89 @@ export class LocalRunner implements Runner {
                     psCmd += ` --robot_pov_camera_prim '${escapedPov}'`;
                 }
 
+                // Parse randomization config and pass relevant flags
+                try {
+                    const randConfig = JSON.parse(episode.randomizationConfig || "{}");
+                    if (randConfig.randomizeObjectLayout || randConfig.randomizeObjectTypes) {
+                        psCmd += " --spawn-objects";
+                    }
+                } catch {
+                    // invalid JSON, skip
+                }
+
                 detachedCommand = `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${psCmd}"`;
                 console.log(`[LocalRunner] Executing: ${psCmd}`);
             }
 
-            const cmdWithLogs = `${detachedCommand} 1> "${stdoutLog}" 2> "${stderrLog}"`;
-            const wantsWebRTC = !!episode.launchProfile?.enableWebRTC;
-            const child = spawn(cmdWithLogs, {
-                detached: true,
-                // WebRTC capture path on Windows may fail in fully hidden mode.
-                // Keep the process detached, but allow visible window for stream runs.
-                windowsHide: !wantsWebRTC,
-                shell: true,
-                stdio: "ignore",
-            });
+            const wantsVisible = !!episode.launchProfile?.enableWebRTC || !!episode.launchProfile?.enableGuiMode;
+            let child: ReturnType<typeof spawn>;
+            if (wantsVisible) {
+                const launcherScript = path.join(episodeOutDir, "_launch.ps1");
+                fs.writeFileSync(launcherScript, psCmd, "utf8");
+                const startCmd = `start "IsaacSim" powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${launcherScript}"`;
+                child = spawn(startCmd, {
+                    detached: true,
+                    shell: true,
+                    stdio: "ignore",
+                });
+            } else {
+                const cmdWithLogs = `${detachedCommand} 1> "${stdoutLog}" 2> "${stderrLog}"`;
+                child = spawn(cmdWithLogs, {
+                    detached: true,
+                    windowsHide: true,
+                    shell: true,
+                    stdio: "ignore",
+                });
+            }
             child.unref();
             fs.writeFileSync(pidFile, String(child.pid), "utf8");
+
+            // Auto-start ROS bag recording if template is configured
+            const rosbagTemplate = (episode.launchProfile?.rosbagLaunchTemplate || "").trim();
+            if (rosbagTemplate) {
+                const bagDir = path.join(episodeOutDir, "rosbag");
+                fs.mkdirSync(bagDir, { recursive: true });
+                const defaultTopics = "/joint_states /tf /tf_static /servo_node/delta_twist_stamped /tiago/moveit/intent";
+                const resolvedCmd = rosbagTemplate
+                    .replace(/\{BAG_PATH\}/g, bagDir.replace(/'/g, "''"))
+                    .replace(/\{TOPICS\}/g, defaultTopics)
+                    .replace(/\{EPISODE_ID\}/g, episode.id)
+                    .replace(/\{OUTPUT_DIR\}/g, episodeOutDir.replace(/'/g, "''"));
+
+                // Delay to allow ROS2 nodes to initialize
+                setTimeout(() => {
+                    const rosbagLog = path.join(episodeOutDir, "_rosbag_stdout.log");
+                    const rosbagErrLog = path.join(episodeOutDir, "_rosbag_stderr.log");
+                    const rosbagCmd = `${resolvedCmd} 1> "${rosbagLog}" 2> "${rosbagErrLog}"`;
+                    const bagChild = spawn(rosbagCmd, {
+                        detached: true,
+                        windowsHide: true,
+                        shell: true,
+                        stdio: "ignore",
+                    });
+                    bagChild.unref();
+                    const rosbagPidFile = `${episodeOutDir}_rosbag_pid.txt`;
+                    fs.writeFileSync(rosbagPidFile, String(bagChild.pid), "utf8");
+                    console.log(`[LocalRunner] Started ROS bag recording (PID ${bagChild.pid}): ${resolvedCmd}`);
+                }, 10_000);
+            }
+
+            // Auto-open WebRTC stream in default browser for VR passthrough
+            if (episode.launchProfile?.enableVrPassthrough && episode.launchProfile?.enableWebRTC) {
+                const webrtcPort = 8211;
+                const streamUrl = `http://localhost:${webrtcPort}/streaming/webrtc-demo/`;
+                // Delay opening to give Isaac Sim time to initialize WebRTC
+                setTimeout(() => {
+                    const browser = spawn(`start "" "${streamUrl}"`, {
+                        detached: true,
+                        shell: true,
+                        stdio: "ignore",
+                    });
+                    browser.unref();
+                    console.log(`[LocalRunner] Opened VR passthrough stream: ${streamUrl}`);
+                }, 15_000);
+            }
+
             return { success: true };
         } catch (e: any) {
             await releaseLock(config.isaacHost, episode.id);
@@ -216,6 +296,17 @@ export class LocalRunner implements Runner {
                 const pid = Number(rawPid);
                 if (this.isPidRunning(pid)) {
                     await this.execFileAsync("taskkill", ["/F", "/T", "/PID", String(pid)]);
+                }
+            }
+
+            // Stop ROS bag recording if running
+            const rosbagPidFile = `${episodeOutDir}_rosbag_pid.txt`;
+            if (fs.existsSync(rosbagPidFile)) {
+                const rawBagPid = fs.readFileSync(rosbagPidFile, "utf8").trim();
+                const bagPid = Number(rawBagPid);
+                if (this.isPidRunning(bagPid)) {
+                    await this.execFileAsync("taskkill", ["/F", "/T", "/PID", String(bagPid)]);
+                    console.log(`[LocalRunner] Stopped ROS bag recording (PID ${bagPid})`);
                 }
             }
 
@@ -241,25 +332,47 @@ export class LocalRunner implements Runner {
             isRunning = this.isPidRunning(pid);
         }
 
-        // Fail-safe: if launcher pid still exists but episode output/log heartbeat
-        // has gone stale after expected duration, treat episode as completed.
+        if (!isRunning && (!!episode.launchProfile?.enableGuiMode || !!episode.launchProfile?.enableWebRTC || !!episode.launchProfile?.enableMoveIt)) {
+            try {
+                const { execSync } = require("child_process");
+                const out = execSync('tasklist /FI "IMAGENAME eq kit.exe" /NH', { encoding: "utf8", timeout: 3000 });
+                if (out.includes("kit.exe")) {
+                    isRunning = true;
+                }
+            } catch {}
+            if (!isRunning) {
+                try {
+                    const jsFile = path.join(config.defaultOutputDir || "C:\\RoboLab_Data", "fjt_proxy", "joint_state.json");
+                    if (fs.existsSync(jsFile)) {
+                        const age = Date.now() - fs.statSync(jsFile).mtimeMs;
+                        if (age < 5000) {
+                            isRunning = true;
+                        }
+                    }
+                } catch {}
+            }
+        }
+
         if (isRunning) {
-            const now = Date.now();
-            const startedMs = new Date(episode.startedAt || Date.now()).getTime();
-            const durationSec = Math.max(1, Number(episode.durationSec || 60));
-            const expectedEndMs = startedMs + durationSec * 1000;
-            const hardGraceMs = 25_000;
-            const staleThresholdMs = 10_000;
+            const isGuiOrTeleop = !!episode.launchProfile?.enableGuiMode || !!episode.launchProfile?.enableMoveIt;
+            if (!isGuiOrTeleop) {
+                const now = Date.now();
+                const startedMs = new Date(episode.startedAt || Date.now()).getTime();
+                const durationSec = Math.max(1, Number(episode.durationSec || 60));
+                const expectedEndMs = startedMs + durationSec * 1000;
+                const hardGraceMs = 25_000;
+                const staleThresholdMs = 10_000;
 
-            const outputHeartbeat = this.getLatestModifiedMs(episodeOutDir);
-            const stdoutHeartbeat = this.getLatestModifiedMs(stdoutLog);
-            const stderrHeartbeat = this.getLatestModifiedMs(stderrLog);
-            const heartbeat = Math.max(outputHeartbeat, stdoutHeartbeat, stderrHeartbeat, startedMs);
-            const staleMs = now - heartbeat;
-            const exceededExpectedWindow = now > (expectedEndMs + hardGraceMs);
+                const outputHeartbeat = this.getLatestModifiedMs(episodeOutDir);
+                const stdoutHeartbeat = this.getLatestModifiedMs(stdoutLog);
+                const stderrHeartbeat = this.getLatestModifiedMs(stderrLog);
+                const heartbeat = Math.max(outputHeartbeat, stdoutHeartbeat, stderrHeartbeat, startedMs);
+                const staleMs = now - heartbeat;
+                const exceededExpectedWindow = now > (expectedEndMs + hardGraceMs);
 
-            if (exceededExpectedWindow && staleMs > staleThresholdMs) {
-                isRunning = false;
+                if (exceededExpectedWindow && staleMs > staleThresholdMs) {
+                    isRunning = false;
+                }
             }
         }
 
@@ -295,7 +408,16 @@ export class LocalRunner implements Runner {
                 "dataset.json",
                 "dataset_manifest.json",
                 "telemetry.json",
+                "grasp_events.json",
                 "camera_0.mp4",
+                "camera_1_wrist.mp4",
+                "camera_2_external.mp4",
+            ];
+            const dirsToSync = [
+                "replicator_data",
+                "replicator_wrist",
+                "replicator_external",
+                "rosbag",
             ];
 
             let copied = 0;
@@ -307,12 +429,32 @@ export class LocalRunner implements Runner {
                     copied++;
                 }
             }
+            for (const dirName of dirsToSync) {
+                const sourceDir = path.join(episodeOutDir, dirName);
+                if (fs.existsSync(sourceDir) && fs.statSync(sourceDir).isDirectory()) {
+                    this.copyDirRecursive(sourceDir, path.join(localOutDir, dirName));
+                    copied++;
+                }
+            }
             if (copied === 0) {
                 return { success: false, error: "No files found to sync." };
             }
             return { success: true };
         } catch (e: any) {
             return { success: false, error: e.message };
+        }
+    }
+
+    private copyDirRecursive(src: string, dest: string) {
+        fs.mkdirSync(dest, { recursive: true });
+        for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+            const srcPath = path.join(src, entry.name);
+            const destPath = path.join(dest, entry.name);
+            if (entry.isDirectory()) {
+                this.copyDirRecursive(srcPath, destPath);
+            } else {
+                fs.copyFileSync(srcPath, destPath);
+            }
         }
     }
 }

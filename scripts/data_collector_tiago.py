@@ -23,6 +23,7 @@ def parse_args():
     parser.add_argument("--output_dir", type=str, required=True, help="Episode output directory.")
     parser.add_argument("--duration", type=int, default=120, help="Episode duration in seconds.")
     parser.add_argument("--headless", action="store_true", help="Run with no UI window.")
+    parser.add_argument("--gui", action="store_true", help="Run with visible 3D viewport window (non-headless).")
     parser.add_argument("--vr", action="store_true", help="Enable OpenXR/VR profile when available.")
     parser.add_argument("--webrtc", action="store_true", help="Enable WebRTC streaming on port 8211.")
     parser.add_argument("--moveit", action="store_true", help="Enable MoveIt integration mode (metadata + hooks).")
@@ -120,20 +121,26 @@ def parse_args():
     parser.add_argument(
         "--external-camera-pos",
         type=str,
-        default="0.8,1.8,1.6",
-        help="External camera position as x,y,z (default: 0.8,1.8,1.6).",
+        default="auto",
+        help="External camera position as x,y,z or 'auto' to follow robot.",
     )
     parser.add_argument(
         "--external-camera-target",
         type=str,
-        default="1.1,0.0,0.8",
-        help="External camera look-at target as x,y,z (default: 0.0,0.0,0.8).",
+        default="auto",
+        help="External camera look-at target as x,y,z or 'auto' to follow robot.",
     )
     parser.add_argument(
         "--task-label",
         type=str,
         default="",
         help="Task label/intent name for this episode (e.g. pick_from_table).",
+    )
+    parser.add_argument(
+        "--robot-start-x",
+        type=float,
+        default=0.8,
+        help="Robot start X position in world frame (default: 0.8).",
     )
     return parser.parse_known_args()[0]
 
@@ -311,7 +318,7 @@ from isaacsim import SimulationApp
 simulation_app = SimulationApp({
     # WebRTC on Windows is more reliable with an active display/session.
     # Keep headless for non-streaming runs, but default to windowed when --webrtc.
-    "headless": args.headless or (not args.vr and not args.webrtc),
+    "headless": args.headless or (not args.vr and not args.webrtc and not args.gui),
     "livestream": 2 if args.webrtc else 0,
     "width": args.capture_width,
     "height": args.capture_height,
@@ -402,7 +409,28 @@ try:
     # Prepare stage and world — use 120 Hz physics for stable articulated contacts.
     world = World(physics_dt=1.0 / 120.0, rendering_dt=1.0 / 60.0)
     env_usd = resolve_usd_path(args.env)
-    stage_utils.add_reference_to_stage(usd_path=env_usd, prim_path="/World/Environment")
+    _env_basename = os.path.basename(env_usd or "")
+    _use_kitchen_fixed_builder = "kitchen_fixed" in _env_basename
+    _use_office_fixed_builder = "office_fixed" in _env_basename
+    if _use_kitchen_fixed_builder or _use_office_fixed_builder:
+        try:
+            _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            import sys as _sys_tmp
+            if _repo_root not in _sys_tmp.path:
+                _sys_tmp.path.insert(0, _repo_root)
+            if _use_kitchen_fixed_builder:
+                from scenes.kitchen_fixed.kitchen_fixed_builder import build_kitchen_scene
+                build_kitchen_scene(stage_utils.get_current_stage())
+                print(f"[RoboLab] Built kitchen_fixed scene procedurally (same as experiments)")
+            else:
+                from scenes.office_fixed.office_fixed_builder import build_office_scene
+                build_office_scene(stage_utils.get_current_stage())
+                print(f"[RoboLab] Built office_fixed scene procedurally")
+        except Exception as _kfe:
+            print(f"[RoboLab] WARN: procedural builder failed ({_kfe}), falling back to USD reference")
+            stage_utils.add_reference_to_stage(usd_path=env_usd, prim_path="/World/Environment")
+    else:
+        stage_utils.add_reference_to_stage(usd_path=env_usd, prim_path="/World/Environment")
     # Ensure scene is lit for camera capture; many lightweight USDs have no lights.
     _cur_stage = stage_utils.get_current_stage()
     dome_path = "/World/RoboLabDomeLight"
@@ -466,7 +494,7 @@ try:
     # recursively. Every prim with RigidBodyAPI gets kinematic=True; prims
     # matching furniture keywords get the API applied if missing.
     _ANCHOR_KEYWORDS = (
-        "fridge", "refrigerator", "dishwasher", "sink", "counter",
+        "fridge", "refrigerator", "sink", "counter",
         "table", "shelf", "cabinet", "oven", "microwave", "wall",
         "floor", "ceiling", "door", "drawer", "handle", "panel",
         "hood", "rack", "basket", "tray",
@@ -495,7 +523,7 @@ try:
     # --single-object: hide all small scene-native objects (cups, fruits, etc.)
     # so only furniture remains and our single spawned object is on the table.
     _FURNITURE_KEYWORDS = (
-        "fridge", "refrigerator", "dishwasher", "sink", "counter",
+        "fridge", "refrigerator", "sink", "counter",
         "table", "shelf", "cabinet", "oven", "microwave", "wall",
         "floor", "ceiling", "door", "drawer", "handle", "panel",
         "hood", "rack", "basket", "tray", "light", "lamp", "window",
@@ -503,7 +531,8 @@ try:
         "column", "pillar", "frame", "curtain", "blind", "vent",
         "pipe", "wire", "switch", "outlet", "socket", "knob",
     )
-    if args.single_object and _env_root and _env_root.IsValid():
+    _hide_scene_clutter = True
+    if _hide_scene_clutter and _env_root and _env_root.IsValid():
         _hidden_count = 0
         _hide_stack = list(_env_root.GetChildren())
         while _hide_stack:
@@ -519,7 +548,53 @@ try:
                 _hidden_count += 1
             else:
                 _hide_stack.extend(_hp.GetChildren())
-        print(f"[RoboLab] Single-object mode: hid {_hidden_count} scene-native small objects")
+        print(f"[RoboLab] Hid {_hidden_count} scene-native small objects (clutter removal)")
+
+    # Dump all environment prims for diagnostics (find fences, walls, barriers).
+    if _env_root and _env_root.IsValid():
+        _diag_stack = list(_env_root.GetChildren())
+        _diag_names = []
+        while _diag_stack:
+            _dp = _diag_stack.pop()
+            _dn = _dp.GetPath().pathString
+            _diag_names.append(_dn)
+            _children = _dp.GetChildren()
+            if len(_children) < 50:
+                _diag_stack.extend(_children)
+        _diag_names.sort()
+        print(f"[RoboLab] Environment prims ({len(_diag_names)}):")
+        for _dn in _diag_names:
+            print(f"  {_dn}")
+
+    # Also dump top-level /World prims
+    _world_prim = _cur_stage.GetPrimAtPath("/World")
+    if _world_prim and _world_prim.IsValid():
+        _world_children = [c.GetPath().pathString for c in _world_prim.GetChildren()]
+        print(f"[RoboLab] /World top-level prims: {_world_children}")
+
+    # Remove fences, railings, and barriers that obstruct robot workspace.
+    _OBSTACLE_KEYWORDS = ("fence", "railing", "balustrade", "barrier", "guardrail", "banister", "handrail")
+    _obstacle_removed = 0
+    if _env_root and _env_root.IsValid():
+        _obs_stack = list(_env_root.GetChildren())
+        while _obs_stack:
+            _op = _obs_stack.pop()
+            _op_name = _op.GetName().lower()
+            _op_path = _op.GetPath().pathString.lower()
+            if any(kw in _op_name or kw in _op_path for kw in _OBSTACLE_KEYWORDS):
+                _img = UsdGeom.Imageable(_op)
+                if _img:
+                    _img.MakeInvisible()
+                if _op.HasAPI(UsdPhysics.CollisionAPI):
+                    _op.RemoveAPI(UsdPhysics.CollisionAPI)
+                if _op.HasAPI(UsdPhysics.RigidBodyAPI):
+                    UsdPhysics.RigidBodyAPI(_op).CreateKinematicEnabledAttr(True)
+                _obstacle_removed += 1
+                print(f"[RoboLab] Removed obstacle: {_op.GetPath().pathString}")
+            else:
+                _obs_stack.extend(_op.GetChildren())
+    if _obstacle_removed:
+        print(f"[RoboLab] Removed {_obstacle_removed} obstacle(s) from scene")
 
     # Per-scene spawn zones: table bounding boxes in world coordinates.
     # Each zone is (x_min, x_max, y_min, y_max). Objects are scattered
@@ -702,7 +777,12 @@ try:
         raise RuntimeError(f"Tiago prim not found after load: {tiago_prim_path}")
     add_update_semantics(tiago_prim, "tiago")
 
-    _TIAGO_SEARCH_MIDS = ["/tiago_dual_functional_light", "/tiago_dual_functional", ""]
+    _TIAGO_SEARCH_MIDS = [
+        "/tiago_dual_functional_light",
+        "/tiago_dual_functional/tiago_dual_functional",
+        "/tiago_dual_functional",
+        "",
+    ]
 
     def _join_tiago_path(base_path, subtree_mid, leaf_name):
         if subtree_mid:
@@ -712,12 +792,13 @@ try:
     # Stabilize known problematic Tiago rigid-body mass/inertia values that can
     # cause immediate toppling in PhysX.
     _mass_override_suffixes = {
-        "base_footprint": (200.0, Gf.Vec3f(5.0, 5.0, 2.0)),
+        "base_footprint": (500.0, Gf.Vec3f(15.0, 15.0, 6.0)),
+        "base_link": (45.0, Gf.Vec3f(3.0, 3.0, 1.5)),
         "gemini2_link": (0.5, Gf.Vec3f(0.01, 0.01, 0.01)),
-        "wheel_front_left_link/mecanum_wheel_fl/wheel_link": (1.0, Gf.Vec3f(0.01, 0.01, 0.01)),
-        "wheel_front_right_link/mecanum_wheel_fr/wheel_link": (1.0, Gf.Vec3f(0.01, 0.01, 0.01)),
-        "wheel_rear_left_link/mecanum_wheel_rl/wheel_link": (1.0, Gf.Vec3f(0.01, 0.01, 0.01)),
-        "wheel_rear_right_link/mecanum_wheel_rr/wheel_link": (1.0, Gf.Vec3f(0.01, 0.01, 0.01)),
+        "wheel_front_left_link/mecanum_wheel_fl/wheel_link": (1.5, Gf.Vec3f(0.02, 0.02, 0.02)),
+        "wheel_front_right_link/mecanum_wheel_fr/wheel_link": (1.5, Gf.Vec3f(0.02, 0.02, 0.02)),
+        "wheel_rear_left_link/mecanum_wheel_rl/wheel_link": (1.5, Gf.Vec3f(0.02, 0.02, 0.02)),
+        "wheel_rear_right_link/mecanum_wheel_rr/wheel_link": (1.5, Gf.Vec3f(0.02, 0.02, 0.02)),
     }
     mass_overrides = {}
     for _mid in _TIAGO_SEARCH_MIDS:
@@ -783,6 +864,8 @@ try:
             f"Check --tiago-usd path and asset contents (current: {tiago_usd})."
         )
 
+    _robot_start_x = getattr(args, "robot_start_x", 0.8)
+
     # Replicator streams for rgb/depth/pointcloud/semantics.
     replicator_dir = os.path.join(args.output_dir, "replicator_data")
     camera_parent_prim = args.robot_pov_camera_prim or tiago_prim_path
@@ -808,7 +891,7 @@ try:
         camera_parent_prim = head_link
         print(f"[RoboLab] VR head camera mounted at {head_link}")
     elif camera_parent_prim == tiago_prim_path:
-        head_camera = rep.create.camera(position=(2.5, -1.5, 2.0), look_at=(1.1, 0.0, 0.8))
+        head_camera = rep.create.camera(position=(_robot_start_x + 1.7, -1.5, 2.0), look_at=(_robot_start_x + 0.3, 0.0, 0.8))
         camera_parent_prim = "/World"
     else:
         head_camera = rep.create.camera(position=(0, 0, 1.35), look_at=(1, 0, 1.15), parent=camera_parent_prim)
@@ -881,8 +964,15 @@ try:
     _external_render_product = None
     _external_replicator_dir = None
     if getattr(args, "external_camera", False):
-        _ext_pos = tuple(float(x) for x in args.external_camera_pos.split(","))
-        _ext_tgt = tuple(float(x) for x in args.external_camera_target.split(","))
+        if args.external_camera_pos == "auto":
+            _ext_pos = (_robot_start_x, 1.8, 1.6)
+        else:
+            _ext_pos = tuple(float(x) for x in args.external_camera_pos.split(","))
+        if args.external_camera_target == "auto":
+            _ext_tgt = (_robot_start_x + 0.3, 0.0, 0.8)
+        else:
+            _ext_tgt = tuple(float(x) for x in args.external_camera_target.split(","))
+        print(f"[RoboLab] External camera: pos={_ext_pos} target={_ext_tgt}")
         _external_camera = rep.create.camera(position=_ext_pos, look_at=_ext_tgt)
         _external_render_product = rep.create.render_product(
             _external_camera, (args.capture_width, args.capture_height)
@@ -913,10 +1003,10 @@ try:
             tracked_prims.append((_p, semantic["class"]))
             _tracked_paths.add(_p)
     # Recursively scan /World/Environment for furniture prims (fridge,
-    # dishwasher, sink, etc.) that may lack USD semantic labels.
+    # sink, etc.) that may lack USD semantic labels.
     # USD scenes often nest geometry several levels deep (e.g.
     # /World/Environment/Environment/Fridge).
-    _FURNITURE_KW = ("fridge", "refrigerator", "dishwasher", "sink", "counter",
+    _FURNITURE_KW = ("fridge", "refrigerator", "sink", "counter",
                      "table", "shelf", "cabinet", "oven", "microwave", "door")
     _env_prim = stage.GetPrimAtPath("/World/Environment")
     if _env_prim and _env_prim.IsValid():
@@ -974,16 +1064,14 @@ try:
         _pre_drive_count += 1
     print(f"[RoboLab] Pre-reset: configured {_pre_drive_count} joint drives (force mode, Kp=1e6)")
 
-    # Force a stable startup pose BEFORE world.reset().
-    # Position robot next to the table, facing it. Table in Small_House is at ~(1.5, 0.0).
-    # Robot at (0.7, 0.0) faces +X, so it's 0.8m from the table — within arm reach.
+    _robot_start_x = getattr(args, "robot_start_x", 0.8)
     try:
         tiago_xform = XFormPrim(prim_path=tiago_prim_path, name="tiago_root_pose")
         tiago_xform.set_world_pose(
-            position=np.array([0.8, 0.0, 0.08], dtype=np.float32),
+            position=np.array([_robot_start_x, 0.0, 0.0], dtype=np.float32),
             orientation=np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
         )
-        print("[RoboLab] Applied startup pose: pos=(0.8, 0.0, 0.08) facing +X toward table")
+        print(f"[RoboLab] Applied startup pose: pos=({_robot_start_x}, 0.0, 0.0) facing +X toward table")
     except Exception as err:
         print(f"[RoboLab] WARN: failed to apply startup pose stabilization: {err}")
 
@@ -997,22 +1085,34 @@ try:
         except Exception as err:
             print(f"[RoboLab] WARN: articulation initialize failed: {err}", flush=True)
 
-    # Anchor the articulation physics body at the same position as /World/Tiago.
-    # Without this, PhysX base_footprint drifts away from the visual XForm,
-    # causing FK/IK coordinate transforms to be wrong.
+    # Anchor the articulation physics body at the desired start position.
+    # Retry set_world_pose until PhysX actually places the robot there.
     if tiago_articulation and _use_fixed_base:
-        _INIT_POS = np.array([0.8, 0.0, 0.08], dtype=np.float32)
+        _INIT_POS = np.array([_robot_start_x, 0.0, 0.0], dtype=np.float32)
         _INIT_ORI = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-        try:
-            tiago_articulation.set_world_pose(position=_INIT_POS, orientation=_INIT_ORI)
-            for _ in range(10):
-                world.step(render=False)
-            _art_pos, _ = tiago_articulation.get_world_pose()
-            if _art_pos is not None:
-                _anchor_drift = abs(float(_art_pos[0]) - 0.8) + abs(float(_art_pos[1])) + abs(float(_art_pos[2]) - 0.08)
-                print(f"[RoboLab] Articulation anchored at ({_art_pos[0]:.4f},{_art_pos[1]:.4f},{_art_pos[2]:.4f}) drift={_anchor_drift:.4f}", flush=True)
-        except Exception as err:
-            print(f"[RoboLab] WARN: articulation anchor failed: {err}", flush=True)
+        _anchor_ok = False
+        for _anchor_attempt in range(5):
+            try:
+                tiago_articulation.set_world_pose(position=_INIT_POS, orientation=_INIT_ORI)
+                _zero_vel = np.zeros(len(resolve_dof_names(tiago_articulation)), dtype=np.float32)
+                tiago_articulation.set_joint_velocities(_zero_vel)
+                for _ in range(20):
+                    world.step(render=False)
+                _art_pos, _art_ori = tiago_articulation.get_world_pose()
+                if _art_pos is not None:
+                    _anchor_drift = (abs(float(_art_pos[0]) - _robot_start_x) +
+                                     abs(float(_art_pos[1])) +
+                                     abs(float(_art_pos[2]) - 0.0))
+                    print(f"[RoboLab] Anchor attempt {_anchor_attempt}: "
+                          f"pos=({_art_pos[0]:.4f},{_art_pos[1]:.4f},{_art_pos[2]:.4f}) "
+                          f"drift={_anchor_drift:.4f}", flush=True)
+                    if _anchor_drift < 0.05:
+                        _anchor_ok = True
+                        break
+            except Exception as err:
+                print(f"[RoboLab] WARN: anchor attempt {_anchor_attempt} failed: {err}", flush=True)
+        if not _anchor_ok:
+            print(f"[RoboLab] WARN: could not anchor robot at ({_robot_start_x}, 0, 0.0) after 5 attempts", flush=True)
 
     # Log robot frame pose for diagnostics.
     # fixedBase=True should hold the articulation root in place.
@@ -1081,11 +1181,11 @@ try:
             "torso_lift_joint":                 (2000.0, 400.0, 20000.0),
             "arm_1_joint":                      (1500.0, 300.0, 5000.0),
             "arm_2_joint":                      (1500.0, 300.0, 5000.0),
-            "arm_3_joint":                      (1200.0, 240.0, 3000.0),
+            "arm_3_joint":                      (1500.0, 300.0, 4000.0),
             "arm_4_joint":                      (1200.0, 240.0, 3000.0),
-            "arm_5_joint":                      (1200.0, 240.0, 2000.0),
-            "arm_6_joint":                      (1200.0, 240.0, 2000.0),
-            "arm_7_joint":                      (1200.0, 240.0, 2000.0),
+            "arm_5_joint":                      (500.0, 100.0, 800.0),
+            "arm_6_joint":                      (500.0, 100.0, 800.0),
+            "arm_7_joint":                      (500.0, 100.0, 800.0),
             "head_1_joint":                     (400.0,  80.0,  200.0),
             "head_2_joint":                     (400.0,  80.0,  200.0),
             "gripper_right_left_finger_joint":  (2000.0, 400.0, 500.0),
@@ -1589,13 +1689,13 @@ try:
     moveit_state_joint_names = fallback_moveit_joint_names + ["head_1_joint", "head_2_joint"]
     _default_joint_limits = {
         "torso_lift_joint": (0.0, 0.35),
-        "arm_1_joint": (-1.178, 1.571),
-        "arm_2_joint": (-1.178, 1.571),
-        "arm_3_joint": (-0.785, 3.927),
-        "arm_4_joint": (-0.393, 2.356),
-        "arm_5_joint": (-2.094, 2.094),
-        "arm_6_joint": (-1.414, 1.414),
-        "arm_7_joint": (-2.094, 2.094),
+        "arm_1_joint": (0.0, 2.68),
+        "arm_2_joint": (-1.50, 1.02),
+        "arm_3_joint": (-3.46, 1.57),
+        "arm_4_joint": (-0.32, 2.27),
+        "arm_5_joint": (-2.07, 2.07),
+        "arm_6_joint": (-1.39, 1.39),
+        "arm_7_joint": (-2.07, 2.07),
         "head_1_joint": (-1.4, 1.4),
         "head_2_joint": (-1.2, 0.9),
     }
@@ -1621,7 +1721,7 @@ try:
                         _canonical = f"arm_{parts[2]}_joint"
                 if _canonical in moveit_joint_limits:
                     _old = moveit_joint_limits[_canonical]
-                    moveit_joint_limits[_canonical] = (min(_old[0], _lo_val), max(_old[1], _hi_val))
+                    moveit_joint_limits[_canonical] = (max(_old[0], _lo_val), min(_old[1], _hi_val))
         _updated = {k: v for k, v in moveit_joint_limits.items() if v != _default_joint_limits.get(k)}
         if _updated:
             print(f"[RoboLab] Joint limits updated from USD: {_updated}")
@@ -1884,7 +1984,7 @@ try:
                         goal["_settle_targets"] = points[-1]["targets"] if points else {}
                     _settle_elapsed = now - goal["_settle_start"]
                     _settle_ok = False
-                    _settle_timeout = 25.0
+                    _settle_timeout = 30.0
                     _max_arm_err = 0.0
                     if goal["_settle_targets"] and tiago_articulation:
                         try:
@@ -2176,6 +2276,25 @@ try:
             print(f"[RoboLab] WARN: Could not add ROS2 joint_states publisher: {err}")
             print("[RoboLab] For MoveIt, enable joint_states in Isaac Sim: Tools > Robotics > ROS 2 OmniGraphs > JointStates.")
 
+    _spawned_classes = sorted({str(cls).lower() for _, cls in _spawned_objects})
+
+    def _class_to_category(name: str) -> str:
+        _n = name.lower()
+        if any(tok in _n for tok in ("mug", "cup", "glass")):
+            return "mug_or_cup"
+        if any(tok in _n for tok in ("bottle", "can", "jar", "carton")):
+            return "bottle_or_container"
+        if any(tok in _n for tok in ("apple", "banana", "orange", "fruit")):
+            return "fruit"
+        if any(tok in _n for tok in ("box", "container", "bowl", "plate", "dish")):
+            return "container_or_dish"
+        return "other"
+
+    _category_counts = {}
+    for _c in _spawned_classes:
+        _cat = _class_to_category(_c)
+        _category_counts[_cat] = _category_counts.get(_cat, 0) + 1
+
     dataset = {
         "metadata": {
             "robot": "tiago_omni_or_tiago_plus_plus",
@@ -2203,6 +2322,9 @@ try:
             },
             "n_cameras": _n_cameras,
             "task_label": args.task_label if args.task_label else "unlabeled",
+            "spawned_object_count": len(_spawned_objects),
+            "spawned_object_classes": _spawned_classes,
+            "spawned_object_category_counts": _category_counts,
         },
         "frames": [],
         # Per-frame joint states (positions + velocities) — continuous 20 Hz log.
@@ -2861,7 +2983,7 @@ try:
 
     _fk_tip_local_offset = np.zeros(3, dtype=np.float64)
 
-    _fk_robot_root_pos = np.array([0.8, 0.0, 0.08], dtype=np.float64)
+    _fk_robot_root_pos = np.array([_robot_start_x, 0.0, 0.0], dtype=np.float64)
     _fk_robot_root_quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)  # w,x,y,z
 
     def _quat_to_rotmat(q):
@@ -3348,6 +3470,12 @@ try:
         except Exception as _zv_err:
             print(f"[RoboLab] WARN: pre-loop velocity zero failed: {_zv_err}")
 
+    if args.gui:
+        import omni.timeline
+        timeline = omni.timeline.get_timeline_interface()
+        timeline.play()
+        print("[RoboLab] GUI mode: timeline.play() called to start physics")
+
     print("[RoboLab] Starting simulation loop...")
     _grasp_events.clear()
     _prev_gripper_gap = None
@@ -3420,7 +3548,7 @@ try:
                 _base_xf = XFormPrim(prim_path=tiago_prim_path)
                 _base_pos, _base_rot = _base_xf.get_world_pose()
                 if _base_pos is not None:
-                    _drift = abs(float(_base_pos[0]) - 0.8) + abs(float(_base_pos[1])) + abs(float(_base_pos[2]) - 0.08)
+                    _drift = abs(float(_base_pos[0]) - _robot_start_x) + abs(float(_base_pos[1])) + abs(float(_base_pos[2]) - 0.0)
                     if _drift > 0.05:
                         print(f"[RoboLab] WARN: base drift={_drift:.3f}m pos=({float(_base_pos[0]):.3f},{float(_base_pos[1]):.3f},{float(_base_pos[2]):.3f})", flush=True)
                 if _base_rot is not None:
@@ -3563,32 +3691,48 @@ try:
             except Exception as _ipc_err:
                 pass  # non-fatal IPC errors
 
-            # 3. Mobile base: read base_cmd.json and apply velocity to root body.
+            # 3. Mobile base: read base_cmd.json, apply velocity only if fresh (< 500ms).
+            #    Also write robot base pose to base_pose.json for diagnostics.
             if getattr(args, "mobile_base", False) and tiago_articulation:
                 try:
+                    from omni.isaac.core.prims import XFormPrim as _XFP
+                    import math
+                    import time as _time_mod
+                    _root = _XFP(prim_path=tiago_prim_path)
+                    _pos, _orient = _root.get_world_pose()
+                    _qw, _qx, _qy, _qz = float(_orient[0]), float(_orient[1]), float(_orient[2]), float(_orient[3])
+                    _yaw = math.atan2(2.0 * (_qw * _qz + _qx * _qy), 1.0 - 2.0 * (_qy * _qy + _qz * _qz))
+
+                    if _sim_frame_idx % 30 == 0:
+                        _pose_file = FJT_PROXY_DIR / "base_pose.json"
+                        _pose_file.write_text(json.dumps({
+                            "x": round(float(_pos[0]), 4),
+                            "y": round(float(_pos[1]), 4),
+                            "z": round(float(_pos[2]), 4),
+                            "yaw_rad": round(_yaw, 4),
+                            "yaw_deg": round(math.degrees(_yaw), 1),
+                            "t": round(_time_mod.time(), 3),
+                        }), encoding="utf-8")
+
                     _base_cmd_file = FJT_PROXY_DIR / "base_cmd.json"
                     if _base_cmd_file.exists():
-                        _bcmd = json.loads(_base_cmd_file.read_text(encoding="utf-8"))
-                        _vx = float(_bcmd.get("vx", 0.0))
-                        _vy = float(_bcmd.get("vy", 0.0))
-                        _vyaw = float(_bcmd.get("vyaw", 0.0))
-                        if abs(_vx) > 0.001 or abs(_vy) > 0.001 or abs(_vyaw) > 0.001:
-                            from omni.isaac.core.prims import XFormPrim as _XFP
-                            _root = _XFP(prim_path=tiago_prim_path)
-                            _pos, _orient = _root.get_world_pose()
-                            import math
-                            _qw, _qx, _qy, _qz = float(_orient[0]), float(_orient[1]), float(_orient[2]), float(_orient[3])
-                            _yaw = math.atan2(2.0 * (_qw * _qz + _qx * _qy), 1.0 - 2.0 * (_qy * _qy + _qz * _qz))
-                            _dt = 1.0 / 60.0
-                            _dx = (_vx * math.cos(_yaw) - _vy * math.sin(_yaw)) * _dt
-                            _dy = (_vx * math.sin(_yaw) + _vy * math.cos(_yaw)) * _dt
-                            _dyaw = _vyaw * _dt
-                            _new_pos = np.array([float(_pos[0]) + _dx, float(_pos[1]) + _dy, float(_pos[2])], dtype=np.float32)
-                            _half = _dyaw / 2.0
-                            _new_qw = _qw * math.cos(_half) - _qz * math.sin(_half)
-                            _new_qz = _qw * math.sin(_half) + _qz * math.cos(_half)
-                            _root.set_world_pose(position=_new_pos,
-                                                 orientation=np.array([_new_qw, _qx, _qy, _new_qz], dtype=np.float32))
+                        _file_age = _time_mod.time() - _base_cmd_file.stat().st_mtime
+                        if _file_age <= 0.5:
+                            _bcmd = json.loads(_base_cmd_file.read_text(encoding="utf-8"))
+                            _vx = float(_bcmd.get("vx", 0.0))
+                            _vy = float(_bcmd.get("vy", 0.0))
+                            _vyaw = float(_bcmd.get("vyaw", 0.0))
+                            if abs(_vx) > 0.001 or abs(_vy) > 0.001 or abs(_vyaw) > 0.001:
+                                _dt = 1.0 / 60.0
+                                _dx = (_vx * math.cos(_yaw) - _vy * math.sin(_yaw)) * _dt
+                                _dy = (_vx * math.sin(_yaw) + _vy * math.cos(_yaw)) * _dt
+                                _dyaw = _vyaw * _dt
+                                _new_pos = np.array([float(_pos[0]) + _dx, float(_pos[1]) + _dy, float(_pos[2])], dtype=np.float32)
+                                _half = _dyaw / 2.0
+                                _new_qw = _qw * math.cos(_half) - _qz * math.sin(_half)
+                                _new_qz = _qw * math.sin(_half) + _qz * math.cos(_half)
+                                _root.set_world_pose(position=_new_pos,
+                                                     orientation=np.array([_new_qw, _qx, _qy, _new_qz], dtype=np.float32))
                 except Exception:
                     pass
 
@@ -3854,7 +3998,7 @@ try:
                             _rw_q = float(_ro[0])
                             _rx_q, _ry_q, _rz_q = float(_ro[1]), float(_ro[2]), float(_ro[3])
                         except Exception:
-                            _rx, _ry, _rz = 0.8, 0.0, 0.08
+                            _rx, _ry, _rz = _robot_start_x, 0.0, 0.0
                             _rw_q, _rx_q, _ry_q, _rz_q = 1.0, 0.0, 0.0, 0.0
                         _lx, _ly, _lz = float(_ik_target_local[0]), float(_ik_target_local[1]), float(_ik_target_local[2])
                         _q = np.array([_rw_q, _rx_q, _ry_q, _rz_q], dtype=np.float64)

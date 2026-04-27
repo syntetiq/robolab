@@ -44,7 +44,15 @@ next-env.d.ts
 
 # episode data & artifacts (large binary, collected per-run)
 public/episodes/
+/episodes/
 logs/
+
+# raw scene assets (Sketchfab downloads, pre-built USDZ models)
+scenes/kitchen/1/
+scenes/office/*.usdz
+
+# SQLite database (local dev state)
+prisma/dev.db
 
 # Python
 __pycache__/
@@ -53,3 +61,16 @@ __pycache__/
 
 # dataset exports (large files)
 *.hdf5
+
+# video analysis artifacts (generated per-run)
+video_analysis/
+video_analysis_frames/
+video_frames/
+
+# temp analysis
+plan_pick_sink/
+analyze_video.py
+
+# demo video clips and output
+demo_clips/
+demo_output/

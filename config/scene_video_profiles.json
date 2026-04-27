@@ -1,0 +1,48 @@
+{
+  "defaults": {
+    "durationSec": 180,
+    "captureWidth": 1280,
+    "captureHeight": 720,
+    "externalCameraPos": [3.2, -3.0, 2.1],
+    "externalCameraTarget": [0.9, 0.0, 0.9],
+    "smoke": {
+      "rotateOmega": 0.55,
+      "rotateTimeoutSec": 22.0,
+      "forwardVx": 0.18,
+      "forwardMaxDistM": 1.0,
+      "forwardTimeoutSec": 22.0
+    }
+  },
+  "profiles": [
+    {
+      "id": "office_props",
+      "patterns": ["*60s_Office_Props*"],
+      "externalCameraPos": [3.4, -2.8, 2.2],
+      "externalCameraTarget": [0.9, -0.1, 0.95]
+    },
+    {
+      "id": "office_interactive",
+      "patterns": ["*Office_Interactive*"],
+      "externalCameraPos": [3.3, -2.6, 2.2],
+      "externalCameraTarget": [0.8, 0.2, 1.0]
+    },
+    {
+      "id": "kitchen_main",
+      "patterns": ["*Kitchen_TiagoCompatible*"],
+      "externalCameraPos": [3.6, -2.7, 2.3],
+      "externalCameraTarget": [0.9, 0.1, 0.95]
+    },
+    {
+      "id": "kitchen_l_shaped",
+      "patterns": ["*L-Shaped_Contemporary_Modular_Kitchen*"],
+      "externalCameraPos": [4.0, -2.4, 2.4],
+      "externalCameraTarget": [1.0, 0.3, 0.95]
+    },
+    {
+      "id": "kitchen_modern",
+      "patterns": ["*Modern_Kitchen*"],
+      "externalCameraPos": [3.8, -2.8, 2.4],
+      "externalCameraTarget": [1.1, 0.2, 0.95]
+    }
+  ]
+}

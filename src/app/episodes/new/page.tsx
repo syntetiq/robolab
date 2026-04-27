@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -12,37 +12,12 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { HelpTooltip } from "@/components/HelpTooltip";
 
-const TASKS = [
-    "pick_place_sink",
-    "pick_place_fridge",
-    "pick_place_dishwasher",
-    "open_close_fridge",
-    "open_close_dishwasher"
-];
-
 const SENSORS = [
     "RGB", "Depth", "CameraInfo", "PointCloud2", "GT Poses", "JointStates"
 ];
 
-const TASK_PRESETS: Record<string, { label: string; tasks: string[]; sensors: string[] }> = {
-    home_assist_full: {
-        label: "Home Assist (all 5 tasks)",
-        tasks: [...TASKS],
-        sensors: [...SENSORS],
-    },
-    pick_place_pack: {
-        label: "Pick & Place trio (sink/fridge/dishwasher)",
-        tasks: ["pick_place_sink", "pick_place_fridge", "pick_place_dishwasher"],
-        sensors: [...SENSORS],
-    },
-    door_manipulation_pack: {
-        label: "Door manipulation (fridge + dishwasher)",
-        tasks: ["open_close_fridge", "open_close_dishwasher"],
-        sensors: [...SENSORS],
-    },
-};
-
 const DEFAULT_SAFE_PROFILE_NAME = "Default Safe Live Teleop";
+const SHOW_EXPERIMENTAL_SCENES = process.env.NEXT_PUBLIC_ENABLE_EXPERIMENTAL_SCENES === "1";
 
 export default function NewEpisodeWizard() {
     const router = useRouter();
@@ -51,33 +26,31 @@ export default function NewEpisodeWizard() {
 
     const [config, setConfig] = useState<any>(null);
     const [scenes, setScenes] = useState<any[]>([]);
-    const [objectSets, setObjectSets] = useState<any[]>([]);
     const [profiles, setProfiles] = useState<any[]>([]);
 
     const [formData, setFormData] = useState({
         sceneId: "",
-        objectSetId: "",
         launchProfileId: "",
-        tasks: [] as string[],
         sensors: [] as string[],
         seed: "42",
         durationSec: "60",
-        notes: ""
+        notes: "",
+        randomizeObjectLayout: true,
+        randomizeObjectTypes: false,
+        spawnObjectCount: "4",
+        objectCategories: ["mug_or_cup", "bottle_or_container", "fruit", "container_or_dish"] as string[],
     });
 
     const [submitting, setSubmitting] = useState(false);
-    const [preset, setPreset] = useState<string>("");
 
     useEffect(() => {
         Promise.all([
             fetch("/api/config").then(r => r.json()),
-            fetch("/api/scenes").then(r => r.json()),
-            fetch("/api/object-sets").then(r => r.json()),
+            fetch(SHOW_EXPERIMENTAL_SCENES ? "/api/scenes?includeExperimental=1" : "/api/scenes").then(r => r.json()),
             fetch("/api/launch-profiles").then(r => r.json())
-        ]).then(([configData, scenesData, objectSetsData, profilesData]) => {
+        ]).then(([configData, scenesData, profilesData]) => {
             setConfig(configData);
             setScenes(scenesData);
-            setObjectSets(objectSetsData);
             setProfiles(profilesData);
             const defaultProfile =
                 (profilesData || []).find((p: any) => p?.name === DEFAULT_SAFE_PROFILE_NAME && p?.enabled !== false) ||
@@ -86,19 +59,19 @@ export default function NewEpisodeWizard() {
             if (defaultProfile?.id) {
                 setFormData((prev) => ({ ...prev, launchProfileId: String(defaultProfile.id) }));
             }
+            const defaultScene =
+                (scenesData || []).find((s: any) => s?.name?.toLowerCase().includes("kitchen fixed")) ||
+                (scenesData || [])[0];
+            if (defaultScene?.id) {
+                setFormData((prev) => ({ ...prev, sceneId: String(defaultScene.id) }));
+            }
             setLoadingConfig(false);
         });
     }, []);
 
-    const handleNext = () => setStep(s => Math.min(s + 1, 6));
+    const TOTAL_STEPS = 5;
+    const handleNext = () => setStep(s => Math.min(s + 1, TOTAL_STEPS));
     const handlePrev = () => setStep(s => Math.max(s - 1, 1));
-
-    const toggleTask = (task: string) => {
-        setFormData(prev => ({
-            ...prev,
-            tasks: prev.tasks.includes(task) ? prev.tasks.filter(t => t !== task) : [...prev.tasks, task]
-        }));
-    };
 
     const toggleSensor = (sensor: string) => {
         setFormData(prev => ({
@@ -110,12 +83,19 @@ export default function NewEpisodeWizard() {
     const handleSubmit = async () => {
         setSubmitting(true);
         try {
+            const randomizationConfig = JSON.stringify({
+                randomizeObjectLayout: formData.randomizeObjectLayout,
+                randomizeObjectTypes: formData.randomizeObjectTypes,
+                spawnObjectCount: parseInt(formData.spawnObjectCount, 10) || 4,
+                objectCategories: formData.objectCategories,
+            });
             const payload = {
                 sceneId: formData.sceneId,
-                objectSetId: formData.objectSetId || null,
+                objectSetId: null,
                 launchProfileId: formData.launchProfileId || null,
-                tasks: JSON.stringify(formData.tasks),
+                tasks: JSON.stringify([]),
                 sensors: JSON.stringify(formData.sensors),
+                randomizationConfig,
                 seed: parseInt(formData.seed, 10),
                 durationSec: parseInt(formData.durationSec, 10),
                 notes: formData.notes
@@ -136,19 +116,7 @@ export default function NewEpisodeWizard() {
         }
     };
 
-    const applyTaskPreset = (presetKey: string) => {
-        const spec = TASK_PRESETS[presetKey];
-        if (!spec) return;
-        setPreset(presetKey);
-        setFormData((prev) => ({
-            ...prev,
-            tasks: [...spec.tasks],
-            sensors: [...spec.sensors],
-        }));
-    };
-
     const selectedScene = scenes.find(s => s.id === formData.sceneId);
-    const selectedObjectSet = objectSets.find(o => o.id === formData.objectSetId);
     const selectedProfile = profiles.find(p => p.id === formData.launchProfileId);
 
     if (loadingConfig) return <div className="p-8 text-center">Loading options...</div>;
@@ -158,22 +126,21 @@ export default function NewEpisodeWizard() {
             <div className="mb-8">
                 <h1 className="text-3xl font-bold tracking-tight mb-2">Create New Episode</h1>
                 <div className="flex gap-2">
-                    {[1, 2, 3, 4, 5, 6].map(i => (
+                    {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map(i => (
                         <div key={i} className={`h-2 flex-1 rounded-full ${step >= i ? 'bg-primary' : 'bg-muted'}`} />
                     ))}
                 </div>
-                <p className="text-muted-foreground text-sm mt-2">Step {step} of 6</p>
+                <p className="text-muted-foreground text-sm mt-2">Step {step} of {TOTAL_STEPS}</p>
             </div>
 
             <Card className="mb-6 min-h-[400px]">
                 <CardHeader>
                     <CardTitle>
                         {step === 1 && "Select Scene"}
-                        {step === 2 && "Select Object Set & Profile"}
-                        {step === 3 && "Select Tasks"}
-                        {step === 4 && "Select Sensors"}
-                        {step === 5 && "Episode Params"}
-                        {step === 6 && "Review Execution Plan"}
+                        {step === 2 && "Select Launch Profile"}
+                        {step === 3 && "Select Sensors"}
+                        {step === 4 && "Episode Params"}
+                        {step === 5 && "Review Execution Plan"}
                     </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -190,64 +157,22 @@ export default function NewEpisodeWizard() {
                     )}
 
                     {step === 2 && (
-                        <div className="space-y-6">
-                            <div className="space-y-4">
-                                <Label className="flex items-center">Object Set (Optional) <HelpTooltip content="A collection of 3D props (e.g., mugs, blocks) to spawn into the scene." /></Label>
-                                <Select value={formData.objectSetId} onValueChange={(val) => setFormData(p => ({ ...p, objectSetId: val }))}>
-                                    <SelectTrigger><SelectValue placeholder="None" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="none">None</SelectItem>
-                                        {objectSets.map(o => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-
-                            <div className="space-y-4">
-                                <Label className="flex items-center">Launch Profile (Optional) <HelpTooltip content="Select a preset configuration that overrides default execution parameters (e.g., to use a specific agent or SSH target)." /></Label>
-                                <Select value={formData.launchProfileId} onValueChange={(val) => setFormData(p => ({ ...p, launchProfileId: val }))}>
-                                    <SelectTrigger><SelectValue placeholder="Use default commands" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="none">Use default commands</SelectItem>
-                                        {profiles.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                    Overrides default runner scripts with saved templates.
-                                </p>
-                            </div>
+                        <div className="space-y-4">
+                            <Label className="flex items-center">Launch Profile (Optional) <HelpTooltip content="Select a preset configuration that overrides default execution parameters (e.g., to use a specific agent or SSH target)." /></Label>
+                            <Select value={formData.launchProfileId} onValueChange={(val) => setFormData(p => ({ ...p, launchProfileId: val }))}>
+                                <SelectTrigger><SelectValue placeholder="Use default commands" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="none">Use default commands</SelectItem>
+                                    {profiles.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground mt-1">
+                                Overrides default runner scripts with saved templates.
+                            </p>
                         </div>
                     )}
 
                     {step === 3 && (
-                        <div className="space-y-4">
-                            <div className="space-y-2">
-                                <Label>Task preset</Label>
-                                <Select value={preset} onValueChange={applyTaskPreset}>
-                                    <SelectTrigger><SelectValue placeholder="Select preset (optional)" /></SelectTrigger>
-                                    <SelectContent>
-                                        {Object.entries(TASK_PRESETS).map(([key, spec]) => (
-                                            <SelectItem key={key} value={key}>{spec.label}</SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                {TASKS.map(task => (
-                                    <div key={task} className="flex flex-row items-center space-x-3 space-y-0 rounded-md border p-4">
-                                        <Checkbox
-                                            checked={formData.tasks.includes(task)}
-                                            onCheckedChange={() => toggleTask(task)}
-                                        />
-                                        <div className="space-y-1 leading-none">
-                                            <Label className="font-medium cursor-pointer" onClick={() => toggleTask(task)}>{task}</Label>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {step === 4 && (
                         <div className="grid grid-cols-2 gap-4">
                             {SENSORS.map(sensor => (
                                 <div key={sensor} className="flex flex-row items-center space-x-3 space-y-0 rounded-md border p-4">
@@ -263,11 +188,11 @@ export default function NewEpisodeWizard() {
                         </div>
                     )}
 
-                    {step === 5 && (
+                    {step === 4 && (
                         <div className="space-y-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
-                                    <Label className="flex items-center">Random Seed <HelpTooltip content="Integer seed used for deterministic physical randomization across the scene." /></Label>
+                                    <Label className="flex items-center">Random Seed <HelpTooltip content="Integer seed used for deterministic physical randomization across the scene. Changing the seed produces different object layouts." /></Label>
                                     <Input type="number" value={formData.seed} onChange={e => setFormData(p => ({ ...p, seed: e.target.value }))} />
                                 </div>
                                 <div className="space-y-2">
@@ -275,6 +200,58 @@ export default function NewEpisodeWizard() {
                                     <Input type="number" value={formData.durationSec} onChange={e => setFormData(p => ({ ...p, durationSec: e.target.value }))} />
                                 </div>
                             </div>
+
+                            <div className="border rounded-md p-4 space-y-3">
+                                <Label className="text-base font-semibold">Object Randomization</Label>
+                                <div className="flex items-center space-x-3">
+                                    <Checkbox
+                                        checked={formData.randomizeObjectLayout}
+                                        onCheckedChange={(v) => setFormData(p => ({ ...p, randomizeObjectLayout: !!v }))}
+                                    />
+                                    <Label className="cursor-pointer" onClick={() => setFormData(p => ({ ...p, randomizeObjectLayout: !p.randomizeObjectLayout }))}>
+                                        Randomize object placement positions (uses seed)
+                                    </Label>
+                                    <HelpTooltip content="Varies where objects spawn within allowed zones using the seed value." />
+                                </div>
+                                <div className="flex items-center space-x-3">
+                                    <Checkbox
+                                        checked={formData.randomizeObjectTypes}
+                                        onCheckedChange={(v) => setFormData(p => ({ ...p, randomizeObjectTypes: !!v }))}
+                                    />
+                                    <Label className="cursor-pointer" onClick={() => setFormData(p => ({ ...p, randomizeObjectTypes: !p.randomizeObjectTypes }))}>
+                                        Randomize object types (shuffle available assets)
+                                    </Label>
+                                </div>
+                                <div className="space-y-2">
+                                    <Label className="text-sm">Number of objects to spawn</Label>
+                                    <Input type="number" min="1" max="12" className="w-24" value={formData.spawnObjectCount}
+                                        onChange={e => setFormData(p => ({ ...p, spawnObjectCount: e.target.value }))} />
+                                </div>
+                                <div className="space-y-2">
+                                    <Label className="text-sm">Object categories</Label>
+                                    <HelpTooltip content="Which types of items to include for spawning. Uncheck to exclude a category." />
+                                    <div className="flex flex-wrap gap-3">
+                                        {["mug_or_cup", "bottle_or_container", "fruit", "container_or_dish", "other"].map(cat => (
+                                            <label key={cat} className="flex items-center gap-1.5 text-sm">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={formData.objectCategories.includes(cat)}
+                                                    onChange={(e) => {
+                                                        setFormData(p => ({
+                                                            ...p,
+                                                            objectCategories: e.target.checked
+                                                                ? [...p.objectCategories, cat]
+                                                                : p.objectCategories.filter(c => c !== cat),
+                                                        }));
+                                                    }}
+                                                />
+                                                {cat.replace(/_/g, " ")}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
                             <div className="space-y-2">
                                 <Label>Notes</Label>
                                 <Textarea value={formData.notes} onChange={e => setFormData(p => ({ ...p, notes: e.target.value }))} />
@@ -282,17 +259,11 @@ export default function NewEpisodeWizard() {
                         </div>
                     )}
 
-                    {step === 6 && (
+                    {step === 5 && (
                         <div className="space-y-4 bg-muted/50 p-6 rounded-lg font-mono text-sm max-h-[400px] overflow-y-auto">
                             <div className="grid grid-cols-[150px_1fr] gap-2">
                                 <div className="text-muted-foreground">Scene:</div>
                                 <div className="font-bold">{selectedScene?.name || "None"}</div>
-
-                                <div className="text-muted-foreground">Object Set:</div>
-                                <div className="font-bold">{selectedObjectSet?.name || "None"}</div>
-
-                                <div className="text-muted-foreground">Tasks:</div>
-                                <div>{formData.tasks.join(", ") || "None"}</div>
 
                                 <div className="text-muted-foreground">Sensors:</div>
                                 <div>{formData.sensors.join(", ") || "None"}</div>
@@ -302,6 +273,18 @@ export default function NewEpisodeWizard() {
 
                                 <div className="text-muted-foreground">Duration:</div>
                                 <div>{formData.durationSec}s</div>
+
+                                <div className="text-muted-foreground">Object Layout:</div>
+                                <div>{formData.randomizeObjectLayout ? "Randomized" : "Fixed"}</div>
+
+                                <div className="text-muted-foreground">Object Types:</div>
+                                <div>{formData.randomizeObjectTypes ? "Shuffled" : "Default order"}</div>
+
+                                <div className="text-muted-foreground">Spawn Count:</div>
+                                <div>{formData.spawnObjectCount} objects</div>
+
+                                <div className="text-muted-foreground">Categories:</div>
+                                <div>{formData.objectCategories.map(c => c.replace(/_/g, " ")).join(", ") || "All"}</div>
 
                                 <div className="text-muted-foreground mt-4 col-span-2 border-b border-border pb-1">Environment Config</div>
                                 <div className="text-muted-foreground">Output Dir:</div>
@@ -326,7 +309,7 @@ export default function NewEpisodeWizard() {
                     <ArrowLeft className="w-4 h-4 mr-2" />
                     Back
                 </Button>
-                {step < 6 ? (
+                {step < TOTAL_STEPS ? (
                     <Button onClick={handleNext} disabled={step === 1 && !formData.sceneId}>
                         Next
                         <ArrowRight className="w-4 h-4 ml-2" />

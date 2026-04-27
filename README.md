@@ -90,7 +90,7 @@ MoveIt MoveGroup ──FJT Action──▶ ros2_fjt_proxy.py ──JSON files─
 ### Available Intents (21 total)
 
 **Manipulation** (right arm):
-`go_home`, `plan_pick_sink`, `plan_pick_fridge`, `plan_pick_dishwasher`, `open_close_fridge`, `open_close_dishwasher`, `approach_workzone`
+`go_home`, `plan_pick_sink`, `plan_pick_fridge`, `open_close_fridge`, `approach_workzone`
 
 **Left arm**:
 `left_plan_pick_sink`
@@ -110,7 +110,7 @@ Four production scenes selected from 10 evaluated (see `SCENE_RATING.md`):
 
 | Scene | Tier | Best for |
 |-------|------|----------|
-| Kitchen_TiagoCompatible.usda | S | Full kitchen: sink, fridge, dishwasher, counters |
+| Kitchen_TiagoCompatible.usda | S | Full kitchen: sink, fridge, counters |
 | L-Shaped_Modular_Kitchen_TiagoCompatible.usda | S | Multi-zone navigation + manipulation |
 | Modern_Kitchen_TiagoCompatible.usda | A | Open-space pick-place, island counter |
 | Small_House_Interactive.usd | A | Multi-room navigation, long-horizon tasks |

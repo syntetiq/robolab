@@ -6,8 +6,8 @@ import React from 'react';
 describe('VideoPlayerCard', () => {
     it('does not render the card when no valid videos are provided', () => {
         const artifacts = [
-            { name: 'telemetry.json', url: '/episodes/123/telemetry.json' },
-            { name: 'logs.txt', url: '/episodes/123/logs.txt' }
+            { name: 'telemetry.json', playUrl: '/episodes/123/telemetry.json', downloadUrl: '/episodes/123/telemetry.json' },
+            { name: 'logs.txt', playUrl: '/episodes/123/logs.txt', downloadUrl: '/episodes/123/logs.txt' }
         ];
 
         render(<VideoPlayerCard videos={artifacts} />);
@@ -18,9 +18,9 @@ describe('VideoPlayerCard', () => {
 
     it('renders only valid MP4/WEBM videos and filters out JSON', () => {
         const artifacts = [
-            { name: 'camera_0.mp4', url: '/episodes/123/camera_0.mp4' },
-            { name: 'telemetry.json', url: '/episodes/123/telemetry.json' },
-            { name: 'camera_1.webm', url: '/episodes/123/camera_1.webm' }
+            { name: 'camera_0.mp4', playUrl: '/episodes/123/camera_0.mp4', downloadUrl: '/episodes/123/camera_0.mp4' },
+            { name: 'telemetry.json', playUrl: '/episodes/123/telemetry.json', downloadUrl: '/episodes/123/telemetry.json' },
+            { name: 'camera_1.webm', playUrl: '/episodes/123/camera_1.webm', downloadUrl: '/episodes/123/camera_1.webm' }
         ];
 
         render(<VideoPlayerCard videos={artifacts} />);

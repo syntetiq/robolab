@@ -102,29 +102,6 @@ def build_fridge(stage, root_path, position):
     add_semantic_label(body, "fridge")
 
 
-def build_dishwasher(stage, root_path, position):
-    from pxr import UsdPhysics
-
-    dishwasher_path = f"{root_path}/Dishwasher"
-    body = add_box(stage, dishwasher_path, (0.6, 0.6, 0.8), position, (0.2, 0.2, 0.2))
-    UsdPhysics.RigidBodyAPI.Apply(body)
-    body_mass = UsdPhysics.MassAPI.Apply(body)
-    body_mass.CreateMassAttr(50.0)
-    UsdPhysics.ArticulationRootAPI.Apply(body)
-    anchor = UsdPhysics.FixedJoint.Define(stage, f"{dishwasher_path}/WorldAnchor")
-    anchor.CreateBody1Rel().SetTargets([dishwasher_path])
-
-    create_articulated_door(
-        stage,
-        dishwasher_path,
-        "Door",
-        (0.05, 0.58, 0.78),
-        (0.32, 0, 0),
-        "Y",
-    )
-    add_semantic_label(body, "dishwasher")
-
-
 def spawn_objects(stage, root_path, support_pos, rng, count=8):
     from pxr import UsdPhysics
 
@@ -169,7 +146,6 @@ def build_small_house(stage, seed):
     add_semantic_label(sink, "sink")
 
     build_fridge(stage, root_path, (0.0, 1.5, 1.0))
-    build_dishwasher(stage, root_path, (1.5, -1.0, 0.4))
     spawn_objects(stage, root_path, table_pos, rng, count=8)
 
 
@@ -184,10 +160,8 @@ def build_office(stage, seed):
     add_semantic_label(desk, "desk")
     add_semantic_label(cabinet, "cabinet")
 
-    # Office environment keeps a sink + dishwasher for cross-domain task transfer.
     sink = add_box(stage, f"{root_path}/Sink", (0.8, 0.6, 0.8), (2.0, 1.2, 0.4), (0.9, 0.9, 0.95))
     add_semantic_label(sink, "sink")
-    build_dishwasher(stage, root_path, (2.0, -1.0, 0.4))
     spawn_objects(stage, root_path, desk_pos, rng, count=8)
 
 
