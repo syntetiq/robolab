@@ -44,7 +44,7 @@ next-env.d.ts
 
 # episode data & artifacts (large binary, collected per-run)
 public/episodes/
-episodes/
+/episodes/
 logs/
 
 # raw scene assets (Sketchfab downloads, pre-built USDZ models)

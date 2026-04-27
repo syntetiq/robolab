@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -253,7 +253,7 @@ export default function EpisodeDetailPage() {
     };
 
     const getStatusBadge = (status: string) => {
-        const map: Record<string, JSX.Element> = {
+        const map: Record<string, React.ReactElement> = {
             created: <Badge variant="secondary">Created</Badge>,
             running: <Badge variant="outline" className="border-blue-600 text-blue-700 bg-blue-50">Running</Badge>,
             stopping: <Badge variant="outline" className="border-orange-500 text-orange-700 bg-orange-50">Stopping</Badge>,

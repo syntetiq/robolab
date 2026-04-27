@@ -41,32 +41,23 @@ def main() -> int:
             except Exception as exc:
                 errors.append(f"{fixed_cfg}: invalid JSON ({exc})")
 
-    # Office assets and prep pipeline
-    office_dir = REPO_ROOT / "scenes/Office"
-    office_dir_alt = REPO_ROOT / "scenes/office"
-    if not office_dir.exists() and office_dir_alt.exists():
-        office_dir = office_dir_alt
-    expect(office_dir, errors, "Office scenes dir")
-    office_usdz = sorted(office_dir.glob("*.usdz"))
-    if len(office_usdz) < 1:
-        errors.append("No Office .usdz assets found under scenes/Office")
-    expect(REPO_ROOT / "scripts/prepare_office_scene_assets.ps1", errors, "Office prep script")
-    expect(REPO_ROOT / "scripts/adapt_scenes_for_tiago.py", errors, "Scene adapter script")
-    expect(REPO_ROOT / "config/scene_prep_manifest.json", errors, "Scene prep manifest")
-    expect(REPO_ROOT / "scripts/scene_prep_contract.py", errors, "Scene prep contract helper")
-    expect(REPO_ROOT / "scripts/check_scene_physics_coverage.py", errors, "Scene physics coverage gate")
-    expect(REPO_ROOT / "scripts/scene_fit_validator.py", errors, "Scene fit validator")
+    # Procedural office scene (builder + config)
+    expect(REPO_ROOT / "scenes/office_fixed/office_fixed_builder.py", errors, "office builder")
+    expect(REPO_ROOT / "scenes/office_fixed/office_fixed_config.yaml", errors, "office config")
 
-    # Kitchen raw mesh prep pipeline
-    kitchen_raw_dir = REPO_ROOT / "scenes/kitchen/1"
-    expect(kitchen_raw_dir, errors, "Kitchen raw mesh dir")
-    if kitchen_raw_dir.exists():
-        if len(list(kitchen_raw_dir.glob("*.obj"))) < 1:
-            errors.append("Kitchen raw mesh dir has no .obj files")
-        if len(list(kitchen_raw_dir.glob("*.dae"))) < 1:
-            errors.append("Kitchen raw mesh dir has no .dae files")
-    expect(REPO_ROOT / "scripts/build_kitchen_scene_wrapper.py", errors, "Kitchen wrapper script")
-    expect(REPO_ROOT / "scenes/kitchen/README.md", errors, "Kitchen README")
+    # At least one office task config that targets the procedural office scene
+    office_task_configs = sorted((REPO_ROOT / "config/tasks").glob("office_*.json"))
+    if not office_task_configs:
+        errors.append("No office task configs found under config/tasks/office_*.json")
+
+    # Shared scene utilities used by both kitchen_fixed and office_fixed builders
+    expect(REPO_ROOT / "scenes/scene_utils.py", errors, "shared scene utils")
+
+    # Common scene preparation gates (still required)
+    expect(REPO_ROOT / "config/scene_prep_manifest.json", errors, "scene prep manifest")
+    expect(REPO_ROOT / "scripts/scene_prep_contract.py", errors, "scene prep contract helper")
+    expect(REPO_ROOT / "scripts/check_scene_physics_coverage.py", errors, "scene physics coverage gate")
+    expect(REPO_ROOT / "scripts/scene_fit_validator.py", errors, "scene fit validator")
 
     if errors:
         print("[FAIL] Scene assets regression failed:")
