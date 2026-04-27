@@ -92,7 +92,6 @@ grasp_success = (lift_delta >= 0.02  AND  mug_final_z <= mug_z0 + 0.05)
 ## 6. Scripts and runs
 
 - **Quick tests without video:** `scripts/run_quick_grasp_test.ps1` — several clearance values (3, 8, 13 cm); on first success a rerun **with video**.
-- **Full approach_clearance sweep:** `scripts/run_approach_sweep_then_video.ps1` (without video; on success — one run with video).
 - Episodes with video are saved in `C:\RoboLab_Data\episodes\<uuid>\` (camera_0/1/2.mp4, metadata, telemetry, physics_log).
 
 ---

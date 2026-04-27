@@ -1,266 +1,239 @@
 # RoboLab
 
-Robotic data collection platform for training manipulation policies. Collects diverse demonstrations in NVIDIA Isaac Sim using PAL Tiago robot, with support for VR teleoperation, autonomous MoveIt-based task execution, and sim-to-real transfer.
+Robotic data-collection platform for training manipulation policies. Collects diverse demonstrations in NVIDIA Isaac Sim using the PAL TIAGo robot, with VR teleoperation, autonomous MoveIt-based task execution, and sim-to-real transfer.
 
 ```
- Web UI (Next.js)          MoveIt2            Isaac Sim
+ Web UI (Next.js)          MoveIt 2           Isaac Sim
  ┌─────────────┐      ┌─────────────┐     ┌──────────────────┐
  │  Episodes    │      │ MoveGroup   │     │ data_collector   │
- │  Scenes      │─API──│ Intent      │─IPC─│ tiago.py         │
- │  Profiles    │      │ Bridge      │     │  ├─ Replicator    │
- │  ObjectSets  │      │ FJT Proxy   │     │  ├─ Articulation  │
- └──────┬───────┘      └──────┬──────┘     │  └─ Multi-camera  │
-        │                     │            └────────┬─────────┘
-        │              ┌──────┴──────┐              │
+ │  Batches     │      │ Intent      │     │ tiago.py         │
+ │  Experiments │─API──│ Bridge      │─IPC─│  ├─ Replicator   │
+ │  Scenes      │      │ FJT Proxy   │     │  ├─ Articulation │
+ │  Profiles    │      └──────┬──────┘     │  └─ Multi-camera │
+ │  ObjectSets  │             │            └────────┬─────────┘
+ └──────┬───────┘      ┌──────┴──────┐              │
         │              │ sim2real    │         ┌────┴────┐
-        │              │ bridge     │         │ HDF5    │
+        │              │ bridge      │         │ HDF5    │
         │              └──────┬──────┘         │ Export  │
-        │                     │               └────┬────┘
+        │                     │                └────┬────┘
         │              ┌──────┴──────┐              │
-        └──────────────│ Real Tiago  │         ML Training
+        └──────────────│ Real TIAGo  │         ML Training
                        └─────────────┘
 ```
 
-## Quick Start
+## Quick start
 
 ```powershell
-# 1. Install & setup
+# 1. Install
 npm install
 npx prisma generate
 npx prisma db push
 
-# 2. Start web UI
-npm run dev                    # http://localhost:3000
+# 2. Start the web console
+npm run dev                     # http://localhost:3000
 
-# 3. Set Isaac Sim path in Configuration page
-# 4. Run a batch collection
-.\scripts\run_batch_with_objects.ps1 -Reps 5
+# 3. Set Isaac Sim host on the Configuration page
+# 4. Either launch a single episode through the wizard
+#    or run a batch via the Batch Queue page.
 ```
 
-## Architecture
+## Web console
 
-### Web Application (`src/`)
-
-Next.js 14 app with Prisma/SQLite backend. Manages the full lifecycle of data collection experiments.
+Next.js 16 + Prisma/SQLite. Manages the full lifecycle of data-collection experiments.
 
 | Page | Purpose |
 |------|---------|
-| `/` | Dashboard |
-| `/episodes` | List, create, start/stop data collection runs |
-| `/episodes/[id]` | Live episode monitoring with SSE log streaming |
+| `/` Dashboard | System health, quick actions |
+| `/episodes` | List, create, monitor, stop episodes |
+| `/episodes/new` | 5-step episode wizard with object randomisation |
+| `/episodes/[id]` | Live monitoring, teleop controls, MoveIt actions, recorded artefacts |
+| `/batches` | Queue and run N episodes with seed-incrementing variation |
+| `/experiments` | Auto-discovered task configs from `config/tasks/`, plus visual task editor (6 task types) |
+| `/recordings` | Searchable artefact library (videos, telemetry, datasets) |
 | `/scenes` | Manage simulation environments (USD stages) |
-| `/launch-profiles` | Configure Isaac Sim launch parameters |
-| `/object-sets` | Define diverse object sets for spawning |
-| `/config` | Isaac Sim host, ROS2, streaming settings |
+| `/launch-profiles` | Configure Isaac Sim launch flags (GUI, WebRTC, VR, MoveIt, cameras) |
+| `/config` | Isaac Sim host, ROS 2 setup, runner mode, streaming |
 
-### Robot Control Pipeline (`scripts/`)
+Every page has inline help tooltips (British English) explaining technical terms.
 
-#### Core Scripts
+## Robot control pipeline (`scripts/`)
 
 | Script | Role |
 |--------|------|
-| `data_collector_tiago.py` | Isaac Sim episode runner: physics, articulation, cameras, data recording |
-| `ros2_fjt_proxy.py` | ROS2 FollowJointTrajectory action servers + `/cmd_vel` subscriber via file-based IPC |
-| `moveit_intent_bridge.py` | Translates high-level intents (e.g. `plan_pick_sink`) to MoveIt joint trajectories |
-| `vr_teleop_node.py` | OpenVR/SteamVR input to ROS2 Twist commands for VR teleoperation |
+| `data_collector_tiago.py` | Isaac Sim episode runner: physics, articulation, cameras, recording |
+| `ros2_fjt_proxy.py` | ROS 2 FollowJointTrajectory action servers + `/cmd_vel` subscriber via file-based IPC |
+| `moveit_intent_bridge.py` | Translates intents (e.g. `plan_pick_sink`) to MoveIt joint trajectories — **41 intents** |
+| `vr_teleop_node.py` | OpenVR/SteamVR input → ROS 2 commands (Vive Pro 2 ready, see `docs/vr_readiness.md`) |
+| `start_moveit_stack.ps1` | Launches MoveGroup + bridge + FJT proxy in one PowerShell stack |
 
-#### Data Flow (File-Based IPC)
+### Data flow (file-based IPC)
 
-Isaac Sim cannot import ROS2 natively on Windows. The FJT Proxy bridges this gap:
+Isaac Sim cannot import ROS 2 natively on Windows. The FJT Proxy bridges this gap:
 
 ```
 MoveIt MoveGroup ──FJT Action──▶ ros2_fjt_proxy.py ──JSON files──▶ data_collector_tiago.py
                                       │                                     │
                                       ├─ pending_arm_*.json                 ├─ reads & applies via
                                       ├─ done_arm_*.json                    │  ArticulationAction
-                                      ├─ joint_state.json  ◀───────────────┤
+                                      ├─ joint_state.json  ◀────────────────┤
                                       └─ base_cmd.json                      └─ XFormPrim velocity
 ```
 
-### MoveIt Configuration
-
-`scripts/tiago_move_group_working.yaml` — self-contained config with:
-- **URDF**: torso, right arm (7-DOF), left arm (7-DOF), gripper (2 fingers), head (pan/tilt)
-- **SRDF groups**: `arm`, `arm_torso`, `arm_left`, `arm_left_torso`, `gripper`
-- **Kinematics**: KDL solver for all groups
-- **Controllers**: `arm_controller`, `arm_left_controller`, `torso_controller`, `gripper_controller`
-
-`scripts/tiago_servo_config.yaml` — MoveIt Servo config for real-time VR Cartesian control.
-
-### Available Intents (21 total)
-
-**Manipulation** (right arm):
-`go_home`, `plan_pick_sink`, `plan_pick_fridge`, `open_close_fridge`, `approach_workzone`
-
-**Left arm**:
-`left_plan_pick_sink`
-
-**Bimanual**:
-`bimanual_pick_sink`
-
-**Navigation** (mobile base):
-`nav_forward`, `nav_backward`, `nav_left`, `nav_right`, `nav_rotate_left`, `nav_rotate_right`, `nav_to_table`, `nav_to_fridge`, `nav_to_sink`
-
-**Combined**:
-`nav_pick_place_table_to_sink`
-
 ## Scenes
 
-Four production scenes selected from 10 evaluated (see `SCENE_RATING.md`):
+Two procedural scenes built directly from YAML configs (no raw mesh imports):
 
-| Scene | Tier | Best for |
-|-------|------|----------|
-| Kitchen_TiagoCompatible.usda | S | Full kitchen: sink, fridge, counters |
-| L-Shaped_Modular_Kitchen_TiagoCompatible.usda | S | Multi-zone navigation + manipulation |
-| Modern_Kitchen_TiagoCompatible.usda | A | Open-space pick-place, island counter |
-| Small_House_Interactive.usd | A | Multi-room navigation, long-horizon tasks |
+| Scene | Type | Builder | Use cases |
+|-------|------|---------|-----------|
+| Kitchen Fixed | home | `scenes/kitchen_fixed/kitchen_fixed_builder.py` | sink, fridge, table — 5 task configs |
+| Office Fixed | office | `scenes/office_fixed/office_fixed_builder.py` | desks, cabinet, chair — pick & place |
 
-## Multi-Camera System
+Builders share `scenes/scene_utils.py` (physics, walls, lights, cameras).
 
-Enable via flags on `data_collector_tiago.py`:
+## Available task configs (auto-discovered from `config/tasks/`)
 
-| Camera | Flag | Mount Point | Purpose |
-|--------|------|-------------|---------|
-| Head (camera_0) | always on | `head_2_link` (VR) or fixed overhead | Primary RGB/depth/pointcloud/semantic |
-| Wrist (camera_1) | `--wrist-camera` | `arm_tool_link` | Close-up manipulation view |
-| External (camera_2) | `--external-camera` | Fixed world position | Scene overview, third-person |
+| Config | Scene | Description |
+|--------|-------|-------------|
+| `fixed_banana_to_sink.json` | Kitchen | banana → sink basin |
+| `fixed_mug_to_fridge.json` | Kitchen | mug → fridge interior |
+| `fixed_fridge_open_close.json` | Kitchen | open / close fridge door |
+| `fixed_fridge_experiment3.json` | Kitchen | fridge handle pull, body push |
+| `fixed_mug_rearrange.json` | Kitchen | end-to-end pick → carry → place |
+| `office_mug_to_desk_side.json` | Office | desk → desk pick & place |
 
-Each camera writes to its own Replicator directory and encodes a separate MP4 video.
+Custom configs can be authored in the Task Editor (`/experiments` → New Task Config).
 
-## Data Collection
+## Multi-camera system
 
-### Single Episode (via web UI)
+| Camera | Flag | Mount | Purpose |
+|--------|------|-------|---------|
+| Head (`camera_0`) | always on | `head_2_link` (or fixed overhead) | Primary RGB / depth / point cloud / semantic |
+| Wrist (`camera_1_wrist`) | `--wrist-camera` | `arm_tool_link` | Close-up manipulation view |
+| External (`camera_2_external`) | `--external-camera` | Fixed world position | Scene overview, third-person |
 
-1. Create episode on `/episodes/new`, select scene + launch profile
-2. Click Start — Isaac Sim launches, collects data for specified duration
-3. Click Sync — validates artifacts, uploads to DB
+Each camera writes to its own Replicator directory and an MP4 video.
 
-### Batch Collection (automated)
+## Object diversity
 
-```powershell
-# Standard batch: 4 scenes x 5 intents x 5 reps = 100 episodes
-.\scripts\run_batch_with_objects.ps1 -Reps 5 -DurationSec 50
+49 USD assets across 8 categories, all physics-validated (`PhysicsRigidBodyAPI` + `CollisionAPI` + `MassAPI`):
 
-# Balanced collection: fill under-represented scenes
-.\scripts\run_balance_collection.ps1 -TargetPerScenePerIntent 5
+| Set | Count | Categories |
+|-----|-------|------------|
+| Kitchen Mixed Objects | 22 | mugs, bottles, fruits, containers |
+| Kitchen Tableware | 8 | bowls, cans, glasses, plates |
+| YCB Benchmark | 19 | cans, boxes, bottles, household |
 
-# Web API collection: uses Next.js API for DB integration
-.\scripts\run_web_collection.ps1
-```
+Object Sets are configured in the database; episode wizard offers per-task randomisation (layout, types, count, categories).
 
-### Episode Output Structure
+## Episode output structure
 
 ```
 episodes/<uuid>/
-├── dataset.json              # Per-frame: joints, poses, world objects, timestamps
-├── metadata.json             # Scene, task, config info
-├── telemetry.json            # Trajectory telemetry
-├── dataset_manifest.json     # File listing
-├── camera_0.mp4              # Head camera video
-├── camera_1_wrist.mp4        # Wrist camera video (if --wrist-camera)
-├── camera_2_external.mp4     # External camera video (if --external-camera)
-└── replicator_data/          # Replicator output
-    ├── rgb_0000.png ...
-    ├── distance_to_camera_0000.npy ...
-    ├── pointcloud_0000.npy ...
-    └── semantic_segmentation_0000.png ...
+├── dataset.json                 # Per-frame: joints, poses, world objects, timestamps
+├── physics_log.json             # joint positions + velocities, base pose, world poses
+├── telemetry.json               # Trajectory in map frame
+├── task_results.json            # Per-task pass/fail + final positions
+├── metadata.json                # Scene, task config, runtime info
+├── dataset_manifest.json        # File index
+├── camera_0.mp4                 # Head camera video
+├── camera_1_wrist.mp4           # (if --wrist-camera)
+├── camera_2_external.mp4        # (if --external-camera)
+└── replicator_*/
+    ├── rgb_*.png
+    ├── distance_to_camera_*.npy        # depth maps
+    ├── pointcloud_*.npy                # 3D point clouds
+    ├── pointcloud_semantic_*.npy       # per-point class labels
+    ├── pointcloud_normals_*.npy
+    └── instance_segmentation_*.png
 ```
 
-## Dataset Export & Evaluation
+## Batch collection
 
-### Quality Evaluation
+The Batch Queue page launches N episodes with incrementing seeds. Polling-based execution engine (10-second cadence) auto-advances to the next episode when the previous completes or fails.
+
+CLI alternatives are also available for headless runs:
 
 ```powershell
-# Evaluate all episodes, generate JSON report
+.\scripts\run_batch_with_objects.ps1 -Reps 5 -DurationSec 50
+.\scripts\run_balance_collection.ps1 -TargetPerScenePerIntent 5
+.\scripts\run_mass_collection.ps1
+```
+
+## Dataset export & evaluation
+
+```powershell
+# Episode quality classification
 python scripts/evaluate_episodes.py --json-report report.json
 
-# Export only successful episodes
-python scripts/evaluate_episodes.py --export-list good_eps.txt --min-quality success
-```
-
-Metrics computed per episode:
-- **arm_travel**: total joint displacement (rad)
-- **gripper_delta**: finger position change (grasp detection)
-- **object_max_dxy/dz**: object displacement (pick/place detection)
-- **object_fell**: fell below z=0
-- **arm_idle_ratio**: fraction of idle frames
-
-Classification: **SUCCESS** / **PARTIAL** / **FAIL** with task-specific criteria.
-
-### HDF5 Export
-
-```powershell
-python scripts/export_dataset_hdf5.py
+# HDF5 export (robomimic / LeRobot compatible)
 python scripts/export_dataset_hdf5.py --last 50 --min-frames 100
+
+# Dataset validation
+python scripts/validate_dataset.py --episodes-dir C:\RoboLab_Data\episodes
 ```
 
-HDF5 layout (robomimic/LeRobot compatible):
+HDF5 layout:
 
 ```
 /data/<episode_id>/
   obs/
     joint_positions      (T, N_joints) float32
     joint_velocities     (T, N_joints) float32
-    robot_pose           (T, 7) float32  [xyz + quaternion]
+    robot_pose           (T, 7) float32   [xyz + quaternion]
     world_object_poses   (T, N_objects, 7) float32
-    cameras/
-      camera_0/rgb_paths           string[]
-      camera_1_wrist/rgb_paths     string[]
-      camera_2_external/rgb_paths  string[]
+    cameras/<camera>/rgb_paths   string[]
   action/
-    joint_positions      (T, N_joints) float32  [next-frame targets]
+    joint_positions      (T, N_joints) float32
 ```
 
-### Dataset Validation
+## VR teleoperation
+
+The pipeline is software-complete and waiting for hardware. See `docs/vr_readiness.md` for the 30-minute Vive Pro 2 smoke-test checklist.
+
+| Component | Status |
+|-----------|--------|
+| OpenVR controller node | ✅ `scripts/vr_teleop_node.py` |
+| Launch profile flags (`enableVrTeleop`, `enableVrPassthrough`) | ✅ surfaced in UI |
+| Robot POV WebRTC stream + auto-open in browser/SteamVR overlay | ✅ |
+| End-to-end Vive Pro 2 hardware test | ⚠️ pending hardware |
+
+## Sim-to-real transfer
+
+`config/sim2real.yaml` defines joint mapping, calibration offsets, safety limits, and ROS 2 topic mapping for the real TIAGo.
 
 ```powershell
-python scripts/validate_dataset.py --episodes-dir C:\RoboLab_Data\episodes
+python scripts/sim2real_bridge.py --config config/sim2real.yaml          # validate
+python scripts/calibrate_joints.py --config config/sim2real.yaml --write # calibrate at home pose
+python scripts/sim2real_bridge.py --replay <episode> --dry-run           # replay sim on real (dry)
+python scripts/sim2real_bridge.py --config config/sim2real.yaml --live   # live bridge with safety filter
+.\scripts\launch_real_tiago.ps1 -Intent plan_pick_sink -DryRun           # full launch stack
 ```
 
-## Sim-to-Real Transfer
-
-### Configuration
-
-`config/sim2real.yaml` defines:
-- **Joint mapping**: sim names → real Tiago names (e.g. `arm_1_joint` → `arm_right_1_joint`)
-- **Calibration offsets**: measured via `scripts/calibrate_joints.py`
-- **Safety limits**: velocity scaling (0.5x), per-joint bounds, max delta clamping
-- **Controller config**: real robot ROS2 controller action names
-- **Camera topics**: real robot camera ROS2 topics
-
-### Usage
-
-```powershell
-# Validate config
-python scripts/sim2real_bridge.py --config config/sim2real.yaml
-
-# Calibrate offsets (robot at home pose)
-python scripts/calibrate_joints.py --config config/sim2real.yaml --write
-
-# Replay sim episode on real robot (dry run)
-python scripts/sim2real_bridge.py --replay C:\RoboLab_Data\episodes\<id> --dry-run
-
-# Live bridge with safety filter
-python scripts/sim2real_bridge.py --config config/sim2real.yaml --live
-
-# Full real robot launch
-.\scripts\launch_real_tiago.ps1 -Intent plan_pick_sink -DryRun
-```
-
-### Safety Filter Pipeline
+Safety filter pipeline:
 
 ```
 sim joint command → name mapping → offset → position clamp → delta clamp → velocity scale → real robot
 ```
 
-## CI / Automated Checks
+## Demo video builder
+
+```bash
+# Prerequisites: pip install playwright Pillow matplotlib; playwright install chromium; ffmpeg on PATH
+python scripts/build_demo_v3.py --output demo_output/robolab_demo_v3.mp4
+```
+
+Combines Playwright web-UI screencast, real Isaac Sim multi-camera footage, title cards, and matplotlib telemetry slides into a 1920×1080 MP4 with annotated bottom-bar overlays.
+
+## CI / automated checks
 
 ```powershell
 python scripts/ci_checks.py
-python scripts/ci_checks.py --skip-tsc    # skip TypeScript compilation
+python scripts/test_fixed_baseline_lock.py
+python scripts/test_mvp_task_suite_regression.py
+python scripts/test_scene_assets_regression.py
 ```
 
-Checks: Python syntax, YAML validity, MoveIt config consistency, FJT proxy joint coverage, intent bridge completeness.
+`ci_checks.py` covers: Python syntax, YAML validity, TypeScript compilation, MoveIt consistency, FJT proxy joint coverage, intent bridge completeness, dataset export contract.
 
 ## Prerequisites
 
@@ -269,60 +242,67 @@ Checks: Python syntax, YAML validity, MoveIt config consistency, FJT proxy joint
 | Node.js | 20+ | Web UI |
 | Python | 3.10+ | Scripts |
 | NVIDIA Isaac Sim | 4.x | Simulation |
-| ROS2 Humble | (Mambaforge) | Robot control |
-| MoveIt2 | ros-humble-moveit | Motion planning |
-| h5py | latest | Dataset export |
-| PyYAML | latest | Config parsing |
+| ROS 2 Humble | via Mambaforge | Robot control |
+| MoveIt 2 | `ros-humble-moveit` | Motion planning |
+| ffmpeg | latest | Video composition |
+| h5py, PyYAML | latest | Dataset export, configs |
+| Playwright + Pillow + matplotlib | latest | Demo video builder |
 
-### Windows-specific
+### Windows setup
 
 ```powershell
-# ROS2 + MoveIt via Mambaforge
+# ROS 2 + MoveIt via Mambaforge
 mamba create -n ros2_humble -c conda-forge -c robostack-staging ros-humble-desktop ros-humble-moveit
 mamba activate ros2_humble
 
-# Python deps
-pip install h5py pyyaml numpy
+# Python tooling
+python -m pip install h5py pyyaml numpy playwright Pillow matplotlib
+python -m playwright install chromium
+winget install Gyan.FFmpeg
 ```
 
-## Project Structure
+## Project structure
 
 ```
 robolab/
 ├── config/
-│   └── sim2real.yaml              # Sim-to-real joint mapping & safety
+│   ├── tasks/                       # Auto-discovered task configs
+│   ├── sim2real.yaml                # Real-robot bridge
+│   └── object_diversity_profile.json
+├── docs/
+│   ├── delivery_report.md           # TZ → implementation evidence map
+│   ├── vr_readiness.md              # VR Pro 2 hardware smoke-test
+│   ├── teleop_configuration.md
+│   └── (other technical references)
 ├── prisma/
-│   ├── schema.prisma              # DB schema (Episode, Scene, ObjectSet, etc.)
-│   └── dev.db                     # SQLite database
+│   ├── schema.prisma                # Episode, Scene, Batch, ObjectSet, LaunchProfile, ...
+│   └── dev.db
+├── scenes/
+│   ├── kitchen_fixed/               # Procedural kitchen builder + textures
+│   ├── office_fixed/                # Procedural office builder + textures
+│   └── scene_utils.py               # Shared scene primitives
 ├── scripts/
-│   ├── data_collector_tiago.py    # Isaac Sim data collector
-│   ├── ros2_fjt_proxy.py          # ROS2 FJT action server proxy
-│   ├── moveit_intent_bridge.py    # Intent → MoveIt translator
-│   ├── sim2real_bridge.py         # Safety bridge for real robot
-│   ├── calibrate_joints.py        # Joint offset calibration
-│   ├── evaluate_episodes.py       # Episode quality evaluation
-│   ├── export_dataset_hdf5.py     # HDF5 dataset export
-│   ├── validate_dataset.py        # Dataset file validation
-│   ├── generate_object_assets.py  # USD object asset generator (30 objects)
-│   ├── ci_checks.py               # Automated CI validation
-│   ├── run_batch_with_objects.ps1  # Batch collection orchestrator
-│   ├── run_balance_collection.ps1  # Dataset balancing script
-│   ├── run_web_collection.ps1     # Web API-driven collection
-│   ├── launch_real_tiago.ps1      # Real robot launch stack
-│   ├── tiago_move_group_working.yaml  # MoveIt config (URDF+SRDF+controllers)
-│   └── tiago_servo_config.yaml    # MoveIt Servo for VR
+│   ├── data_collector_tiago.py      # Isaac Sim runner
+│   ├── ros2_fjt_proxy.py            # ROS 2 action server proxy
+│   ├── moveit_intent_bridge.py      # 41 intents → MoveIt
+│   ├── vr_teleop_node.py            # OpenVR controller node
+│   ├── start_moveit_stack.ps1       # MoveIt stack launcher
+│   ├── sim2real_bridge.py           # Real-robot bridge
+│   ├── build_demo_v3.py             # Demo video builder
+│   ├── ci_checks.py                 # Automated checks
+│   └── tiago_move_group_working.yaml
 ├── src/
-│   ├── app/                       # Next.js pages & API routes
-│   ├── components/                # React UI components
-│   ├── server/                    # Backend logic (runners, orchestration)
-│   └── lib/                       # Utilities (Prisma, schemas)
-├── SCENE_RATING.md                # Scene evaluation & selection rationale
-└── README.md
+│   ├── app/                         # Next.js pages + API routes
+│   ├── components/                  # UI components (Sidebar, Tooltips, Dialogs)
+│   ├── server/                      # Runners (local + SSH), batch executor
+│   └── lib/
+├── SCENE_RATING.md
+├── README.md
+└── package.json
 ```
 
-## Testing
+## License
 
-```powershell
-npm run test                     # Vitest unit tests
-python scripts/ci_checks.py     # Script & config validation
-```
+Licensed under the [Apache License 2.0](LICENSE). Copyright © 2026 SyntetiQ.
+
+See `NOTICE` for attribution.
