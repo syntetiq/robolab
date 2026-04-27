@@ -2,28 +2,30 @@
 
 All notable changes to RoboLab. The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] — 2026-04-27 — TZ delivery
 
-### Added
+First milestone covering the full original technical specification, plus licensing, documentation, dead-code cleanup, and dependency audit.
+
+### Licensing & docs
 - Apache License 2.0 (`LICENSE`) and `NOTICE` attribution file.
 - `CHANGELOG.md` (this file).
-
-### Removed
-- Dead code: 5 patch scripts (`patch_core_nodes.py`, `patch_webrtc.py`, `patch_remove_tf.py`, `patch_teardown.py`, `patch_graph.py`), 4 completed grasp/approach tuning scripts (`run_approach_sweep_15.ps1`, `run_approach_sweep_then_video.ps1`, `run_gripper_length_sweep.ps1`, `run_gripper_length_sweep_robust.py`), 2 superseded demo builders (`build_demo_v2.py`, `build_demo_slideshow.py`).
-- Local `episodes` branch and its remote counterpart (merged via PR #1).
-
-### Changed
-- `README.md` updated: 2 procedural scenes (was 4 raw USDZ), 41 MoveIt intents (was 21), batch queue + task editor + demo video sections added, removed dishwasher references, VR readiness summary.
-- npm dependencies: 13 vulnerabilities auto-fixed via `npm audit fix` (transitive deps only, `package.json` unchanged). 2 remaining (Next.js 16.1 → 16.2) require explicit upgrade.
+- `README.md` rewritten: 2 procedural scenes (was 4 raw USDZ), 41 MoveIt intents (was 21), batch queue + task editor + demo video sections, VR readiness summary, removed dishwasher references.
 
 ### Validated
 - YCB asset physics validated via `scripts/validate_tiago_asset.py` (offline USD mode): 19/19 objects have `CollisionAPI` + `RigidBodyAPI` + `MassAPI`. Recommended fine-tuning: contactOffset, restOffset, friction material.
 
+### Cleanup
+- Dead code removed (11 files, ~700 LOC): 5 patch scripts (`patch_core_nodes.py`, `patch_webrtc.py`, `patch_remove_tf.py`, `patch_teardown.py`, `patch_graph.py`), 4 completed grasp/approach tuning scripts (`run_approach_sweep_15.ps1`, `run_approach_sweep_then_video.ps1`, `run_gripper_length_sweep.ps1`, `run_gripper_length_sweep_robust.py`), 2 superseded demo builders (`build_demo_v2.py`, `build_demo_slideshow.py`).
+- Local `episodes` branch and its remote counterpart (merged via PR #1).
+
+### Security
+- npm dependencies: 13 transitive vulnerabilities auto-fixed via `npm audit fix` (`package.json` unchanged). 2 remaining (Next.js 16.1 → 16.2) require explicit upgrade.
+
 ---
 
-## [1.0.0] — 2026-04-27 — TZ delivery
+## TZ feature delivery (also part of 1.0.0)
 
-First milestone covering the full original technical specification.
+The release ships the following features that closed the original TZ.
 
 ### Added
 - **Office environment**: procedural builder (`scenes/office_fixed/office_fixed_builder.py`) with desks, cabinet, chair, whiteboard, printer stand, doors, windows, ceiling grid, baseboards, outlets, and cable trunking.
