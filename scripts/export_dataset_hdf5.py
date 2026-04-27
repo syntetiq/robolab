@@ -269,6 +269,11 @@ def main() -> None:
         default=100,
         help="Skip episodes with fewer than N frames",
     )
+    parser.add_argument(
+        "--episode-id",
+        default="",
+        help="Export only this single episode (UUID matching directory name); ignores --last",
+    )
     args = parser.parse_args()
 
     ep_root = Path(args.episodes_dir)
@@ -281,7 +286,12 @@ def main() -> None:
         key=lambda d: d.stat().st_mtime,
         reverse=True,
     )
-    if args.last > 0:
+    if args.episode_id:
+        ep_dirs = [d for d in ep_dirs if d.name == args.episode_id or d.name.startswith(f"{args.episode_id}_")]
+        if not ep_dirs:
+            print(f"ERROR: episode directory not found for id={args.episode_id} under {ep_root}")
+            sys.exit(1)
+    elif args.last > 0:
         ep_dirs = ep_dirs[: args.last]
 
     # Re-sort chronologically for export order

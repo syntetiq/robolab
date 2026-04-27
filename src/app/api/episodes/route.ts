@@ -114,14 +114,21 @@ export async function POST(request: Request) {
             normalizeOptionalId(body.launchProfileId) ||
             await resolveDefaultLaunchProfileId();
 
+        // Accept either JSON-string (canonical) or array/object (auto-stringify for convenience)
+        const toJsonString = (v: unknown, fallback: string): string => {
+            if (v == null) return fallback;
+            if (typeof v === "string") return v;
+            try { return JSON.stringify(v); } catch { return fallback; }
+        };
+
         const episode = await prisma.episode.create({
             data: {
                 sceneId,
                 objectSetId,
                 launchProfileId,
-                tasks: body.tasks || "[]",
-                sensors: body.sensors || "[]",
-                randomizationConfig: body.randomizationConfig || "{}",
+                tasks: toJsonString(body.tasks, "[]"),
+                sensors: toJsonString(body.sensors, "[]"),
+                randomizationConfig: toJsonString(body.randomizationConfig, "{}"),
                 seed: body.seed ? parseInt(body.seed, 10) : 42,
                 durationSec: body.durationSec ? parseInt(body.durationSec, 10) : 60,
                 notes: body.notes || "",
@@ -131,6 +138,7 @@ export async function POST(request: Request) {
         return NextResponse.json(episode, { status: 201 });
     } catch (error) {
         console.error("POST /api/episodes error:", error);
-        return NextResponse.json({ error: "Invalid data" }, { status: 400 });
+        const message = error instanceof Error ? error.message : "Invalid data";
+        return NextResponse.json({ error: "Invalid data", details: message }, { status: 400 });
     }
 }
