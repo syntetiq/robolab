@@ -147,6 +147,19 @@ episodes/<uuid>/
     └── instance_segmentation_*.png
 ```
 
+### Sample data shipped with the repository
+
+`data/episodes/` ships **one** illustrative episode
+(`4c4390a3-44d4-479f-8228-ebc9d391bafc`, a 49-second three-camera
+choreography routine) so reviewers and new contributors can inspect
+the data layout, validate the import path, and run the export tooling
+end-to-end without having to first launch Isaac Sim. It is **not** a
+training-grade dataset — full datasets are produced via the batch
+collection workflow described below. See
+[`data/episodes/README.md`](data/episodes/README.md) for the full
+contract of the sample episode and recommended channels for
+distributing larger datasets.
+
 ## Batch collection
 
 The Batch Queue page launches N episodes with incrementing seeds. Polling-based execution engine (10-second cadence) auto-advances to the next episode when the previous completes or fails.
